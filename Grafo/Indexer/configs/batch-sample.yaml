@@ -1,0 +1,21 @@
+outputDirectory: "./output"
+generateGraphs: true
+generateStatistics: true
+filterTypes:
+  - "Class"
+  - "Interface"
+  - "Method"
+excludeProjects:
+  - ".*\\.Tests$"
+  - ".*\\.Test$"
+  - ".*\\.TestProject$"
+solutions:
+  - solutionPath: "../Repo/Cloned/ICB7C/Infocorp.Banking.sln"
+    outputPrefix: "icb7c"
+    enabled: true
+  - solutionPath: "../Repo/Cloned/AnotherRepo/Solution.sln"
+    outputPrefix: "another-repo"
+    enabled: true
+  - solutionPath: "../BackEnd/Guru.sln"
+    outputPrefix: "guru-backend"
+    enabled: false

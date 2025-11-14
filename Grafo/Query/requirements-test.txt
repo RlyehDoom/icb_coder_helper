@@ -1,0 +1,9 @@
+# Dependencias de testing para el proyecto Query
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+pytest-timeout==2.2.0
+
+# Incluir dependencias principales
+-r requirements.txt
+

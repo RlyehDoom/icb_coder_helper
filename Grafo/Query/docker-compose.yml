@@ -1,0 +1,16 @@
+services:
+  query-service:
+    build: .
+    container_name: grafo-query-service
+    ports:
+      - "8081:8081"
+    environment:
+      - MONGODB_CONNECTION_STRING=mongodb://InfocorpAI:InfocorpAI2025@host.docker.internal:27017/
+      - MONGODB_DATABASE=GraphDB
+      - MONGODB_PROJECTS_COLLECTION=projects
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8081
+      - LOG_LEVEL=INFO
+      - CORS_ORIGINS=*
+    restart: unless-stopped
+

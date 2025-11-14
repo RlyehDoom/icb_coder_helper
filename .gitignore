@@ -1,0 +1,49 @@
+# Guru Launcher specific
+node_modules/
+*.log
+*.tmp
+.DS_Store
+Thumbs.db
+
+# Entornos virtuales Python
+.venv/
+__pycache__/
+*.pyc
+
+# Archivos de configuración locales
+.env
+.env.local
+.env.aks
+
+# Archivos de build
+dist/
+build/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Coverage directory usado por tools como istanbul
+coverage/
+
+# Dependency directories
+node_modules/
+jspm_packages/
+
+# Optional npm cache directory
+.npm
+
+# Optional eslint cache
+.eslintcache
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+.vs
+.vscode

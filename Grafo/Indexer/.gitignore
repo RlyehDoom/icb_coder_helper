@@ -1,0 +1,66 @@
+# Build artifacts
+bin/
+obj/
+*.exe
+*.dll
+*.pdb
+*.cache
+
+# Test results and output files
+test-results/
+test-output/
+output/
+results/
+*-test-*.json
+*-test-*.csv
+*-test-*.xml
+
+# Temporary test files
+temp/
+tmp/
+*.tmp
+
+# IDE and editor files
+.vs/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# .NET Core
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# NuGet
+*.nupkg
+*.snupkg
+# The packages folder can be ignored because of Package Restore
+**/packages/*
+# except build/, which is used as an MSBuild target.
+!**/packages/build/
+# Uncomment if necessary however generally it will be regenerated when needed
+#!**/packages/repositories.config
+# NuGet v3's project.json files produces more ignoreable files
+*.nuget.props
+*.nuget.targets
+
+# Runtime logs and crash dumps
+*.log
+crash_*.txt
+
+# Analysis results from external solutions (for testing)
+# Don't track analysis results from external codebases
+**/infocorp-*.json
+**/infocorp-*.csv
+**/external-*.json
+**/external-*.csv

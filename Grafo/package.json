@@ -1,0 +1,58 @@
+{
+  "name": "grafo-cli",
+  "version": "1.0.0",
+  "description": "CLI unificada para el proyecto Grafo - Indexer y Repo management",
+  "main": "src/cli.js",
+  "type": "module",
+  "bin": {
+    "grafo": "./src/cli.js"
+  },
+  "engines": {
+    "node": ">=16.x",
+    "npm": ">=8.x"
+  },
+  "scripts": {
+    "grafo": "node src/cli.js",
+    "indexer:build": "node src/cli.js indexer build",
+    "indexer:test": "node src/cli.js indexer test",
+    "indexer:analyze": "node src/cli.js indexer analyze",
+    "indexer:list": "node src/cli.js indexer list-solutions",
+    "repo:clone": "node src/cli.js repo clone",
+    "repo:list": "node src/cli.js repo list",
+    "test:setup": "node src/cli.js test setup",
+    "test:run": "node src/cli.js test run",
+    "test:batch": "node src/cli.js test batch",
+    "all:setup": "node src/cli.js all setup",
+    "all:test": "node src/cli.js all test",
+    "status": "node src/cli.js status",
+    "help": "node src/cli.js --help"
+  },
+  "keywords": [
+    "grafo",
+    "cli",
+    "indexer",
+    "roslyn",
+    "csharp",
+    "analysis",
+    "repository",
+    "azure-devops"
+  ],
+  "author": "Guru Team - Grafo",
+  "license": "MIT",
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^11.1.0",
+    "cross-spawn": "^7.0.3",
+    "ora": "^7.0.1",
+    "inquirer": "^9.2.12",
+    "fs-extra": "^11.1.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "."
+  },
+  "preferGlobal": true
+}

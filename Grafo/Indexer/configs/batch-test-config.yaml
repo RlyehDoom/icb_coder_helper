@@ -1,0 +1,14 @@
+OutputDirectory: "./test-results/batch-output"
+GenerateGraphs: true
+GenerateStatistics: true
+FilterTypes:
+  - "Class"
+  - "Interface"
+  - "Method"
+ExcludeProjects:
+  - ".*\\.Tests$"
+  - ".*\\.Test$"
+Solutions:
+  - SolutionPath: "C:\\GIT\\ICB7C\\ICBanking\\Infocorp.Banking.sln"
+    OutputPrefix: "infocorp-banking-batch"
+    Enabled: true

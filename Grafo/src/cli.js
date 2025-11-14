@@ -1,0 +1,613 @@
+#!/usr/bin/env node
+
+import { Command } from 'commander';
+import chalk from 'chalk';
+import inquirer from 'inquirer';
+import path from 'path';
+import { promises as fs } from 'fs';
+import { IndexerHandler } from './handlers/indexer.js';
+import { IndexerDbHandler } from './handlers/indexerdb.js';
+import { QueryHandler } from './handlers/query.js';
+import { RepoHandler } from './handlers/repo.js';
+import { TestHandler } from './handlers/test.js';
+import { SetupHandler } from './handlers/setup.js';
+import SystemUtils from './utils/system.js';
+import { displayBanner, displayHelp, displaySeparator, displayWarning, displaySuccess, displayError, displayInfo } from './utils/display.js';
+
+const program = new Command();
+const systemUtils = new SystemUtils();
+const indexerHandler = new IndexerHandler(systemUtils);
+const indexerDbHandler = new IndexerDbHandler(systemUtils);
+const queryHandler = new QueryHandler(systemUtils);
+const repoHandler = new RepoHandler(systemUtils);
+const testHandler = new TestHandler(systemUtils, indexerHandler, repoHandler);
+const setupHandler = new SetupHandler(systemUtils, repoHandler, indexerHandler);
+
+// Helper function to load environment configuration from Repo/.env
+async function loadRepoEnvConfig() {
+  const envPath = path.resolve('./Repo/.env');
+  const config = {};
+  
+  try {
+    const exists = await systemUtils.exists(envPath);
+    if (!exists) {
+      return config;
+    }
+
+    const content = await fs.readFile(envPath, 'utf8');
+    const lines = content.split('\n');
+    
+    for (const line of lines) {
+      const trimmed = line.trim();
+      
+      // Skip comments and empty lines
+      if (!trimmed || trimmed.startsWith('#')) {
+        continue;
+      }
+      
+      // Parse key=value
+      const equalIndex = trimmed.indexOf('=');
+      if (equalIndex > 0) {
+        const key = trimmed.substring(0, equalIndex).trim();
+        let value = trimmed.substring(equalIndex + 1).trim();
+        
+        // Remove quotes if present
+        if ((value.startsWith('"') && value.endsWith('"')) || 
+            (value.startsWith("'") && value.endsWith("'"))) {
+          value = value.slice(1, -1);
+        }
+        
+        if (value) {
+          config[key] = value;
+        }
+      }
+    }
+  } catch (error) {
+    // Failed to read .env file, continue with defaults
+    console.debug('Could not load .env config:', error.message);
+  }
+  
+  return config;
+}
+
+program
+  .name('grafo')
+  .description('CLI unificada para el proyecto Grafo - Indexer y Repository management')
+  .version('1.0.0');
+
+// Comandos Indexer
+program
+  .command('indexer')
+  .description('Gestionar el RoslynIndexer (C# Code Analysis Tool)')
+  .argument('[action]', 'Acción a realizar: build, clean, test, analyze, run', 'help')
+  .option('-s, --solution <path>', 'Ruta al archivo de solución (.sln)')
+  .option('-o, --output <path>', 'Directorio de salida', './analysis-output')
+  .option('-v, --verbose', 'Salida detallada')
+  .option('--no-graph', 'Omitir generación de grafos')
+  .option('--no-stats', 'Omitir generación de estadísticas')
+  .option('--format <format>', 'Formato de salida (json, xml)', 'json')
+  .option('--filter-types <types>', 'Filtrar tipos de símbolos (separados por coma)')
+  .option('--exclude-projects <regex>', 'Excluir proyectos que coincidan con regex')
+  .action(async (action, options) => {
+    displayBanner('GRAFO - Indexer');
+    
+    switch (action) {
+      case 'build':
+        await indexerHandler.build();
+        break;
+      case 'clean':
+        await indexerHandler.clean();
+        break;
+      case 'test':
+        await indexerHandler.test();
+        break;
+      case 'analyze':
+        await indexerHandler.analyze(options);
+        break;
+      case 'run':
+        await indexerHandler.run(options);
+        break;
+      case 'status':
+        await indexerHandler.status();
+        break;
+      case 'list-solutions':
+        await indexerHandler.listSolutions();
+        break;
+      default:
+        console.log(chalk.yellow('Comandos disponibles para indexer:'));
+        console.log('  build    - Compila el RoslynIndexer');
+        console.log('  clean    - Limpia los artefactos de compilación');
+        console.log('  test     - Ejecuta las pruebas unitarias');
+        console.log('  analyze  - Analiza una solución (auto-descubre si no se especifica -s)');
+        console.log('  list-solutions - Lista todas las soluciones disponibles en Grafo/Repo/Cloned/');
+        console.log('  run      - Ejecuta el indexer con opciones interactivas');
+        console.log('  status   - Muestra el estado del indexer');
+    }
+  });
+
+// Comandos IndexerDb
+program
+  .command('indexerdb')
+  .description('Gestionar el IndexerDb (Graph Data Processor)')
+  .argument('[action]', 'Acción a realizar: build, clean, run, status', 'help')
+  .option('-f, --file <path>', 'Ruta al archivo de grafo específico')
+  .option('--no-interactive', 'Procesar todos los archivos automáticamente')
+  .action(async (action, options) => {
+    displayBanner('GRAFO - IndexerDb');
+    
+    switch (action) {
+      case 'build':
+        await indexerDbHandler.build();
+        break;
+      case 'clean':
+        await indexerDbHandler.clean();
+        break;
+      case 'run':
+        if (options.file || options.noInteractive) {
+          await indexerDbHandler.run(options);
+        } else {
+          await indexerDbHandler.runInteractive();
+        }
+        break;
+      case 'status':
+        await indexerDbHandler.status();
+        break;
+      default:
+        console.log(chalk.yellow('Comandos disponibles para indexerdb:'));
+        console.log('  build    - Compila el IndexerDb');
+        console.log('  clean    - Limpia los artefactos de compilación');
+        console.log('  run      - Ejecuta IndexerDb (modo interactivo)');
+        console.log('  status   - Muestra el estado del servicio');
+        console.log('');
+        console.log(chalk.yellow('Opciones para run:'));
+        console.log('  -f, --file <path>    - Procesa un archivo específico');
+        console.log('  --no-interactive     - Procesa todos los archivos automáticamente');
+    }
+  });
+
+// Comandos Query
+program
+  .command('query')
+  .description('Gestionar el Query Service (Graph Query API)')
+  .argument('[action]', 'Acción a realizar: build, run, stop, delete, restart, logs, status, test', 'help')
+  .option('-f, --follow', 'Seguir logs en tiempo real', true)
+  .option('--tail <n>', 'Número de líneas de log a mostrar')
+  .option('--detached', 'Ejecutar en modo detached (background)', true)
+  .action(async (action, options) => {
+    displayBanner('GRAFO - Query Service');
+    
+    switch (action) {
+      case 'build':
+        await queryHandler.build();
+        break;
+      case 'run':
+      case 'start':
+        await queryHandler.run(options);
+        break;
+      case 'stop':
+        await queryHandler.stop();
+        break;
+      case 'delete':
+      case 'down':
+        await queryHandler.delete(options);
+        break;
+      case 'restart':
+        await queryHandler.restart();
+        break;
+      case 'logs':
+        await queryHandler.logs(options);
+        break;
+      case 'status':
+        await queryHandler.status();
+        break;
+      case 'clean':
+        await queryHandler.clean();
+        break;
+      case 'test':
+        await queryHandler.test();
+        break;
+      case 'shell':
+        await queryHandler.shell();
+        break;
+      case 'exec':
+        if (!options.command) {
+          displayError('Se requiere especificar un comando con --command');
+          process.exit(1);
+        }
+        await queryHandler.exec(options.command);
+        break;
+      default:
+        console.log(chalk.yellow('Comandos disponibles para query:'));
+        console.log('  build    - Construye la imagen Docker');
+        console.log('  run      - Inicia el servicio con Docker Compose');
+        console.log('  start    - Alias de run');
+        console.log('  stop     - Detiene el servicio');
+        console.log('  delete   - Elimina contenedores y recursos (docker-compose down)');
+        console.log('  down     - Alias de delete');
+        console.log('  restart  - Reinicia el servicio');
+        console.log('  logs     - Muestra los logs del servicio');
+        console.log('  status   - Muestra el estado del servicio');
+        console.log('  clean    - Limpia todos los recursos');
+        console.log('  test     - Ejecuta los tests del servicio');
+        console.log('  shell    - Abre una shell interactiva en el contenedor');
+        console.log('');
+        console.log(chalk.yellow('Opciones:'));
+        console.log('  --tail <n>  - Muestra las últimas n líneas de logs');
+        console.log('  --follow    - Sigue los logs en tiempo real (default: true)');
+    }
+  });
+
+// Comando Setup - Flujo completo
+program
+  .command('setup')
+  .description('Ejecutar el flujo completo: Repo → Indexer → IndexerDb → Query API')
+  .option('--skip-repo-update', 'Omitir actualización del repositorio (git reset & pull)')
+  .option('--skip-mongo-check', 'Omitir verificación de MongoDB')
+  .action(async (options) => {
+    displayBanner('GRAFO - Setup Completo');
+    await setupHandler.runFullSetup(options);
+  });
+
+// Comandos Repository
+program
+  .command('repo')
+  .description('Gestionar repositorios en /Grafo/Repo/Cloned')
+  .argument('[action]', 'Acción a realizar: clone, list, clean, status', 'help')
+  .option('-u, --url <url>', 'URL del repositorio de Azure DevOps')
+  .option('-n, --name <name>', 'Nombre del repositorio')
+  .option('-f, --folder <folder>', 'Nombre personalizado de carpeta')
+  .option('-s, --sparse <folders>', 'Carpetas para sparse checkout (separadas por coma)')
+  .option('-b, --branch <branch>', 'Rama a clonar', 'main')
+  .option('-t, --token <token>', 'Personal Access Token')
+  .action(async (action, options) => {
+    displayBanner('GRAFO - Repository');
+    
+    switch (action) {
+      case 'clone':
+        if (!options.url) {
+          console.log(chalk.red('❌ Se requiere especificar una URL con -u'));
+          process.exit(1);
+        }
+        await repoHandler.clone(options);
+        break;
+      case 'list':
+        await repoHandler.list();
+        break;
+      case 'clean':
+        await repoHandler.clean();
+        break;
+      case 'status':
+        await repoHandler.status();
+        break;
+      default:
+        console.log(chalk.yellow('Comandos disponibles para repo:'));
+        console.log('  clone   - Clona un repositorio de Azure DevOps (requiere -u)');
+        console.log('  list    - Lista todos los repositorios clonados');
+        console.log('  clean   - Limpia repositorios obsoletos');
+        console.log('  status  - Muestra el estado de los repositorios');
+    }
+  });
+
+// Comandos Test
+program
+  .command('test')
+  .description('Ejecutar tests y análisis completos')
+  .argument('[action]', 'Acción a realizar: setup, run, batch, cleanup', 'help')
+  .option('-r, --repo <name>', 'Repositorio específico para analizar')
+  .option('-c, --config <path>', 'Archivo de configuración batch')
+  .option('-v, --verbose', 'Salida detallada')
+  .option('--quick', 'Prueba rápida con configuración mínima')
+  .action(async (action, options) => {
+    displayBanner('GRAFO - Testing');
+    
+    switch (action) {
+      case 'setup':
+        await testHandler.setup();
+        break;
+      case 'run':
+        await testHandler.run(options);
+        break;
+      case 'batch':
+        await testHandler.batch(options);
+        break;
+      case 'cleanup':
+        await testHandler.cleanup();
+        break;
+      default:
+        console.log(chalk.yellow('Comandos disponibles para test:'));
+        console.log('  setup   - Configura el entorno de testing');
+        console.log('  run     - Ejecuta análisis en repositorios');
+        console.log('  batch   - Ejecuta procesamiento por lotes');
+        console.log('  cleanup - Limpia archivos de prueba');
+    }
+  });
+
+// Comandos globales
+program
+  .command('all')
+  .description('Gestionar todas las operaciones de Grafo')
+  .argument('[action]', 'Acción a realizar: setup, test, clean, status', 'help')
+  .action(async (action) => {
+    displayBanner('GRAFO - All Services');
+    
+    switch (action) {
+      case 'setup':
+        console.log(chalk.blue('🚀 Configurando todo el entorno Grafo...'));
+        console.log(chalk.gray('   Ejecutando: Repository → Indexer → IndexerDb → Query\n'));
+        
+        // Paso 1: Repository - Verificar estado
+        displaySeparator();
+        console.log(chalk.bold.cyan('📦 Paso 1: Repository'));
+        await repoHandler.status();
+        const repositories = await indexerHandler.discoverRepositories();
+        if (repositories.length === 0) {
+          displayWarning('No se encontraron repositorios clonados');
+          console.log(chalk.yellow('   💡 Para clonar un repositorio: grafo repo clone -u <url>'));
+        } else {
+          displaySuccess(`✓ ${repositories.length} repositorio(s) disponible(s)`);
+        }
+        
+        // Paso 2: Indexer - Build
+        displaySeparator();
+        console.log(chalk.bold.cyan('🔍 Paso 2: Indexer'));
+        const indexerBuilt = await indexerHandler.build();
+        if (!indexerBuilt) {
+          displayError('Error al compilar Indexer');
+          process.exit(1);
+        }
+        
+        // Paso 3: IndexerDb - Build
+        displaySeparator();
+        console.log(chalk.bold.cyan('💾 Paso 3: IndexerDb'));
+        const indexerDbBuilt = await indexerDbHandler.build();
+        if (!indexerDbBuilt) {
+          displayError('Error al compilar IndexerDb');
+          process.exit(1);
+        }
+        
+        // Paso 4: Query - Build y Run
+        displaySeparator();
+        console.log(chalk.bold.cyan('🌐 Paso 4: Query'));
+        const queryBuilt = await queryHandler.build();
+        if (!queryBuilt) {
+          displayError('Error al construir Query Service');
+          process.exit(1);
+        }
+        
+        displayInfo('Iniciando Query Service...');
+        const queryRunning = await queryHandler.run({ detached: true });
+        if (!queryRunning) {
+          displayWarning('No se pudo iniciar Query Service');
+          displayInfo('Para iniciar manualmente: grafo query run');
+        } else {
+          displaySuccess('✓ Query Service iniciado y disponible');
+        }
+        
+        // Paso 5: Testing - Setup (opcional pero útil)
+        displaySeparator();
+        console.log(chalk.bold.cyan('🧪 Paso 5: Testing Environment'));
+        await testHandler.setup();
+        
+        displaySeparator();
+        console.log(chalk.green('✅ Entorno Grafo configurado exitosamente!'));
+        console.log('');
+        console.log(chalk.cyan('📋 Próximos pasos:'));
+        console.log(chalk.gray('   • Para ejecutar el flujo completo: grafo setup'));
+        console.log(chalk.gray('   • Para ejecutar Indexer: grafo indexer analyze'));
+        console.log(chalk.gray('   • Para ejecutar IndexerDb: grafo indexerdb run'));
+        console.log(chalk.gray('   • Para iniciar Query API: grafo query run'));
+        break;
+      case 'test':
+        console.log(chalk.blue('🧪 Ejecutando suite completa de tests...'));
+        await indexerHandler.test();
+        await testHandler.run({ verbose: true });
+        console.log(chalk.green('✅ Suite de tests completada!'));
+        break;
+      case 'clean':
+        console.log(chalk.blue('🧹 Limpiando todos los archivos temporales...'));
+        await indexerHandler.clean();
+        await repoHandler.clean();
+        await testHandler.cleanup();
+        console.log(chalk.green('✅ Limpieza completada!'));
+        break;
+      case 'status':
+        await indexerHandler.status();
+        displaySeparator();
+        await indexerDbHandler.status();
+        displaySeparator();
+        await repoHandler.status();
+        displaySeparator();
+        await testHandler.status();
+        break;
+      default:
+        console.log(chalk.yellow('Comandos disponibles para all:'));
+        console.log('  setup  - Configura todo el entorno');
+        console.log('  test   - Ejecuta todos los tests');
+        console.log('  clean  - Limpia todos los archivos temporales');
+        console.log('  status - Muestra el estado de todos los componentes');
+    }
+  });
+
+// Comando de estado general
+program
+  .command('status')
+  .description('Muestra el estado de todos los componentes')
+  .action(async () => {
+    displayBanner('GRAFO - Status');
+    await setupHandler.status();
+    displaySeparator();
+    await indexerHandler.status();
+    displaySeparator();
+    await indexerDbHandler.status();
+    displaySeparator();
+    await queryHandler.status();
+    displaySeparator();
+    await repoHandler.status();
+    displaySeparator();
+    await testHandler.status();
+  });
+
+// Comando interactivo
+program
+  .command('interactive')
+  .alias('i')
+  .description('Modo interactivo para gestionar Grafo')
+  .action(async () => {
+    displayBanner('GRAFO - Interactive');
+    
+    const { component, action } = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'component',
+        message: '¿Qué componente quieres gestionar?',
+        choices: [
+          { name: '🚀 Setup (Flujo completo)', value: 'setup' },
+          { name: '🔧 Indexer (RoslynIndexer)', value: 'indexer' },
+          { name: '💾 IndexerDb (Graph Data Processor)', value: 'indexerdb' },
+          { name: '🔍 Query (Graph Query API)', value: 'query' },
+          { name: '📦 Repository (Repo management)', value: 'repo' },
+          { name: '🧪 Testing (Test suite)', value: 'test' },
+          { name: '🌟 All (Todas las operaciones)', value: 'all' },
+          { name: '📊 Status (Ver estado)', value: 'status' }
+        ]
+      },
+      {
+        type: 'list',
+        name: 'action',
+        message: '¿Qué acción quieres realizar?',
+        choices: (answers) => {
+          const choices = [];
+          
+          if (answers.component === 'setup') {
+            choices.push(
+              { name: '🚀 Run (ejecutar flujo completo)', value: 'run' },
+              { name: '📊 Status (ver estado)', value: 'status' }
+            );
+          } else if (answers.component === 'indexer') {
+            choices.push(
+              { name: '🏗️  Build (compilar)', value: 'build' },
+              { name: '🧪 Test (probar)', value: 'test' },
+              { name: '🔍 Analyze (analizar solución)', value: 'analyze' },
+              { name: '🧹 Clean (limpiar)', value: 'clean' }
+            );
+          } else if (answers.component === 'indexerdb') {
+            choices.push(
+              { name: '🏗️  Build (compilar)', value: 'build' },
+              { name: '▶️  Run (ejecutar)', value: 'run' },
+              { name: '🧹 Clean (limpiar)', value: 'clean' }
+            );
+          } else if (answers.component === 'query') {
+            choices.push(
+              { name: '🏗️  Build (construir imagen)', value: 'build' },
+              { name: '▶️  Run (iniciar servicio)', value: 'run' },
+              { name: '⏹️  Stop (detener servicio)', value: 'stop' },
+              { name: '🔄 Restart (reiniciar servicio)', value: 'restart' },
+              { name: '📜 Logs (ver logs)', value: 'logs' },
+              { name: '🧪 Test (ejecutar tests)', value: 'test' },
+              { name: '🧹 Clean (limpiar recursos)', value: 'clean' },
+              { name: '🗑️  Delete (eliminar contenedores)', value: 'delete' }
+            );
+          } else if (answers.component === 'repo') {
+            choices.push(
+              { name: '📥 Clone (clonar repositorio)', value: 'clone' },
+              { name: '📋 List (listar repositorios)', value: 'list' },
+              { name: '🧹 Clean (limpiar)', value: 'clean' }
+            );
+          } else if (answers.component === 'test') {
+            choices.push(
+              { name: '⚙️  Setup (configurar)', value: 'setup' },
+              { name: '▶️  Run (ejecutar)', value: 'run' },
+              { name: '📦 Batch (procesamiento por lotes)', value: 'batch' },
+              { name: '🧹 Cleanup (limpiar)', value: 'cleanup' }
+            );
+          } else if (answers.component === 'all') {
+            choices.push(
+              { name: '⚙️  Setup (configurar todo)', value: 'setup' },
+              { name: '🧪 Test (ejecutar todos los tests)', value: 'test' },
+              { name: '🧹 Clean (limpiar todo)', value: 'clean' }
+            );
+          }
+          
+          choices.push({ name: '📊 Status (estado)', value: 'status' });
+          return choices;
+        },
+        when: (answers) => answers.component !== 'status'
+      }
+    ]);
+
+    // Ejecutar comando seleccionado
+    if (component === 'status') {
+      await program.parseAsync(['node', 'cli.js', 'status']);
+    } else if (component === 'setup' && action === 'run') {
+      await setupHandler.runFullSetup({});
+    } else if (component === 'setup' && action === 'status') {
+      await setupHandler.status();
+    } else if (component === 'indexerdb' && action === 'run') {
+      await indexerDbHandler.runInteractive();
+    } else if (component === 'query') {
+      // Ejecutar directamente las acciones de query
+      const args = ['node', 'cli.js', 'query', action];
+      await program.parseAsync(args);
+    } else if (component === 'repo' && action === 'clone') {
+      // Modo interactivo especial para clone - solicitar parámetros
+      // Cargar configuración desde .env si existe
+      const envConfig = await loadRepoEnvConfig();
+      
+      const cloneOptions = await inquirer.prompt([
+        {
+          type: 'input',
+          name: 'url',
+          message: '🔗 URL del repositorio:',
+          default: envConfig.GRAFO_DEFAULT_REPO_URL || '',
+          validate: (input) => {
+            if (!input || input.trim() === '') {
+              return 'La URL es requerida';
+            }
+            // Validación básica de URL
+            if (!input.includes('github.com') && !input.includes('azure.com') && !input.includes('visualstudio.com') && !input.includes('_git')) {
+              return 'URL no válida. Debe ser de Azure DevOps o GitHub';
+            }
+            return true;
+          }
+        },
+        {
+          type: 'input',
+          name: 'branch',
+          message: '🌿 Rama a clonar (Enter para usar default):',
+          default: envConfig.GRAFO_DEFAULT_BRANCH || 'main'
+        },
+        {
+          type: 'input',
+          name: 'sparse',
+          message: '📁 Carpetas para sparse checkout (opcional, separadas por coma):',
+          default: envConfig.GRAFO_DEFAULT_SPARSE || ''
+        },
+        {
+          type: 'input',
+          name: 'folder',
+          message: '📂 Nombre de carpeta personalizado (Enter para auto-detectar):',
+          default: ''
+        }
+      ]);
+
+      // Ejecutar el comando clone con las opciones
+      await repoHandler.clone({
+        url: cloneOptions.url,
+        branch: cloneOptions.branch,
+        sparse: cloneOptions.sparse || undefined,
+        folder: cloneOptions.folder || undefined
+      });
+    } else {
+      const args = ['node', 'cli.js', component];
+      if (action) args.push(action);
+      await program.parseAsync(args);
+    }
+  });
+
+// Mostrar ayuda por defecto si no hay argumentos
+if (process.argv.length <= 2) {
+  displayBanner('GRAFO');
+  displayHelp();
+} else {
+  program.parse(process.argv);
+}

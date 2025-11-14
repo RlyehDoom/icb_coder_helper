@@ -1,0 +1,10 @@
+# Environment configuration
+.env
+
+# Temporary files
+*.tmp
+*.log
+
+# OS specific
+.DS_Store
+Thumbs.db
