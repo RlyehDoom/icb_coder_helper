@@ -229,6 +229,7 @@ class GraphMCPTools:
             query=args["query"],
             nodeType=args.get("node_type"),
             project=args.get("project"),
+            namespace=args.get("namespace"),
             limit=args.get("limit", 20)
         )
 
@@ -263,7 +264,9 @@ class GraphMCPTools:
             className=args["className"],
             methodName=args.get("methodName"),
             namespace=args.get("namespace"),
-            project=args.get("project"),
+            relativePath=args.get("relativePath"),
+            absolutePath=args.get("absolutePath"),
+            projectName=args.get("projectName"),
             includeRelated=args.get("includeRelated", True),
             maxDepth=args.get("maxDepth", 2)
         )
@@ -271,18 +274,24 @@ class GraphMCPTools:
         result = await self.graph_service.get_code_context(request)
 
         if not result.found:
+            suggestions_msg = "\n".join(result.suggestions) if result.suggestions else ""
+            message = f"No se encontró: {args['className']}"
+            if suggestions_msg:
+                message += f"\n\nSugerencias:\n{suggestions_msg}"
             return json.dumps({
                 "found": False,
-                "message": result.message or f"No se encontró: {args['className']}"
+                "message": message,
+                "suggestions": result.suggestions
             }, indent=2)
 
         return json.dumps({
             "found": True,
-            "target": result.target.dict() if result.target else None,
-            "related": [node.dict() for node in result.related] if result.related else [],
-            "relationships": result.relationships,
-            "message": result.message
-        }, indent=2)
+            "mainElement": result.mainElement.model_dump() if result.mainElement else None,
+            "relatedElements": [node.model_dump() for node in result.relatedElements],
+            "edges": [edge.model_dump() for edge in result.edges],
+            "projectInfo": result.projectInfo.model_dump() if result.projectInfo else None,
+            "suggestions": result.suggestions
+        }, indent=2, default=str)
 
     async def _list_projects(self, args: Dict[str, Any]) -> str:
         """Lista proyectos disponibles."""
@@ -301,18 +310,29 @@ class GraphMCPTools:
 
         formatted_projects = []
         for project in results:
-            formatted_projects.append({
-                "id": project.get("_id"),
-                "name": project.get("projectName"),
-                "namespace": project.get("namespace"),
-                "nodeCount": len(project.get("nodes", [])),
-                "edgeCount": len(project.get("edges", []))
-            })
+            # results retorna diccionarios, no objetos ProjectSummary
+            if isinstance(project, dict):
+                formatted_projects.append({
+                    "id": project.get("_id"),
+                    "name": project.get("projectName"),
+                    "namespace": project.get("namespace"),
+                    "nodeCount": len(project.get("nodes", [])),
+                    "edgeCount": len(project.get("edges", []))
+                })
+            else:
+                # Si es un objeto Pydantic
+                formatted_projects.append({
+                    "id": project.MongoId,
+                    "name": project.ProjectName,
+                    "layer": project.Layer,
+                    "nodeCount": project.NodeCount,
+                    "edgeCount": project.EdgeCount
+                })
 
         return json.dumps({
             "message": f"Se encontraron {len(results)} proyectos",
             "projects": formatted_projects
-        }, indent=2)
+        }, indent=2, default=str)
 
     async def _get_project_structure(self, args: Dict[str, Any]) -> str:
         """Obtiene estructura de un proyecto."""
@@ -373,19 +393,31 @@ class GraphMCPTools:
         context_request = CodeContextRequest(
             className=target.Name,
             namespace=target.Namespace,
-            project=target.Project,
-            includeRelated=True,
-            maxDepth=1
+            projectName=target.Project,
+            includeRelated=True
         )
 
         context = await self.graph_service.get_code_context(context_request)
 
-        # Filtrar solo implementaciones/herencias
+        # Filtrar solo implementaciones/herencias de los edges
         implementations = []
-        if context.relationships:
-            for rel_type, edges in context.relationships.items():
-                if rel_type in ["Implements", "Inherits"]:
-                    implementations.extend(edges)
+        if context.edges:
+            for edge in context.edges:
+                if edge.Relationship in ["Implements", "Inherits"]:
+                    # Encontrar el nodo relacionado
+                    related_node = next(
+                        (node for node in context.relatedElements
+                         if node.Id == edge.Source or node.Id == edge.Target),
+                        None
+                    )
+                    if related_node:
+                        implementations.append({
+                            "name": related_node.Name,
+                            "namespace": related_node.Namespace,
+                            "type": related_node.Type,
+                            "relationship": edge.Relationship,
+                            "project": related_node.Project
+                        })
 
         return json.dumps({
             "interface": target.Name,

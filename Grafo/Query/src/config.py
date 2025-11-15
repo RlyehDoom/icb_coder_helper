@@ -6,9 +6,10 @@ from pathlib import Path
 from typing import Optional
 
 # Configuración de MongoDB (compatible con IndexerDb)
+# Por defecto usa puerto 27019 sin autenticación (modo desarrollo)
 MONGODB_CONNECTION_STRING = os.getenv(
-    "MONGODB_CONNECTION_STRING", 
-    "mongodb://InfocorpAI:InfocorpAI2025@localhost:27017/"
+    "MONGODB_CONNECTION_STRING",
+    "mongodb://localhost:27019/"
 )
 MONGODB_DATABASE = os.getenv("MONGODB_DATABASE", "GraphDB")
 MONGODB_PROJECTS_COLLECTION = os.getenv("MONGODB_PROJECTS_COLLECTION", "projects")

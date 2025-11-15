@@ -139,6 +139,7 @@ class CodeContextRequest(BaseModel):
     projectName: Optional[str] = Field(None, description="Nombre del proyecto")
     includeRelated: bool = Field(default=True, description="Incluir elementos relacionados")
     maxRelated: int = Field(default=10, ge=1, le=50)
+    maxDepth: int = Field(default=2, ge=1, le=5, description="Profundidad máxima de relaciones")
 
 
 class CodeContextResponse(BaseModel):
