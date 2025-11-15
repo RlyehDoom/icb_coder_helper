@@ -1,0 +1,66 @@
+# Dockerfile para Grafo Query MCP Server
+FROM python:3.11-slim
+
+# Metadatos
+LABEL maintainer="Grafo Team"
+LABEL description="MCP Server for Grafo Query Service - Model Context Protocol"
+LABEL version="1.0.0"
+
+# Establecer directorio de trabajo
+WORKDIR /app
+
+# Copiar requirements
+COPY requirements.txt .
+
+# Instalar dependencias
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copiar código fuente
+COPY src/ ./src/
+
+# Variables de entorno por defecto (sobrescritas por docker-compose)
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+ENV LOG_LEVEL=INFO
+
+# Configuración de MongoDB (sobrescrita por docker-compose)
+ENV MONGODB_CONNECTION_STRING=mongodb://grafo-mongodb:27019/
+ENV MONGODB_DATABASE=GraphDB
+ENV MONGODB_PROJECTS_COLLECTION=projects
+
+# Crear usuario no-root para seguridad
+RUN useradd -m -u 1000 mcpuser && chown -R mcpuser:mcpuser /app
+USER mcpuser
+
+# Health check script
+COPY --chown=mcpuser:mcpuser <<EOF /app/healthcheck.py
+import sys
+import asyncio
+from src.services import get_mongodb_service
+
+async def check():
+    try:
+        mongodb_service = get_mongodb_service()
+        await mongodb_service.connect()
+        is_healthy = await mongodb_service.is_healthy()
+        await mongodb_service.disconnect()
+        sys.exit(0 if is_healthy else 1)
+    except Exception:
+        sys.exit(1)
+
+asyncio.run(check())
+EOF
+
+# Copiar script de inicio HTTP
+COPY start_mcp_http.py .
+
+# Exponer puerto HTTP para MCP
+EXPOSE 8082
+
+# Health check - verificar endpoint HTTP
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD python -c "import httpx; httpx.get('http://localhost:8082/health', timeout=5.0)" || exit 1
+
+# Iniciar servidor MCP HTTP
+# Múltiples clientes pueden conectarse simultáneamente vía SSE
+CMD ["python", "start_mcp_http.py"]

@@ -1,100 +1,214 @@
-# Instalación - Grafo CLI
+# Instalación - Grafo
 
-## 🚀 Instalación Automática
-
-```bash
-cd Grafo
-./scripts/setup.sh
-node src/cli.js status
-```
+Guía de instalación del sistema Grafo para análisis de código C# y servidor MCP.
 
 ## 📋 Prerequisitos
 
 Antes de instalar, verifica que tienes:
 
+### Requeridos
+- **Docker Desktop** - Para MongoDB y servicios containerizados
+  - Windows: https://www.docker.com/products/docker-desktop/
+  - Mac: https://www.docker.com/products/docker-desktop/
+  - Linux: https://docs.docker.com/engine/install/
+
+- **Node.js 18+** - Para CLI de Grafo
+  ```bash
+  node --version  # >= 18.0.0
+  ```
+  - Descargar: https://nodejs.org/
+
+### Para Indexación (Opcional)
+Si vas a indexar código C#:
+
+- **.NET 8.0 SDK** - Para Indexer y IndexerDb
+  ```bash
+  dotnet --version  # >= 8.0.0
+  ```
+  - Descargar: https://dotnet.microsoft.com/download
+
+## 🚀 Instalación
+
+### 1. Instalar CLI de Grafo
+
 ```bash
-node --version    # >= 16.x
-dotnet --version  # >= 8.0
-git --version     # cualquier versión
+cd Grafo
+npm install
+npm link
 ```
 
-### Windows
-- Instala **Git for Windows** (incluye Git Bash automáticamente)
-- Descarga: https://git-scm.com/download/win
-
-## 🎯 Comandos Esenciales
-
-### Primer Uso
+Verificar instalación:
 ```bash
-# Configurar todo el entorno (automático)
-./scripts/setup.sh
-
-# Ver estado del sistema
-node src/cli.js status
-
-# Modo interactivo (recomendado)
-node src/cli.js interactive
+grafo --version
 ```
 
-### Análisis de Código
-```bash
-# Compilar RoslynIndexer
-node src/cli.js indexer build
+### 2. Iniciar Servicios
 
-# Analizar una solución
-node src/cli.js indexer analyze -s ./path/to/solution.sln -v
+```bash
+# Iniciar MongoDB
+grafo mongodb start
+
+# Construir e iniciar MCP Server
+grafo mcp build
+grafo mcp start
 ```
 
-### Gestión de Repositorios
-```bash
-# Listar repositorios disponibles
-node src/cli.js repo list
+### 3. Verificar Estado
 
-# Clonar repositorio
-node src/cli.js repo clone -u https://dev.azure.com/org/project/_git/repo
+```bash
+grafo mongodb status
+grafo mcp status
 ```
 
-### Testing
-```bash
-# Configurar testing
-node src/cli.js test setup
+## ✅ Verificación Completa
 
-# Ejecutar análisis completo
-node src/cli.js test run
+```bash
+# Ver estado de todos los servicios
+docker ps
+
+# Deberías ver:
+# - grafo-mongodb (puerto 27019)
+# - grafo-mcp-server (puerto 8083)
 ```
 
-## 🛠️ Instalación Global (Opcional)
+## 🎯 Próximos Pasos
 
-```bash
-./scripts/install.sh
-grafo status  # Usar desde cualquier directorio
+### Configurar Cursor/VSCode
+
+El comando `grafo mcp status` muestra la configuración necesaria:
+
+```json
+{
+  "mcpServers": {
+    "grafo-query-http": {
+      "url": "http://localhost:8083/sse",
+      "transport": "sse"
+    }
+  }
+}
 ```
 
-## 🔧 Configuración
+Agregar esta configuración a:
+- **Cursor:** `~/.cursor/mcp.json` (Linux/Mac) o `%APPDATA%\Cursor\User\mcp.json` (Windows)
+- **VSCode:** Similar ubicación
+
+Reiniciar el IDE.
+
+### Indexar Código C# (Opcional)
+
+Si tienes .NET SDK instalado y quieres indexar código C#:
 
 ```bash
-# Para repositorios privados de Azure DevOps
-export AZURE_DEVOPS_PAT="your-token"
+# 1. Indexar solución
+cd Grafo/Indexer
+dotnet run -- --solution "/path/to/solution.sln"
+
+# 2. Almacenar en MongoDB
+cd ../IndexerDb
+dotnet run --all
 ```
 
-## 🚨 Problemas Comunes
+## 🛠️ Comandos Útiles
+
+### MongoDB
+```bash
+grafo mongodb start      # Iniciar
+grafo mongodb stop       # Detener
+grafo mongodb restart    # Reiniciar
+grafo mongodb status     # Ver estado
+grafo mongodb logs       # Ver logs
+grafo mongodb shell      # Abrir mongosh
+grafo mongodb clean      # Limpiar (elimina datos)
+```
+
+### MCP Server
+```bash
+grafo mcp build          # Construir imagen
+grafo mcp start          # Iniciar
+grafo mcp stop           # Detener
+grafo mcp restart        # Reiniciar
+grafo mcp status         # Ver estado (muestra config)
+grafo mcp logs           # Ver logs
+grafo mcp test           # Ejecutar tests
+grafo mcp shell          # Abrir shell
+grafo mcp clean          # Limpiar
+```
+
+## 🐛 Troubleshooting
+
+### Docker no está instalado
+```bash
+# Verificar Docker
+docker --version
+docker info
+
+# Si no está instalado, descargar Docker Desktop
+```
+
+### Puerto 27019 ya en uso
+```bash
+# Ver qué está usando el puerto
+netstat -ano | findstr ":27019"  # Windows
+lsof -i :27019                   # Linux/Mac
+
+# Detener el proceso o cambiar puerto en docker-compose.yml
+```
+
+### MCP Server no inicia
+```bash
+# Ver logs para diagnosticar
+grafo mcp logs
+
+# Verificar MongoDB está corriendo
+grafo mongodb status
+
+# Reiniciar todo
+grafo mcp restart
+```
+
+### Permisos en Linux/Mac
+```bash
+# Si hay problemas de permisos con npm link
+sudo npm link
+
+# O agregar Node.js al PATH del usuario
+```
+
+## 🔄 Actualización
+
+Para actualizar Grafo a la última versión:
 
 ```bash
-# Prerequisitos faltantes
-dotnet --version  # Instalar .NET 8.0 SDK
-node --version    # Instalar Node.js >= 16.x
-git --version     # Instalar Git
+cd Grafo
 
-# Windows: scripts no ejecutables
-# Instalar Git for Windows (incluye Git Bash)
+# Actualizar código
+git pull
 
-# Permisos en Linux/macOS
-chmod +x scripts/*.sh
+# Reinstalar dependencias
+npm install
 
-# Reiniciar instalación
-./scripts/clean.sh && ./scripts/setup.sh
+# Rebuild servicios Docker
+grafo mcp build
+grafo mcp restart
+```
+
+## 🧹 Desinstalación
+
+```bash
+# Detener servicios
+grafo mcp stop
+grafo mongodb stop
+
+# Limpiar contenedores e imágenes
+grafo mcp clean
+grafo mongodb clean
+
+# Desinstalar CLI global
+npm unlink
 ```
 
 ---
 
-¡Listo! Usa `node src/cli.js interactive` para empezar.
+**Documentación Completa:** Ver [README.md](README.md)
+**Quick Start:** Ver [QUICKSTART.md](QUICKSTART.md)
+**Arquitectura:** Ver [ECOSYSTEM_OVERVIEW.md](ECOSYSTEM_OVERVIEW.md)

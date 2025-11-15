@@ -7,9 +7,10 @@ import { displayProgressStart, displayProgressEnd, displayError, displaySuccess,
 export class QueryHandler {
   constructor(systemUtils) {
     this.systemUtils = systemUtils;
-    this.queryDir = path.resolve('./Query');
-    this.dockerComposePath = path.join(this.queryDir, 'docker-compose.yml');
+    this.queryDir = path.resolve('./Grafo/Query');
+    this.dockerComposePath = path.resolve('./Grafo/docker-compose.yml');
     this.dockerfilePath = path.join(this.queryDir, 'Dockerfile');
+    this.projectName = 'grafo';
     this.serviceName = 'query-service';
     this.containerName = 'grafo-query-service';
     this.port = 8081;
@@ -39,8 +40,8 @@ export class QueryHandler {
 
     try {
       displayInfo('Construyendo imagen Docker...');
-      const result = await this.systemUtils.execute('docker-compose', ['build'], {
-        cwd: this.queryDir
+      const result = await this.systemUtils.execute('docker-compose', ['-f', this.dockerComposePath, '-p', this.projectName, 'build', this.serviceName], {
+        cwd: path.resolve('./Grafo')
       });
 
       if (result.success) {
@@ -84,8 +85,12 @@ export class QueryHandler {
         displayInfo('Eliminando contenedor existente para usar imagen actualizada...');
         
         // Eliminar el contenedor existente sin preguntar
-        const downResult = await this.systemUtils.execute('docker-compose', ['down'], {
-          cwd: this.queryDir
+        await this.systemUtils.execute('docker-compose', ['-f', this.dockerComposePath, '-p', this.projectName, 'stop', this.serviceName], {
+          cwd: path.resolve('./Grafo')
+        });
+
+        const downResult = await this.systemUtils.execute('docker-compose', ['-f', this.dockerComposePath, '-p', this.projectName, 'rm', '-f', this.serviceName], {
+          cwd: path.resolve('./Grafo')
         });
 
         if (!downResult.success) {
@@ -97,14 +102,15 @@ export class QueryHandler {
 
       displayInfo('Creando nuevo contenedor con imagen actualizada...');
       const detached = options.detached !== false; // Por defecto en modo detached
-      
-      const args = ['up'];
+
+      const args = ['-f', this.dockerComposePath, '-p', this.projectName, 'up'];
       if (detached) {
         args.push('-d');
       }
+      args.push(this.serviceName);
 
       const result = await this.systemUtils.execute('docker-compose', args, {
-        cwd: this.queryDir
+        cwd: path.resolve('./Grafo')
       });
 
       if (result.success) {
@@ -126,10 +132,10 @@ export class QueryHandler {
 
   async stop() {
     displayProgressStart('Deteniendo Query Service');
-    
+
     try {
-      const result = await this.systemUtils.execute('docker-compose', ['stop'], {
-        cwd: this.queryDir
+      const result = await this.systemUtils.execute('docker-compose', ['-f', this.dockerComposePath, '-p', this.projectName, 'stop', this.serviceName], {
+        cwd: path.resolve('./Grafo')
       });
 
       if (result.success) {
@@ -147,30 +153,16 @@ export class QueryHandler {
 
   async delete(options = {}) {
     displayProgressStart('Eliminando contenedores y recursos de Query Service');
-    
+
     try {
-      const args = ['down'];
-      
-      // Preguntar si se deben eliminar volúmenes
-      if (!options.skipConfirm) {
-        const { removeVolumes } = await inquirer.prompt([
-          {
-            type: 'confirm',
-            name: 'removeVolumes',
-            message: '¿Deseas eliminar también los volúmenes?',
-            default: false
-          }
-        ]);
+      // Detener el servicio
+      await this.systemUtils.execute('docker-compose', ['-f', this.dockerComposePath, '-p', this.projectName, 'stop', this.serviceName], {
+        cwd: path.resolve('./Grafo')
+      });
 
-        if (removeVolumes) {
-          args.push('-v');
-        }
-      } else if (options.volumes) {
-        args.push('-v');
-      }
-
-      const result = await this.systemUtils.execute('docker-compose', args, {
-        cwd: this.queryDir
+      // Remover el contenedor
+      const result = await this.systemUtils.execute('docker-compose', ['-f', this.dockerComposePath, '-p', this.projectName, 'rm', '-f', this.serviceName], {
+        cwd: path.resolve('./Grafo')
       });
 
       if (result.success) {
@@ -188,10 +180,10 @@ export class QueryHandler {
 
   async restart() {
     displayProgressStart('Reiniciando Query Service');
-    
+
     try {
-      const result = await this.systemUtils.execute('docker-compose', ['restart'], {
-        cwd: this.queryDir
+      const result = await this.systemUtils.execute('docker-compose', ['-f', this.dockerComposePath, '-p', this.projectName, 'restart', this.serviceName], {
+        cwd: path.resolve('./Grafo')
       });
 
       if (result.success) {
@@ -211,20 +203,22 @@ export class QueryHandler {
   async logs(options = {}) {
     displayInfo('Mostrando logs de Query Service...');
     displayInfo('Presiona Ctrl+C para salir\n');
-    
+
     try {
-      const args = ['logs'];
-      
+      const args = ['-f', this.dockerComposePath, '-p', this.projectName, 'logs'];
+
       if (options.follow !== false) {
         args.push('-f'); // Follow logs por defecto
       }
-      
+
       if (options.tail) {
         args.push('--tail', options.tail.toString());
       }
 
+      args.push(this.serviceName);
+
       await this.systemUtils.execute('docker-compose', args, {
-        cwd: this.queryDir,
+        cwd: path.resolve('./Grafo'),
         stdio: 'inherit'
       });
 
@@ -403,10 +397,10 @@ export class QueryHandler {
 
   async exec(command) {
     displayInfo(`Ejecutando comando en el contenedor: ${command}`);
-    
+
     try {
-      await this.systemUtils.execute('docker-compose', ['exec', this.serviceName, 'sh', '-c', command], {
-        cwd: this.queryDir,
+      await this.systemUtils.execute('docker-compose', ['-f', this.dockerComposePath, '-p', this.projectName, 'exec', this.serviceName, 'sh', '-c', command], {
+        cwd: path.resolve('./Grafo'),
         stdio: 'inherit'
       });
 
@@ -420,10 +414,10 @@ export class QueryHandler {
   async shell() {
     displayInfo('Abriendo shell interactivo en el contenedor...');
     displayInfo('Usa "exit" para salir\n');
-    
+
     try {
-      await this.systemUtils.execute('docker-compose', ['exec', this.serviceName, 'sh'], {
-        cwd: this.queryDir,
+      await this.systemUtils.execute('docker-compose', ['-f', this.dockerComposePath, '-p', this.projectName, 'exec', this.serviceName, 'sh'], {
+        cwd: path.resolve('./Grafo'),
         stdio: 'inherit'
       });
 
@@ -452,11 +446,11 @@ export class QueryHandler {
       }
 
       displayInfo('Ejecutando tests...');
-      
+
       // Ejecutar tests dentro del contenedor
-      const result = await this.systemUtils.execute('docker-compose', 
-        ['exec', '-T', this.serviceName, 'python', '-m', 'pytest', 'tests/', '-v'],
-        { cwd: this.queryDir }
+      const result = await this.systemUtils.execute('docker-compose',
+        ['-f', this.dockerComposePath, '-p', this.projectName, 'exec', '-T', this.serviceName, 'python', '-m', 'pytest', 'tests/', '-v'],
+        { cwd: path.resolve('./Grafo') }
       );
 
       if (result.success) {

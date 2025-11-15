@@ -1,0 +1,23 @@
+{
+  "$schema": "https://modelcontextprotocol.io/schemas/mcp.json",
+  "mcpServers": {
+    "grafo-query-docker": {
+      "command": "docker",
+      "args": [
+        "exec",
+        "-i",
+        "grafo-mcp-server",
+        "python",
+        "start_mcp.py"
+      ],
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      },
+      "metadata": {
+        "description": "Grafo Query MCP Server running in Docker",
+        "version": "1.0.0",
+        "author": "Grafo Team"
+      }
+    }
+  }
+}

@@ -5,12 +5,18 @@ services:
     ports:
       - "8081:8081"
     environment:
-      - MONGODB_CONNECTION_STRING=mongodb://InfocorpAI:InfocorpAI2025@host.docker.internal:27017/
+      - MONGODB_CONNECTION_STRING=mongodb://grafo-mongodb:27019/
       - MONGODB_DATABASE=GraphDB
       - MONGODB_PROJECTS_COLLECTION=projects
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=8081
       - LOG_LEVEL=INFO
       - CORS_ORIGINS=*
+    networks:
+      - grafo-network
     restart: unless-stopped
+
+networks:
+  grafo-network:
+    external: true
 

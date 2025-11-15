@@ -11,6 +11,8 @@ import { QueryHandler } from './handlers/query.js';
 import { RepoHandler } from './handlers/repo.js';
 import { TestHandler } from './handlers/test.js';
 import { SetupHandler } from './handlers/setup.js';
+import { MongoDBHandler } from './handlers/mongodb.js';
+import { MCPHandler } from './handlers/mcp.js';
 import SystemUtils from './utils/system.js';
 import { displayBanner, displayHelp, displaySeparator, displayWarning, displaySuccess, displayError, displayInfo } from './utils/display.js';
 
@@ -22,6 +24,8 @@ const queryHandler = new QueryHandler(systemUtils);
 const repoHandler = new RepoHandler(systemUtils);
 const testHandler = new TestHandler(systemUtils, indexerHandler, repoHandler);
 const setupHandler = new SetupHandler(systemUtils, repoHandler, indexerHandler);
+const mongodbHandler = new MongoDBHandler(systemUtils);
+const mcpHandler = new MCPHandler(systemUtils, mongodbHandler);
 
 // Helper function to load environment configuration from Repo/.env
 async function loadRepoEnvConfig() {
@@ -601,6 +605,102 @@ program
       const args = ['node', 'cli.js', component];
       if (action) args.push(action);
       await program.parseAsync(args);
+    }
+  });
+
+// Comandos MongoDB
+program
+  .command('mongodb')
+  .description('Gestionar MongoDB en Docker')
+  .argument('[action]', 'Acción: start, stop, restart, status, logs, shell, clean', 'help')
+  .action(async (action) => {
+    displayBanner('GRAFO - MongoDB');
+
+    switch (action) {
+      case 'start':
+        await mongodbHandler.start();
+        break;
+      case 'stop':
+        await mongodbHandler.stop();
+        break;
+      case 'restart':
+        await mongodbHandler.restart();
+        break;
+      case 'status':
+        await mongodbHandler.status();
+        break;
+      case 'logs':
+        await mongodbHandler.logs();
+        break;
+      case 'shell':
+        await mongodbHandler.shell();
+        break;
+      case 'clean':
+        await mongodbHandler.clean();
+        break;
+      case 'help':
+      default:
+        console.log(chalk.cyan('\n📊 Comandos MongoDB:\n'));
+        console.log('  grafo mongodb start    - Inicia MongoDB en Docker');
+        console.log('  grafo mongodb stop     - Detiene MongoDB');
+        console.log('  grafo mongodb restart  - Reinicia MongoDB');
+        console.log('  grafo mongodb status   - Ver estado de MongoDB');
+        console.log('  grafo mongodb logs     - Ver logs de MongoDB');
+        console.log('  grafo mongodb shell    - Abrir mongosh');
+        console.log('  grafo mongodb clean    - Limpiar MongoDB (elimina datos)\n');
+        break;
+    }
+  });
+
+// Comandos MCP
+program
+  .command('mcp')
+  .description('Gestionar MCP Server en Docker')
+  .argument('[action]', 'Acción: build, start, stop, restart, status, logs, test, shell, clean', 'help')
+  .action(async (action) => {
+    displayBanner('GRAFO - MCP Server');
+
+    switch (action) {
+      case 'build':
+        await mcpHandler.build();
+        break;
+      case 'start':
+        await mcpHandler.start();
+        break;
+      case 'stop':
+        await mcpHandler.stop();
+        break;
+      case 'restart':
+        await mcpHandler.restart();
+        break;
+      case 'status':
+        await mcpHandler.status();
+        break;
+      case 'logs':
+        await mcpHandler.logs();
+        break;
+      case 'test':
+        await mcpHandler.test();
+        break;
+      case 'shell':
+        await mcpHandler.shell();
+        break;
+      case 'clean':
+        await mcpHandler.clean();
+        break;
+      case 'help':
+      default:
+        console.log(chalk.cyan('\n🔧 Comandos MCP Server:\n'));
+        console.log('  grafo mcp build     - Construir imagen Docker');
+        console.log('  grafo mcp start     - Iniciar MCP Server');
+        console.log('  grafo mcp stop      - Detener MCP Server');
+        console.log('  grafo mcp restart   - Reiniciar MCP Server');
+        console.log('  grafo mcp status    - Ver estado del MCP Server');
+        console.log('  grafo mcp logs      - Ver logs del MCP Server');
+        console.log('  grafo mcp test      - Ejecutar tests');
+        console.log('  grafo mcp shell     - Abrir shell en contenedor');
+        console.log('  grafo mcp clean     - Limpiar MCP Server\n');
+        break;
     }
   });
 

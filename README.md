@@ -28,41 +28,76 @@ Este sistema permite:
 
 ```bash
 # Verificar herramientas instaladas
-dotnet --version    # >= 8.0
-python --version    # >= 3.11
-mongosh --version   # MongoDB CLI (opcional)
+docker --version    # Docker Desktop (requerido)
+node --version      # >= 18.0 (para CLI de Grafo)
+dotnet --version    # >= 8.0 (para indexar código C#)
 ```
 
-### 2. Iniciar MongoDB
+### 2. Instalar CLI de Grafo
 
 ```bash
-# Opción A: Docker
-docker run -d \
-  --name mongodb-grafo \
-  -p 27017:27017 \
-  -e MONGO_INITDB_ROOT_USERNAME=InfocorpAI \
-  -e MONGO_INITDB_ROOT_PASSWORD=InfocorpAI2025 \
-  mongo:8.0
+cd Grafo
+npm install
+npm link
 
-# Opción B: MongoDB Atlas (Cloud)
-# Configurar en appsettings.json de IndexerDb
+# Verificar instalación
+grafo --version
 ```
 
-### 3. Indexar Código (Primera vez)
+### 3. Iniciar MongoDB
 
 ```bash
-# Paso 1: Clonar repositorio a analizar
-cd Grafo/Repo/Cloned
-git clone <your-repo-url> MyProject
+# Usando CLI de Grafo (recomendado)
+grafo mongodb start
 
-# Paso 2: Ejecutar Indexer
-cd ../../Indexer
-dotnet build
-dotnet run -- --solution "../Repo/Cloned/MyProject/MyProject.sln"
+# Verificar estado
+grafo mongodb status
+```
 
-# Paso 3: Almacenar en MongoDB
+### 4. Iniciar MCP Server
+
+```bash
+# Construir e iniciar MCP Server
+grafo mcp build
+grafo mcp start
+
+# El CLI mostrará la configuración JSON para Cursor
+# Verificar estado
+grafo mcp status
+```
+
+### 5. Configurar Cursor/VSCode
+
+Agregar la configuración que muestra `grafo mcp status` a tu IDE:
+
+```json
+{
+  "mcpServers": {
+    "grafo-query-http": {
+      "url": "http://localhost:8083/sse",
+      "transport": "sse"
+    }
+  }
+}
+```
+
+Ubicación:
+- **Cursor:** `~/.cursor/mcp.json`
+- **Windows:** `%APPDATA%\Cursor\User\mcp.json`
+
+Reiniciar el IDE.
+
+### 6. Indexar Código C# (Opcional)
+
+Si tienes código C# para analizar:
+
+```bash
+# Paso 1: Ejecutar Indexer
+cd Grafo/Indexer
+dotnet run -- --solution "/path/to/solution.sln"
+
+# Paso 2: Almacenar en MongoDB
 cd ../IndexerDb
-dotnet build
 dotnet run --all
 
 # Verificar datos
@@ -72,29 +107,7 @@ dotnet run --interactive
 > exit
 ```
 
-### 4. Iniciar Query Service
-
-```bash
-cd Grafo/Query
-
-# Opción A: Script automático (Recomendado)
-chmod +x quick_start.sh
-./quick_start.sh
-
-# Opción B: Manual
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-# Editar .env si es necesario
-python -m uvicorn src.server:app --host 0.0.0.0 --port 8081 --reload
-
-# Verificar: http://localhost:8081/health
-```
-
-### 5. Integrar con MCP (Opcional)
-
-Ver: [Query/INTEGRATION_MCP.md](Query/INTEGRATION_MCP.md)
+**Ver guía completa:** [Grafo/README.md](Grafo/README.md) | [Grafo/QUICKSTART.md](Grafo/QUICKSTART.md)
 
 ## 📊 Componentes Detallados
 
@@ -146,44 +159,38 @@ dotnet run --interactive    # Modo consulta
 
 ---
 
-### 🌐 Query Service
-**Propósito:** API REST para consultar el grafo
+### 🌐 Query Service + MCP Server
+**Propósito:** Sistema dual para consultar el grafo
 
-**Tecnología:** Python 3.11, FastAPI, Motor  
-**Puerto:** 8081  
-**Base de datos:** MongoDB (GraphDB)  
+**Tecnología:** Python 3.11, FastAPI, Motor, MCP SDK
+**Puertos:**
+- Query Service (REST API): 8081
+- MCP Server (HTTP/SSE): 8083
 
-**Documentación:** 
-- [Query/README.md](Query/README.md)
-- [Query/INTEGRATION_MCP.md](Query/INTEGRATION_MCP.md)
-- [Query/PROJECT_SUMMARY.md](Query/PROJECT_SUMMARY.md)
+**Base de datos:** MongoDB (GraphDB) en puerto 27019
 
-**Endpoints principales:**
-```
-POST /api/context/code        # Contexto para MCP ⭐
-POST /api/nodes/search        # Búsqueda de nodos
-POST /api/projects/search     # Búsqueda de proyectos
-GET  /api/context/statistics  # Estadísticas
-GET  /health                  # Health check
-GET  /docs                    # Swagger UI
-```
+**Documentación:**
+- [Grafo/README.md](Grafo/README.md) - Guía completa
+- [Grafo/Query/README.md](Grafo/Query/README.md) - Documentación técnica
 
-**Ejecutar:**
+**MCP Server:**
+- Servidor HTTP/SSE para múltiples clientes Cursor/VSCode
+- 6 herramientas de consulta de código
+- Configuración: `http://localhost:8083/sse`
+
+**Gestión con CLI:**
 ```bash
-cd Query
-./quick_start.sh
-# Documentación: http://localhost:8081/docs
-```
+# MCP Server
+grafo mcp build          # Construir imagen
+grafo mcp start          # Iniciar (muestra config)
+grafo mcp status         # Ver estado
+grafo mcp logs           # Ver logs
+grafo mcp test           # Ejecutar tests
 
-**Ejemplo de uso:**
-```bash
-curl -X POST http://localhost:8081/api/context/code \
-  -H "Content-Type: application/json" \
-  -d '{
-    "className": "UserService",
-    "methodName": "CreateUser",
-    "includeRelated": true
-  }'
+# MongoDB
+grafo mongodb start      # Iniciar
+grafo mongodb status     # Ver estado
+grafo mongodb shell      # Abrir mongosh
 ```
 
 ---
@@ -231,22 +238,23 @@ cd Repo
          ▼
 ┌─────────────────┐
 │     MongoDB     │  (GraphDB.projects)
+│   Puerto 27019  │
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│ Query Service   │  (API REST)
+│  MCP Server     │  (HTTP/SSE - Puerto 8083)
+│  + Query Service│  (REST API - Puerto 8081)
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│      MCP        │  (Contexto para generación)
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│     Cursor      │  (Usuario final)
+│ Cursor/VSCode   │  (Usuario final)
+│  Múltiples      │  (http://localhost:8083/sse)
+│  clientes       │
 └─────────────────┘
+
+Todos los servicios ejecutan en red Docker: grafo-network
 ```
 
 ## 🧪 Pruebas
@@ -336,27 +344,38 @@ dotnet run --all
 ### MongoDB
 
 **Configuración por defecto:**
-- Host: `localhost:27017`
+- Host: `localhost:27019` (puerto interno y externo)
 - Database: `GraphDB`
 - Collections: `projects`, `processing_states`
-- User: `InfocorpAI`
-- Password: `InfocorpAI2025`
+- Sin autenticación (modo desarrollo)
+- Red Docker: `grafo-network`
 
-**Cambiar configuración:**
-- IndexerDb: Editar `IndexerDb/appsettings.json`
-- Query: Editar `Query/.env`
-
-### Query Service
-
-**Variables principales:**
-```env
-MONGODB_CONNECTION_STRING=mongodb://InfocorpAI:InfocorpAI2025@localhost:27017/
-MONGODB_DATABASE=GraphDB
-SERVER_PORT=8081
-LOG_LEVEL=INFO
+**Gestión:**
+```bash
+grafo mongodb start      # Iniciar
+grafo mongodb status     # Ver estado
+grafo mongodb logs       # Ver logs
+grafo mongodb shell      # Abrir mongosh
+grafo mongodb clean      # Limpiar (elimina datos)
 ```
 
-Ver: `Query/.env.example`
+### MCP Server
+
+**Configuración HTTP/SSE:**
+- Puerto externo: `8083`
+- Puerto interno: `8082`
+- Endpoint SSE: `http://localhost:8083/sse`
+- Transport: `sse`
+- Red Docker: `grafo-network`
+
+**Gestión:**
+```bash
+grafo mcp build          # Construir imagen
+grafo mcp start          # Iniciar
+grafo mcp status         # Ver estado (muestra config)
+grafo mcp logs           # Ver logs
+grafo mcp test           # Ejecutar tests
+```
 
 ## 🐛 Troubleshooting
 
@@ -463,15 +482,22 @@ Este proyecto es parte del sistema ICGuru.
 
 | Componente | Comando | Puerto/Output |
 |------------|---------|---------------|
-| MongoDB | `docker run -d --name mongodb-grafo -p 27017:27017 ...` | 27017 |
-| Indexer | `cd Indexer && dotnet run -- --solution path/to/sln` | output/*.json |
-| IndexerDb | `cd IndexerDb && dotnet run --all` | MongoDB |
-| Query | `cd Query && ./quick_start.sh` | 8081 |
+| CLI Grafo | `cd Grafo && npm install && npm link` | comando `grafo` |
+| MongoDB | `grafo mongodb start` | 27019 |
+| MCP Server | `grafo mcp build && grafo mcp start` | 8083 (HTTP/SSE) |
+| Indexer | `cd Grafo/Indexer && dotnet run -- --solution path/to/sln` | output/*.json |
+| IndexerDb | `cd Grafo/IndexerDb && dotnet run --all` | MongoDB |
 
 **Acceso Rápido:**
-- Query Docs: http://localhost:8081/docs
-- Query Health: http://localhost:8081/health
-- MongoDB: mongodb://InfocorpAI:InfocorpAI2025@localhost:27017/
+- MCP Server SSE: http://localhost:8083/sse
+- MCP Server Health: http://localhost:8083/health
+- Query Service: http://localhost:8081/docs
+- MongoDB: `mongodb://localhost:27019/`
+
+**Documentación:**
+- Guía Completa: [Grafo/README.md](Grafo/README.md)
+- Quick Start: [Grafo/QUICKSTART.md](Grafo/QUICKSTART.md)
+- Arquitectura: [Grafo/ECOSYSTEM_OVERVIEW.md](Grafo/ECOSYSTEM_OVERVIEW.md)
 
 ---
 

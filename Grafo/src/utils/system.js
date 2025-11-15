@@ -118,9 +118,11 @@ export default class SystemUtils {
     return new Promise((resolve, reject) => {
       // Para rutas completas de bash (con espacios), no usar shell
       // Para comandos simples, usar shell en Windows
+      // EXCEPTO para docker y docker-compose que deben ejecutarse sin shell
       const isFullPath = command.includes('\\') || command.includes('/');
-      const useShell = this.isWindows && !isFullPath;
-      
+      const isDockerCommand = command === 'docker' || command === 'docker-compose';
+      const useShell = this.isWindows && !isFullPath && !isDockerCommand;
+
       const child = spawn(command, args, {
         stdio: options.silent ? 'pipe' : 'inherit',
         shell: useShell,
@@ -443,13 +445,20 @@ export default class SystemUtils {
   async isPortAvailable(port) {
     return new Promise((resolve) => {
       const server = net.createServer();
-      
+
       server.listen(port, () => {
         server.once('close', () => resolve(true));
         server.close();
       });
-      
+
       server.on('error', () => resolve(false));
     });
+  }
+
+  /**
+   * Espera por un número de milisegundos
+   */
+  async wait(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
   }
 }

@@ -1,0 +1,57 @@
+services:
+  mcp-server:
+    build:
+      context: .
+      dockerfile: Dockerfile.mcp
+    container_name: grafo-mcp-server
+
+    # MCP usa stdin/stdout, configurar como interactivo
+    stdin_open: true
+    tty: true
+
+    # Variables de entorno
+    environment:
+      # MongoDB Configuration (hardcoded para Docker network)
+      - MONGODB_CONNECTION_STRING=mongodb://grafo-mongodb:27019/
+      - MONGODB_DATABASE=GraphDB
+      - MONGODB_PROJECTS_COLLECTION=projects
+
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+
+      # Python
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+
+    # Networking
+    # Conectar a la misma red que MongoDB
+    networks:
+      - grafo-network
+
+    # Reiniciar política
+    restart: unless-stopped
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py"]
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 3
+
+    # Etiquetas
+    labels:
+      - "com.grafo.service=mcp-server"
+      - "com.grafo.version=1.0.0"
+      - "com.grafo.description=Model Context Protocol Server for Grafo Query Service"
+
+# Red compartida con MongoDB
+networks:
+  grafo-network:
+    name: grafo-network
+    external: true
+
+# Volúmenes opcionales para logs
+volumes:
+  mcp-logs:
+    driver: local

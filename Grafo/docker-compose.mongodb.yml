@@ -1,0 +1,44 @@
+services:
+  mongodb:
+    image: mongo:8.0
+    container_name: grafo-mongodb
+    command: mongod --port 27019
+    ports:
+      - "27019:27019"
+
+    # Sin autenticación por defecto (modo simple)
+    # Para agregar autenticación, descomentar y configurar:
+    # environment:
+    #   - MONGO_INITDB_ROOT_USERNAME=admin
+    #   - MONGO_INITDB_ROOT_PASSWORD=password
+
+    volumes:
+      - grafo-mongodb-data:/data/db
+      - grafo-mongodb-config:/data/configdb
+
+    networks:
+      - grafo-network
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27019/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+    labels:
+      - "com.grafo.service=mongodb"
+      - "com.grafo.version=8.0"
+      - "com.grafo.description=MongoDB database for Grafo system"
+
+networks:
+  grafo-network:
+    external: true
+
+volumes:
+  grafo-mongodb-data:
+    name: grafo-mongodb-data
+  grafo-mongodb-config:
+    name: grafo-mongodb-config

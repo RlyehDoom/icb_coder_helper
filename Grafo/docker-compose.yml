@@ -1,0 +1,146 @@
+# Docker Compose Unificado para Grafo Stack
+# Stack: grafo
+# Servicios: MongoDB (27019), Query Service (8081), MCP Server
+
+services:
+  # ========================
+  # MongoDB Database
+  # ========================
+  mongodb:
+    image: mongo:8.0
+    container_name: grafo-mongodb
+    command: mongod --port 27019
+    ports:
+      - "27019:27019"
+
+    # Sin autenticación por defecto (modo simple)
+    # Para agregar autenticación, descomentar y configurar:
+    # environment:
+    #   - MONGO_INITDB_ROOT_USERNAME=admin
+    #   - MONGO_INITDB_ROOT_PASSWORD=password
+
+    volumes:
+      - grafo-mongodb-data:/data/db
+      - grafo-mongodb-config:/data/configdb
+
+    networks:
+      - grafo-network
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27019/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+
+    labels:
+      - "com.grafo.service=mongodb"
+      - "com.grafo.version=8.0"
+      - "com.grafo.description=MongoDB database for Grafo system"
+
+  # ========================
+  # Query Service (REST API)
+  # ========================
+  query-service:
+    build:
+      context: ./Query
+      dockerfile: Dockerfile
+    container_name: grafo-query-service
+    ports:
+      - "8081:8081"
+
+    environment:
+      # MongoDB Configuration (usa nombre del servicio en la red Docker)
+      - MONGODB_CONNECTION_STRING=mongodb://mongodb:27019/
+      - MONGODB_DATABASE=GraphDB
+      - MONGODB_PROJECTS_COLLECTION=projects
+
+      # Server Configuration
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8081
+
+      # Logging
+      - LOG_LEVEL=INFO
+
+      # CORS
+      - CORS_ORIGINS=*
+
+    networks:
+      - grafo-network
+
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+    restart: unless-stopped
+
+    labels:
+      - "com.grafo.service=query-service"
+      - "com.grafo.version=1.0.0"
+      - "com.grafo.description=REST API for querying C# code graph"
+
+  # ========================
+  # MCP Server (Model Context Protocol)
+  # ========================
+  mcp-server:
+    build:
+      context: ./Query
+      dockerfile: Dockerfile.mcp
+    container_name: grafo-mcp-server
+    ports:
+      - "8083:8082"
+
+    environment:
+      # MongoDB Configuration (usa nombre del servicio en la red Docker)
+      - MONGODB_CONNECTION_STRING=mongodb://mongodb:27019/
+      - MONGODB_DATABASE=GraphDB
+      - MONGODB_PROJECTS_COLLECTION=projects
+
+      # Logging
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+
+      # Python
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+
+    networks:
+      - grafo-network
+
+    depends_on:
+      mongodb:
+        condition: service_healthy
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py"]
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 3
+
+    labels:
+      - "com.grafo.service=mcp-server"
+      - "com.grafo.version=1.0.0"
+      - "com.grafo.description=Model Context Protocol Server for Grafo Query Service"
+
+# ========================
+# Networks
+# ========================
+networks:
+  grafo-network:
+    name: grafo-network
+    external: true
+
+# ========================
+# Volumes
+# ========================
+volumes:
+  grafo-mongodb-data:
+    name: grafo-mongodb-data
+    driver: local
+  grafo-mongodb-config:
+    name: grafo-mongodb-config
+    driver: local

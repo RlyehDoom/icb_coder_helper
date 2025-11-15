@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "grafo-query": {
+      "command": "C:/GITHUB/icb_coder_helper/Grafo/Query/venv/Scripts/python.exe",
+      "args": [
+        "start_mcp.py"
+      ],
+      "cwd": "C:/GITHUB/icb_coder_helper/Grafo/Query",
+      "env": {
+        "PYTHONPATH": "C:/GITHUB/icb_coder_helper/Grafo/Query"
+      }
+    }
+  }
+}

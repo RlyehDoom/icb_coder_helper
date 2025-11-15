@@ -1,0 +1,66 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+mcp.log
+mcp_debug.log
+
+# Docker
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Documentation (no necesaria en imagen)
+*.md
+docs/
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Scripts de desarrollo
+test_*.py
+*_test.py
+makefile.sh
+quick_start.sh
+start_mcp.sh
+
+# Configs de ejemplo (usar .env en su lugar)
+.env.example
+mcp_config*.json
+
+# Output temporal
+*.tmp
+*.bak

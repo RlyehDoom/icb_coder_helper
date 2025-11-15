@@ -23,9 +23,24 @@ Este servicio actúa como intermediario entre:
                         └──────────────┘
 ```
 
+## 🎮 Descripción
+
+El Query Service es una **REST API** construida con FastAPI que expone endpoints para consultar el grafo de código C#.
+
+**Puerto:** 8081
+
+**Inicio:**
+```bash
+python -m uvicorn src.server:app --host 0.0.0.0 --port 8081 --reload
+```
+
+**Uso:** Consultas HTTP desde cualquier cliente (MCP Server, aplicaciones web, scripts, etc.)
+
+---
+
 ## 📋 Características
 
-### Endpoints Principales
+### Endpoints Principales (REST API)
 
 #### 1. Proyectos
 - `GET /api/projects/` - Lista todos los proyectos
@@ -91,6 +106,8 @@ POST /api/context/code
   ]
 }
 ```
+
+---
 
 ### 🔬 Endpoints de Semantic Model
 
@@ -332,53 +349,16 @@ El servicio Query está configurado para usar la misma base de datos que Indexer
 }
 ```
 
-## 🔗 Integración con MCP
+## 🔗 Integración con MCP Server
 
-Para que el MCP use este servicio, agrega una herramienta en el MCP:
+El **MCP Server** (puerto 8083) consume este Query Service para exponer herramientas de consulta de código a IDEs como Cursor/VSCode.
 
-```python
-# En MCP: src/tools/graph_query_tool.py
-import requests
-
-@mcp.tool()
-def get_code_context(
-    class_name: str = Field(..., description="Nombre de la clase"),
-    method_name: str = Field(None, description="Nombre del método"),
-    namespace: str = Field(None, description="Namespace")
-) -> str:
-    """Obtiene contexto de código desde el grafo."""
-    
-    response = requests.post(
-        "http://localhost:8081/api/context/code",
-        json={
-            "className": class_name,
-            "methodName": method_name,
-            "namespace": namespace,
-            "includeRelated": True,
-            "maxRelated": 10
-        }
-    )
-    
-    if response.status_code == 200:
-        data = response.json()
-        
-        if data["found"]:
-            context = f"Elemento encontrado: {data['mainElement']['Name']}\n"
-            context += f"Tipo: {data['mainElement']['Type']}\n"
-            context += f"Proyecto: {data['projectInfo']['ProjectName']}\n"
-            context += f"Elementos relacionados: {len(data['relatedElements'])}\n\n"
-            
-            if data["suggestions"]:
-                context += "Sugerencias:\n"
-                for suggestion in data["suggestions"]:
-                    context += f"- {suggestion}\n"
-            
-            return context
-        else:
-            return "Elemento no encontrado en el grafo"
-    
-    return f"Error consultando el grafo: {response.status_code}"
+**Arquitectura:**
 ```
+Cursor/VSCode  →  MCP Server (8083, HTTP/SSE)  →  Query Service (8081)  →  MongoDB
+```
+
+El MCP Server está configurado para conectarse al Query Service usando `http://mongodb:27019/` cuando ambos están en la misma red Docker (`grafo-network`).
 
 ## 📊 Casos de Uso
 

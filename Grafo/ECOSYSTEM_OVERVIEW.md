@@ -6,21 +6,21 @@ Este documento proporciona una visión completa de cómo todos los componentes d
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                         CURSOR (IDE)                                │
+│                     CURSOR/VSCode (IDE)                             │
 │                    Usuario Final Interactuando                      │
 └────────────────────────────┬────────────────────────────────────────┘
                              │
-                             │ Consultas naturales
+                             │ HTTP/SSE (http://localhost:8083/sse)
                              ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│                            MCP                                      │
-│                  (Model Context Protocol)                           │
-│  • Recibe consultas del usuario                                     │
-│  • Ejecuta herramientas                                             │
-│  • Genera respuestas con LLM                                        │
+│                        MCP Server                                   │
+│              (Model Context Protocol - Puerto 8083)                 │
+│  • Servidor HTTP/SSE para múltiples clientes                        │
+│  • Expone herramientas de consulta de código                        │
+│  • Ejecuta consultas al Query Service                               │
 └───────────┬─────────────────────────────────────────────────────────┘
             │
-            │ HTTP REST
+            │ HTTP REST (interno en grafo-network)
             ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                       Query Service                                 │
@@ -34,7 +34,7 @@ Este documento proporciona una visión completa de cómo todos los componentes d
             ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │                         MongoDB                                     │
-│                    (GraphDB Database)                               │
+│                (GraphDB Database - Puerto 27019)                    │
 │  • Colección: projects                                              │
 │  • Colección: processing_states                                     │
 │  • Almacena grafo completo del código                               │
@@ -71,6 +71,8 @@ Este documento proporciona una visión completa de cómo todos los componentes d
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
+**Red Docker:** Todos los servicios (MongoDB, Query Service, MCP Server) ejecutan en la misma red `grafo-network` para comunicación eficiente.
+
 ## 🔄 Flujo de Datos Completo
 
 ### Fase 1: Indexación (Offline)
@@ -97,19 +99,19 @@ MongoDB (GraphDB.projects)
 ```
 Usuario en Cursor: "Crea un servicio de autenticación"
     ↓
-[MCP] Interpreta y decide usar herramienta de grafo
+[MCP Server] (puerto 8083) Recibe consulta vía HTTP/SSE
     ↓
-[MCP Tool] get_code_context_from_graph("AuthService")
+[MCP Server] Interpreta y decide usar herramienta search_code
     ↓
-HTTP POST → [Query Service] /api/context/code
+HTTP POST → [Query Service] (puerto 8081) /api/nodes/search
     ↓
-[Query Service] Consulta MongoDB
+[Query Service] Consulta MongoDB (puerto 27019)
     ↓
 MongoDB retorna proyectos, nodos, aristas relevantes
     ↓
 [Query Service] Formatea respuesta + sugerencias
     ↓
-[MCP] Recibe contexto y genera respuesta
+[MCP Server] Recibe contexto y genera respuesta
     ↓
 Cursor muestra al usuario código generado con contexto
 ```
@@ -191,11 +193,11 @@ dotnet run --interactive
 ```
 
 ### 3. Query Service (REST API)
-**Ubicación:** `/Grafo/Query/`  
-**Tecnología:** Python 3.11, FastAPI, Motor  
+**Ubicación:** `/Grafo/Query/`
+**Tecnología:** Python 3.11, FastAPI, Motor
 **Función:** Exponer API para consultar el grafo
 
-**Puerto:** 8081  
+**Puerto:** 8081
 **Documentación:** http://localhost:8081/docs
 
 **Endpoints principales:**
@@ -206,44 +208,78 @@ dotnet run --interactive
 
 **Ejecutar:**
 ```bash
+# Usando CLI de Grafo
+grafo query build
+grafo query start
+
+# O directamente
 cd Grafo/Query
-make dev
+python -m uvicorn src.server:app --host 0.0.0.0 --port 8081 --reload
 ```
 
-### 4. MCP (Model Context Protocol)
-**Ubicación:** `/MCP/`  
-**Tecnología:** Python, FastMCP  
-**Función:** Intermediario entre Cursor y servicios
+### 4. MCP Server (Model Context Protocol)
+**Ubicación:** `/Grafo/Query/` (integrado con Query)
+**Tecnología:** Python 3.11, FastAPI, SSE, MCP SDK
+**Función:** Servidor MCP sobre HTTP/SSE para múltiples clientes
 
-**Puerto:** 8080  
-**Conexión:** Cursor vía MCP protocol
+**Puerto:** 8083
+**Conexión:** Cursor/VSCode vía HTTP/SSE (`http://localhost:8083/sse`)
 
-**Herramientas que usarán Query:**
-- `get_code_context_from_graph()` - Contexto de código
-- `search_similar_code_in_graph()` - Búsqueda de patrones
-- `get_graph_statistics()` - Estadísticas
+**Herramientas disponibles:**
+- `search_code()` - Búsqueda de elementos de código
+- `get_code_context()` - Contexto detallado con relaciones
+- `list_projects()` - Lista proyectos disponibles
+- `get_project_structure()` - Estructura de proyecto
+- `find_implementations()` - Implementaciones/herencias
+- `get_statistics()` - Estadísticas del grafo
 
-**Integrar:** Ver `/Grafo/Query/INTEGRATION_MCP.md`
+**Ejecutar:**
+```bash
+# Usando CLI de Grafo (recomendado)
+grafo mcp build
+grafo mcp start
+
+# El CLI mostrará la configuración JSON para Cursor
+```
+
+**Configurar en Cursor:**
+```json
+{
+  "mcpServers": {
+    "grafo-query-http": {
+      "url": "http://localhost:8083/sse",
+      "transport": "sse"
+    }
+  }
+}
+```
 
 ## 🚀 Setup Completo del Ecosistema
 
 ### Prerequisitos
-- ✅ .NET 8 SDK
-- ✅ Python 3.11+
-- ✅ MongoDB 8.0+
-- ✅ Node.js (para MCP Inspector opcional)
+- ✅ Docker Desktop (para MongoDB y servicios)
+- ✅ .NET 8 SDK (para Indexer/IndexerDb)
+- ✅ Node.js 18+ (para CLI de Grafo)
 
-### Paso 1: MongoDB
+### Paso 0: Instalar CLI de Grafo
 ```bash
-# Iniciar MongoDB
-docker run -d \
-  --name mongodb-grafo \
-  -p 27017:27017 \
-  -e MONGO_INITDB_ROOT_USERNAME=InfocorpAI \
-  -e MONGO_INITDB_ROOT_PASSWORD=InfocorpAI2025 \
-  mongo:8.0
+cd Grafo
+npm install
+npm link
 
-# O usar MongoDB Atlas (Cloud)
+# Verificar instalación
+grafo --version
+```
+
+### Paso 1: Iniciar MongoDB
+```bash
+# Usando CLI de Grafo (recomendado)
+grafo mongodb start
+
+# Verificar
+grafo mongodb status
+
+# El CLI usa puerto 27019 y red grafo-network
 ```
 
 ### Paso 2: Indexer + IndexerDb (Indexación inicial)
@@ -268,42 +304,38 @@ dotnet run --interactive
 > projects list
 ```
 
-### Paso 3: Query Service
+### Paso 3: Iniciar MCP Server
 ```bash
-cd Grafo/Query
+# Construir imagen Docker del MCP Server
+grafo mcp build
 
-# Opción A: Script automático (Recomendado)
-chmod +x quick_start.sh
-./quick_start.sh
+# Iniciar MCP Server (inicia MongoDB automáticamente si no está corriendo)
+grafo mcp start
 
-# Opción B: Manual
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-# Editar .env si es necesario
-python -m uvicorn src.server:app --host 0.0.0.0 --port 8081 --reload
+# El CLI mostrará la configuración para Cursor
+# Copiar el JSON y agregarlo a ~/.cursor/mcp.json
 
 # Verificar
-curl http://localhost:8081/health
+grafo mcp status
 ```
 
-### Paso 4: MCP (Integración)
+### Paso 4: Configurar Cursor/VSCode
 ```bash
-cd MCP
+# El comando `grafo mcp status` muestra la configuración:
+{
+  "mcpServers": {
+    "grafo-query-http": {
+      "url": "http://localhost:8083/sse",
+      "transport": "sse"
+    }
+  }
+}
 
-# 1. Agregar dependencia
-echo "requests>=2.31.0" >> requirements.txt
-pip install requests
+# Agregar esta configuración a:
+# - Cursor: ~/.cursor/mcp.json
+# - Windows Cursor: %APPDATA%\Cursor\User\mcp.json
 
-# 2. Crear herramienta de grafo
-# Ver: Grafo/Query/INTEGRATION_MCP.md
-
-# 3. Ejecutar MCP
-make run
-
-# Verificar en Cursor
-# El MCP debería tener acceso a herramientas de grafo
+# Reiniciar Cursor
 ```
 
 ## 🧪 Prueba End-to-End
@@ -315,22 +347,19 @@ make run
 "Crea un nuevo servicio de Productos similar al servicio de Usuarios"
 ```
 
-**2. MCP ejecuta:**
+**2. MCP Server ejecuta:**
 ```python
-# Buscar servicio de usuarios existente
-context = get_code_context_from_graph(
-    class_name="UserService",
-    namespace="Banking.Core"
-)
+# La herramienta search_code busca servicios similares
+search_code(query="UserService", node_type="Class", project="Banking.Core")
 ```
 
-**3. Query Service consulta:**
+**3. MCP Server consulta al Query Service:**
 ```http
-POST http://localhost:8081/api/context/code
+POST http://localhost:8081/api/nodes/search
 {
-  "className": "UserService",
-  "namespace": "Banking.Core",
-  "includeRelated": true
+  "query": "UserService",
+  "nodeType": "Class",
+  "limit": 10
 }
 ```
 
@@ -376,21 +405,39 @@ Código generado que sigue los patrones arquitectónicos existentes en el proyec
 
 ## 📈 Métricas y Monitoreo
 
+### MCP Server
+```bash
+# Ver estado del MCP Server
+grafo mcp status
+
+# Ver logs en tiempo real
+grafo mcp logs
+
+# Ejecutar tests
+grafo mcp test
+```
+
 ### Query Service
 ```bash
 # Estadísticas del grafo
 curl http://localhost:8081/api/context/statistics
+
+# Health check
+curl http://localhost:8081/health
 ```
 
 ### MongoDB
 ```bash
-# Usar MongoDB Compass
-mongodb://InfocorpAI:InfocorpAI2025@localhost:27017/
+# Usando CLI de Grafo
+grafo mongodb shell
 
-# O CLI
-mongosh --username InfocorpAI --password InfocorpAI2025
+# Manualmente con mongosh (MongoDB en puerto 27019)
+mongosh "mongodb://localhost:27019/"
+
+# Comandos útiles en mongosh:
 use GraphDB
-db.projects.count()
+db.projects.countDocuments()
+db.projects.find().limit(1).pretty()
 ```
 
 ### IndexerDb
@@ -418,11 +465,16 @@ dotnet run --all
 
 ### Limpiar y Reiniciar
 ```bash
-# Limpiar MongoDB
-mongosh --username InfocorpAI --password InfocorpAI2025
+# Limpiar MongoDB (elimina TODOS los datos)
+grafo mongodb clean
+
+# O manualmente
+grafo mongodb shell
+# En mongosh:
 use GraphDB
 db.projects.deleteMany({})
 db.processing_states.deleteMany({})
+exit
 
 # Re-indexar desde cero
 # ... ejecutar Indexer + IndexerDb
@@ -430,59 +482,98 @@ db.processing_states.deleteMany({})
 
 ## 📚 Documentación por Componente
 
+- **README Principal:** `/Grafo/README.md` - Guía completa del usuario
+- **Quick Start:** `/Grafo/QUICKSTART.md` - Setup en 5 minutos
 - **Indexer:** `/Grafo/Indexer/README.md`
 - **IndexerDb:** `/Grafo/IndexerDb/README.md`
 - **Query Service:** `/Grafo/Query/README.md`
-- **Integración MCP:** `/Grafo/Query/INTEGRATION_MCP.md`
-- **MCP:** `/MCP/README.md`
 
 ## 🐛 Troubleshooting Común
 
-### Problema: Query Service no encuentra datos
-**Causa:** IndexerDb no ha procesado el código  
-**Solución:** Ejecutar Indexer + IndexerDb primero
-
-### Problema: MCP no puede conectar a Query Service
-**Causa:** Query Service no está ejecutándose  
-**Solución:** 
+### Problema: MCP Server no inicia
+**Causa:** MongoDB no está ejecutándose o Docker no está corriendo
+**Solución:**
 ```bash
-cd Grafo/Query
-./quick_start.sh
+# Verificar Docker
+docker --version
+docker info
+
+# Iniciar MongoDB
+grafo mongodb start
+
+# Iniciar MCP Server
+grafo mcp start
+```
+
+### Problema: Cursor no puede conectar a MCP Server
+**Causa:** MCP Server no está ejecutándose o configuración incorrecta
+**Solución:**
+```bash
+# Verificar estado
+grafo mcp status
+
+# Ver logs
+grafo mcp logs
+
+# Reiniciar Cursor completamente
 ```
 
 ### Problema: MongoDB connection refused
-**Causa:** MongoDB no está ejecutándose  
+**Causa:** MongoDB no está ejecutándose en puerto 27019
 **Solución:**
 ```bash
-docker start mongodb-grafo
-# O iniciar MongoDB localmente
+# Ver estado de MongoDB
+grafo mongodb status
+
+# Iniciar MongoDB
+grafo mongodb start
+
+# Ver logs
+grafo mongodb logs
+```
+
+### Problema: Query Service no encuentra datos
+**Causa:** IndexerDb no ha procesado el código
+**Solución:**
+```bash
+# Ejecutar Indexer primero
+cd Grafo/Indexer
+dotnet run -- --solution "path/to/solution.sln"
+
+# Luego IndexerDb
+cd ../IndexerDb
+dotnet run --all
 ```
 
 ### Problema: Indexer falla al analizar código
-**Causa:** Código C# no compila o tiene errores  
+**Causa:** Código C# no compila o tiene errores
 **Solución:** Asegurar que el código compile antes de indexar
 
 ## 🎯 Casos de Uso
 
 ### 1. Generar Código Nuevo
-**Objetivo:** Crear código siguiendo patrones existentes  
-**Componentes:** MCP + Query Service  
+**Objetivo:** Crear código siguiendo patrones existentes
+**Componentes:** Cursor → MCP Server → Query Service → MongoDB
 **Beneficio:** Código consistente con arquitectura
+**Ejemplo:** "Crea un servicio de Productos similar a UserService"
 
 ### 2. Modificar Código Existente
-**Objetivo:** Entender contexto antes de modificar  
-**Componentes:** Query Service (contexto + relaciones)  
+**Objetivo:** Entender contexto antes de modificar
+**Componentes:** MCP Server → Query Service (contexto + relaciones)
 **Beneficio:** Cambios informados, menos errores
+**Ejemplo:** "Modifica UserService para agregar validación de email"
 
 ### 3. Análisis de Impacto
-**Objetivo:** Entender qué afecta un cambio  
-**Componentes:** Query Service (relaciones + dependencias)  
+**Objetivo:** Entender qué afecta un cambio
+**Componentes:** Query Service (relaciones + dependencias)
 **Beneficio:** Cambios seguros
+**Ejemplo:** "¿Qué clases se romperán si cambio IUserRepository?"
 
-### 4. Refactoring Informado
-**Objetivo:** Refactorizar con conocimiento del sistema  
-**Componentes:** Todo el ecosistema  
-**Beneficio:** Refactoring consistente
+### 4. Exploración de Arquitectura
+**Objetivo:** Entender la estructura del sistema
+**Componentes:** MCP Server herramientas de exploración
+**Beneficio:** Onboarding más rápido, mejor comprensión
+**Ejemplo:** "Dame la estructura del proyecto Banking.Core"
 
 ## 🔮 Futuro del Ecosistema
 
