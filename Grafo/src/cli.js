@@ -31,7 +31,7 @@ const mcpHandler = new MCPHandler(systemUtils, mongodbHandler);
 async function loadRepoEnvConfig() {
   const envPath = path.resolve('./Repo/.env');
   const config = {};
-  
+
   try {
     const exists = await systemUtils.exists(envPath);
     if (!exists) {
@@ -40,27 +40,27 @@ async function loadRepoEnvConfig() {
 
     const content = await fs.readFile(envPath, 'utf8');
     const lines = content.split('\n');
-    
+
     for (const line of lines) {
       const trimmed = line.trim();
-      
+
       // Skip comments and empty lines
       if (!trimmed || trimmed.startsWith('#')) {
         continue;
       }
-      
+
       // Parse key=value
       const equalIndex = trimmed.indexOf('=');
       if (equalIndex > 0) {
         const key = trimmed.substring(0, equalIndex).trim();
         let value = trimmed.substring(equalIndex + 1).trim();
-        
+
         // Remove quotes if present
-        if ((value.startsWith('"') && value.endsWith('"')) || 
+        if ((value.startsWith('"') && value.endsWith('"')) ||
             (value.startsWith("'") && value.endsWith("'"))) {
           value = value.slice(1, -1);
         }
-        
+
         if (value) {
           config[key] = value;
         }
@@ -68,9 +68,8 @@ async function loadRepoEnvConfig() {
     }
   } catch (error) {
     // Failed to read .env file, continue with defaults
-    console.debug('Could not load .env config:', error.message);
   }
-  
+
   return config;
 }
 
@@ -268,11 +267,99 @@ program
     
     switch (action) {
       case 'clone':
+        // Si no se proporciona URL, entrar en modo interactivo
         if (!options.url) {
-          console.log(chalk.red('❌ Se requiere especificar una URL con -u'));
-          process.exit(1);
+          // Cargar configuración desde .env
+          const envConfig = await loadRepoEnvConfig();
+
+          console.log(chalk.cyan('\n🔧 Modo interactivo - Configuración de clonado\n'));
+
+          // Mostrar configuración cargada desde .env
+          if (envConfig.GRAFO_DEFAULT_REPO_URL || envConfig.GRAFO_DEFAULT_BRANCH || envConfig.GRAFO_DEFAULT_SPARSE) {
+            console.log(chalk.gray('📄 Configuración desde .env:'));
+            if (envConfig.GRAFO_DEFAULT_REPO_URL) {
+              console.log(chalk.gray(`   URL: ${envConfig.GRAFO_DEFAULT_REPO_URL}`));
+            }
+            if (envConfig.GRAFO_DEFAULT_BRANCH) {
+              console.log(chalk.gray(`   Branch: ${envConfig.GRAFO_DEFAULT_BRANCH}`));
+            }
+            if (envConfig.GRAFO_DEFAULT_SPARSE) {
+              console.log(chalk.gray(`   Sparse folders: ${envConfig.GRAFO_DEFAULT_SPARSE}`));
+            }
+            console.log(chalk.gray('   (Presiona Enter para usar estos valores)\n'));
+          }
+
+          const cloneOptions = await inquirer.prompt([
+            {
+              type: 'input',
+              name: 'url',
+              message: envConfig.GRAFO_DEFAULT_REPO_URL
+                ? `🔗 URL del repositorio (${chalk.dim(envConfig.GRAFO_DEFAULT_REPO_URL.substring(0, 50) + (envConfig.GRAFO_DEFAULT_REPO_URL.length > 50 ? '...' : ''))}):`
+                : '🔗 URL del repositorio:',
+              default: envConfig.GRAFO_DEFAULT_REPO_URL || '',
+              validate: (input) => {
+                // Si el input está vacío, usar el default si existe
+                const value = input.trim() || envConfig.GRAFO_DEFAULT_REPO_URL || '';
+
+                if (!value) {
+                  return 'La URL es requerida';
+                }
+                // Validación básica de URL
+                if (!value.includes('github.com') && !value.includes('azure.com') && !value.includes('visualstudio.com') && !value.includes('_git')) {
+                  return 'URL no válida. Debe ser de Azure DevOps o GitHub';
+                }
+                return true;
+              }
+            },
+            {
+              type: 'input',
+              name: 'branch',
+              message: `🌿 Rama a clonar (${chalk.dim(envConfig.GRAFO_DEFAULT_BRANCH || 'main')}):`,
+              default: envConfig.GRAFO_DEFAULT_BRANCH || 'main'
+            },
+            {
+              type: 'confirm',
+              name: 'useSparse',
+              message: '📁 ¿Usar sparse checkout (clonar solo carpetas específicas)?',
+              default: !!envConfig.GRAFO_DEFAULT_SPARSE
+            },
+            {
+              type: 'input',
+              name: 'sparse',
+              message: envConfig.GRAFO_DEFAULT_SPARSE
+                ? `📂 Carpetas para sparse checkout (${chalk.dim(envConfig.GRAFO_DEFAULT_SPARSE)}):`
+                : '📂 Carpetas para sparse checkout (separadas por coma):',
+              default: envConfig.GRAFO_DEFAULT_SPARSE || '',
+              when: (answers) => answers.useSparse,
+              validate: (input) => {
+                // Si el input está vacío, usar el default si existe
+                const value = input.trim() || envConfig.GRAFO_DEFAULT_SPARSE || '';
+
+                if (!value) {
+                  return 'Ingresa al menos una carpeta (ej: /ICBanking,/Microservices)';
+                }
+                return true;
+              }
+            },
+            {
+              type: 'input',
+              name: 'folder',
+              message: '📂 Nombre de carpeta personalizado (opcional, presiona Enter para usar el nombre del repo):',
+              default: ''
+            }
+          ]);
+
+          // Ejecutar el comando clone con las opciones recolectadas
+          await repoHandler.clone({
+            url: cloneOptions.url,
+            branch: cloneOptions.branch,
+            sparse: cloneOptions.useSparse ? cloneOptions.sparse : undefined,
+            folder: cloneOptions.folder || undefined
+          });
+        } else {
+          // Modo no interactivo - usar opciones de línea de comandos
+          await repoHandler.clone(options);
         }
-        await repoHandler.clone(options);
         break;
       case 'list':
         await repoHandler.list();
@@ -285,10 +372,19 @@ program
         break;
       default:
         console.log(chalk.yellow('Comandos disponibles para repo:'));
-        console.log('  clone   - Clona un repositorio de Azure DevOps (requiere -u)');
+        console.log('  clone   - Clona un repositorio (sin -u entra en modo interactivo)');
         console.log('  list    - Lista todos los repositorios clonados');
         console.log('  clean   - Limpia repositorios obsoletos');
         console.log('  status  - Muestra el estado de los repositorios');
+        console.log('');
+        console.log(chalk.yellow('Opciones para clone:'));
+        console.log('  -u, --url <url>        - URL del repositorio');
+        console.log('  -b, --branch <branch>  - Rama a clonar (default: main)');
+        console.log('  -s, --sparse <folders> - Carpetas para sparse checkout (separadas por coma)');
+        console.log('  -f, --folder <name>    - Nombre personalizado de carpeta');
+        console.log('  -t, --token <token>    - Personal Access Token');
+        console.log('');
+        console.log(chalk.cyan('💡 Tip: Configura valores por defecto en Grafo/Repo/.env'));
     }
   });
 

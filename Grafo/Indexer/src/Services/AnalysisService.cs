@@ -192,10 +192,27 @@ namespace RoslynIndexer.Services
                 var diagnostics = compilation.GetDiagnostics()
                     .Where(d => d.Severity == DiagnosticSeverity.Error)
                     .ToList();
-                
-                if (diagnostics.Any() && verbose)
+
+                if (diagnostics.Any())
                 {
-                    Console.WriteLine($"  Note: {diagnostics.Count} compilation errors (analysis will continue)");
+                    if (verbose)
+                    {
+                        Console.WriteLine($"  Note: {diagnostics.Count} compilation errors (analysis will continue)");
+                    }
+
+                    // DEBUG: Show errors for ApprovalScheme projects
+                    if (projectName.Contains("ApprovalScheme"))
+                    {
+                        Console.WriteLine($"  DEBUG: Compilation errors for {projectName}:");
+                        foreach (var diag in diagnostics.Take(10))
+                        {
+                            Console.WriteLine($"    - {diag.GetMessage()}");
+                        }
+                        if (diagnostics.Count > 10)
+                        {
+                            Console.WriteLine($"    ... and {diagnostics.Count - 10} more errors");
+                        }
+                    }
                 }
 
                 // Process each file with semantic model

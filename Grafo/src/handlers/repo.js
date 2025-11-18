@@ -37,10 +37,23 @@ export class RepoHandler {
     try {
       // Preparar argumentos para el script
       const args = ['-u', url];
-      
+
       if (name) args.push('-n', name);
       if (folder) args.push('-f', folder);
-      if (sparse) args.push('-s', sparse);
+
+      // En Windows, MSYS2 convierte paths que empiezan con / a rutas absolutas
+      // Solución: remover slashes iniciales aquí, el script bash los agregará de vuelta
+      if (sparse) {
+        if (this.systemUtils.isWindows) {
+          const cleanedSparse = sparse.split(',').map(f => f.trim().replace(/^\/+/, '')).join(',');
+          console.log(`🔍 Sparse original: "${sparse}"`);
+          console.log(`🔍 Sparse procesado: "${cleanedSparse}"`);
+          args.push('-s', cleanedSparse);
+        } else {
+          args.push('-s', sparse);
+        }
+      }
+
       if (branch) args.push('-b', branch);
       if (token) args.push('-t', token);
 
@@ -80,8 +93,19 @@ export class RepoHandler {
         console.log(`  Comando completo: "${bashCommand}" "${this.cloneScript}" ${args.join(' ')}\n`);
       }
 
+      // En Windows, desactivar la conversión automática de paths de MSYS
+      // MSYS2_ARG_CONV_EXCL especifica qué argumentos no deben ser convertidos
+      const env = this.systemUtils.isWindows
+        ? {
+            ...process.env,
+            MSYS_NO_PATHCONV: '1',
+            MSYS2_ARG_CONV_EXCL: '-s'  // No convertir el argumento -s (sparse folders)
+          }
+        : process.env;
+
       const result = await this.systemUtils.execute(bashCommand, [this.cloneScript, ...args], {
-        cwd: workingDir
+        cwd: workingDir,
+        env: env
       });
 
       if (result.success) {

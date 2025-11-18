@@ -309,14 +309,15 @@ if [[ -n "$SPARSE_FOLDERS" ]]; then
     for folder in "${FOLDERS[@]}"; do
         # Trim whitespace
         folder=$(echo "$folder" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-        
-        # Remove leading slash if present and add precise pattern
+
+        # Remove leading slash if present (Windows Node.js may already remove it)
         folder=$(echo "$folder" | sed 's/^\/*//')
-        
-        # Add both the folder itself and its contents
-        echo "$folder" >> "$SPARSE_FILE"
-        echo "$folder/*" >> "$SPARSE_FILE"
-        echo "   ✓ Added: $folder (with contents)"
+
+        # Add leading slash back for git sparse-checkout pattern
+        # Git sparse-checkout requires paths to start with /
+        echo "/$folder" >> "$SPARSE_FILE"
+        echo "/$folder/*" >> "$SPARSE_FILE"
+        echo "   ✓ Added: /$folder (with contents)"
     done
     
     # Apply sparse checkout

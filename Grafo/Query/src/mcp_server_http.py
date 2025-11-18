@@ -9,7 +9,7 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from starlette.requests import Request
-from sse_starlette.sse import EventSourceResponse
+from starlette.routing import Mount
 from mcp.server.sse import SseServerTransport
 
 from .config import validate_config, display_config
@@ -34,6 +34,33 @@ async def lifespan(app: FastAPI):
     await initialize_services()
     logger.info("✅ Servicios MCP inicializados")
 
+    # Mostrar configuración para Cursor (usando print para salida limpia)
+    print("")
+    print("="*60)
+    print("📋 CONFIGURACIÓN PARA CURSOR/VSCODE")
+    print("="*60)
+    print("")
+    print("Copia este JSON en tu archivo de configuración MCP:")
+    print("")
+    print('  Windows: %APPDATA%\\Cursor\\User\\mcp.json')
+    print('  macOS/Linux: ~/.cursor/mcp.json')
+    print("")
+    print("Contenido del archivo mcp.json:")
+    print("")
+    print("{")
+    print('  "mcpServers": {')
+    print('    "grafo-query-http": {')
+    print('      "url": "http://localhost:8083/sse",')
+    print('      "transport": "sse"')
+    print('    }')
+    print('  }')
+    print("}")
+    print("")
+    print("="*60)
+    print("✅ MCP Server listo en http://localhost:8083/sse")
+    print("="*60)
+    print("")
+
     yield
 
     # Limpiar al cerrar
@@ -48,6 +75,14 @@ fastapi_app = FastAPI(
     description="Model Context Protocol Server para Query Service",
     version="1.0.0",
     lifespan=lifespan
+)
+
+# Crear transporte SSE
+sse_transport = SseServerTransport("/messages/")
+
+# Montar el manejador de mensajes POST
+fastapi_app.router.routes.append(
+    Mount("/messages", app=sse_transport.handle_post_message)
 )
 
 
@@ -87,58 +122,29 @@ async def handle_sse(request: Request):
     logger.info(f"📡 Nueva conexión SSE desde {request.client.host}")
 
     try:
-        # Crear transporte SSE
-        transport = SseServerTransport("/messages")
+        # Conectar usando el transporte SSE
+        async with sse_transport.connect_sse(
+            request.scope,
+            request.receive,
+            request._send
+        ) as streams:
+            logger.info(f"🔗 Streams establecidos para {request.client.host}")
 
-        async def event_generator():
-            """Generador de eventos SSE"""
-            try:
-                # Inicializar opciones del servidor MCP
-                init_options = mcp_app.create_initialization_options()
+            # Inicializar opciones del servidor MCP
+            init_options = mcp_app.create_initialization_options()
 
-                # Ejecutar el servidor MCP con este transporte
-                await mcp_app.run(
-                    transport.read_stream,
-                    transport.write_stream,
-                    init_options
-                )
-            except Exception as e:
-                logger.error(f"❌ Error en sesión MCP: {e}", exc_info=True)
-                raise
-            finally:
-                logger.info(f"🔌 Sesión MCP cerrada desde {request.client.host}")
+            # Ejecutar el servidor MCP con los streams
+            await mcp_app.run(
+                streams[0],  # read stream
+                streams[1],  # write stream
+                init_options
+            )
 
-        # Retornar respuesta SSE
-        return EventSourceResponse(
-            event_generator(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "X-Accel-Buffering": "no"
-            }
-        )
+            logger.info(f"🔌 Sesión MCP cerrada desde {request.client.host}")
 
     except Exception as e:
-        logger.error(f"❌ Error configurando SSE: {e}", exc_info=True)
-        return {"error": str(e)}
-
-
-@fastapi_app.post("/messages")
-async def handle_messages(request: Request):
-    """
-    Endpoint para recibir mensajes del cliente.
-
-    Los clientes envían mensajes MCP JSON-RPC a este endpoint.
-    """
-    try:
-        message = await request.json()
-        logger.debug(f"📨 Mensaje recibido: {message.get('method', 'unknown')}")
-        # El transporte SSE maneja los mensajes automáticamente
-        return {"status": "received"}
-    except Exception as e:
-        logger.error(f"❌ Error procesando mensaje: {e}", exc_info=True)
-        return {"status": "error", "message": str(e)}, 400
+        logger.error(f"❌ Error en sesión SSE: {e}", exc_info=True)
+        raise
 
 
 if __name__ == "__main__":

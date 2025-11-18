@@ -109,7 +109,7 @@ namespace RoslynIndexer.Utils
 
                 // Extract Reference elements
                 var refMatches = System.Text.RegularExpressions.Regex.Matches(
-                    content, 
+                    content,
                     @"<Reference\s+Include\s*=\s*""([^""]+)""");
 
                 foreach (System.Text.RegularExpressions.Match match in refMatches)
@@ -117,10 +117,66 @@ namespace RoslynIndexer.Utils
                     var refName = match.Groups[1].Value.Split(',')[0]; // Remove version info
                     TryAddAssemblyReference(refName);
                 }
+
+                // Extract ProjectReference elements - CRITICAL for cross-project interface resolution
+                var projRefMatches = System.Text.RegularExpressions.Regex.Matches(
+                    content,
+                    @"<ProjectReference\s+Include\s*=\s*""([^""]+)""");
+
+                foreach (System.Text.RegularExpressions.Match match in projRefMatches)
+                {
+                    var relativeProjectPath = match.Groups[1].Value;
+                    var absoluteProjectPath = Path.GetFullPath(Path.Combine(projectDir, relativeProjectPath));
+
+                    // Try to find the compiled DLL for this project reference
+                    TryAddProjectReferenceAssembly(absoluteProjectPath);
+                }
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"Warning: Could not parse project references from {projectPath}: {ex.Message}");
+            }
+        }
+
+        /// <summary>
+        /// Tries to add a reference to a compiled project assembly
+        /// </summary>
+        private void TryAddProjectReferenceAssembly(string projectPath)
+        {
+            try
+            {
+                var projectDir = Path.GetDirectoryName(projectPath);
+                if (string.IsNullOrEmpty(projectDir)) return;
+
+                var projectName = Path.GetFileNameWithoutExtension(projectPath);
+
+                // Try common build output locations
+                var searchPaths = new[]
+                {
+                    Path.Combine(projectDir, "bin", "Debug", "net8.0", $"{projectName}.dll"),
+                    Path.Combine(projectDir, "bin", "Release", "net8.0", $"{projectName}.dll"),
+                    Path.Combine(projectDir, "bin", "Debug", "net7.0", $"{projectName}.dll"),
+                    Path.Combine(projectDir, "bin", "Release", "net7.0", $"{projectName}.dll"),
+                    Path.Combine(projectDir, "bin", "Debug", "net6.0", $"{projectName}.dll"),
+                    Path.Combine(projectDir, "bin", "Release", "net6.0", $"{projectName}.dll"),
+                    Path.Combine(projectDir, "bin", "Debug", "netstandard2.1", $"{projectName}.dll"),
+                    Path.Combine(projectDir, "bin", "Release", "netstandard2.1", $"{projectName}.dll"),
+                    Path.Combine(projectDir, "bin", "Debug", "netstandard2.0", $"{projectName}.dll"),
+                    Path.Combine(projectDir, "bin", "Release", "netstandard2.0", $"{projectName}.dll")
+                };
+
+                foreach (var path in searchPaths)
+                {
+                    if (File.Exists(path))
+                    {
+                        _references.Add(MetadataReference.CreateFromFile(path));
+                        return; // Found and added, stop searching
+                    }
+                }
+            }
+            catch
+            {
+                // Couldn't add this project reference, continue
             }
         }
 

@@ -1301,13 +1301,16 @@ namespace RoslynIndexer.Services
 
             foreach (var impl in implementations)
             {
-                // Check if both types exist in our symbol index
+                // Check if implementing type exists in our symbol index
                 if (!symbolLookup.ContainsKey(impl.ImplementingType))
                     continue;
-                    
-                // Interface might be external, skip if not in our code
-                if (!symbolLookup.ContainsKey(impl.InterfaceType))
-                    continue;
+
+                // ✅ FIX: Allow interface implementations even if interface is from another project
+                // This enables cross-project interface implementation detection
+                // Example: ApprovalSchemeExecution (BusinessComponents) implements IApprovalSchemeExecution (Interfaces)
+                // Previously, this was filtered out with:
+                // if (!symbolLookup.ContainsKey(impl.InterfaceType))
+                //     continue;
 
                 var sourceId = $"component:{impl.ImplementingType}";
                 var targetId = $"component:{impl.InterfaceType}";

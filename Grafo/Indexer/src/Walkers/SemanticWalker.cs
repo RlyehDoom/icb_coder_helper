@@ -61,7 +61,24 @@ namespace RoslynIndexer.Walkers
                 }
                 
                 // Capture interface implementations
-                foreach (var iface in symbol.Interfaces)
+                // Use AllInterfaces instead of Interfaces to ensure we get all implemented interfaces
+                // symbol.Interfaces only returns directly declared interfaces
+                // symbol.AllInterfaces includes both direct and inherited interfaces
+
+                // DEBUG: Log when processing specific classes
+                bool isApprovalSchemeExecution = symbol.Name.Contains("ApprovalSchemeExecution");
+                if (isApprovalSchemeExecution)
+                {
+                    Console.WriteLine($"DEBUG: Processing class {symbol.Name}");
+                    Console.WriteLine($"  - Interfaces count: {symbol.Interfaces.Length}");
+                    Console.WriteLine($"  - AllInterfaces count: {symbol.AllInterfaces.Length}");
+                    foreach (var iface in symbol.AllInterfaces)
+                    {
+                        Console.WriteLine($"  - Interface: {GetFullyQualifiedName(iface)}");
+                    }
+                }
+
+                foreach (var iface in symbol.AllInterfaces)
                 {
                     InterfaceImplementations.Add(new ImplementationInfo
                     {
@@ -96,7 +113,8 @@ namespace RoslynIndexer.Walkers
                 Symbols.Add(symbolInfo);
                 
                 // Capture interface inheritance
-                foreach (var iface in symbol.Interfaces)
+                // Use AllInterfaces to get all inherited interfaces
+                foreach (var iface in symbol.AllInterfaces)
                 {
                     InheritanceRelations.Add(new InheritanceInfo
                     {
