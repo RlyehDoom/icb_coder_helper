@@ -169,7 +169,17 @@ namespace IndexerDb
             Host.CreateDefaultBuilder(args)
                 .ConfigureAppConfiguration((context, config) =>
                 {
+                    // Get environment name (default to "Development" if not set)
+                    var env = context.HostingEnvironment;
+
+                    // Load base configuration
                     config.AddJsonFile("appsettings.json", optional: false, reloadOnChange: true);
+
+                    // Load environment-specific configuration (Production, Development, etc.)
+                    config.AddJsonFile($"appsettings.{env.EnvironmentName}.json", optional: true, reloadOnChange: true);
+
+                    // Environment variables override JSON config
+                    config.AddEnvironmentVariables();
                 })
                 .ConfigureServices((context, services) =>
                 {

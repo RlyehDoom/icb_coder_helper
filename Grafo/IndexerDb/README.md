@@ -112,13 +112,77 @@ Para empezar rápidamente **sin MongoDB**:
 }
 ```
 
+**Para producción con TLS/SSL:**
+
+```json
+{
+  "MongoDB": {
+    "ConnectionString": "mongodb://user:password@host:port/?tls=true&tlsInsecure=true",
+    "DatabaseName": "GraphDB",
+    "CollectionName": "projects",
+    "TlsCertificateFile": "../Certs/prod/client.pem",
+    "TlsInsecure": true
+  },
+  "Application": {
+    "EnableMongoDB": true,
+    "MockDataMode": false
+  }
+}
+```
+
+**Configuración TLS:**
+- `TlsCertificateFile`: Path al archivo de certificado cliente (.pem) - relativo a `IndexerDb/`
+- `TlsInsecure`: `true` para certificados autofirmados, `false` para validación completa
+- El certificado debe estar en `Grafo/Certs/prod/client.pem` (ubicación compartida para todos los proyectos)
+- IndexerDb se ejecuta localmente y necesita acceso directo al archivo en el filesystem
+
 ### 🔧 Configuraciones por Entorno
 
-La aplicación soporta múltiples archivos de configuración:
+La aplicación soporta múltiples archivos de configuración basados en la variable de entorno `DOTNET_ENVIRONMENT`:
 
 - `appsettings.json` - Configuración base
-- `appsettings.Development.json` - Desarrollo (usa servicio mock por defecto)
-- `appsettings.Production.json` - Producción (con autenticación)
+- `appsettings.Development.json` - Desarrollo (MongoDB local en puerto 27019, sin autenticación)
+- `appsettings.Production.json` - Producción (MongoDB remoto con TLS en 207.244.249.22:28101)
+
+#### 🌍 Cambiar de Entorno
+
+**Linux/Mac:**
+```bash
+export DOTNET_ENVIRONMENT=Production
+dotnet run
+```
+
+**Windows (PowerShell):**
+```powershell
+$env:DOTNET_ENVIRONMENT = "Production"
+dotnet run
+```
+
+#### 🚀 Scripts de Producción
+
+Para facilitar el uso en producción, hay scripts disponibles:
+
+**Linux/Mac:**
+```bash
+chmod +x run-production.sh
+./run-production.sh --all                # Procesar todos los archivos
+./run-production.sh --interactive         # Modo query
+./run-production.sh --all --interactive   # Ambos
+```
+
+**Windows:**
+```powershell
+.\run-production.ps1 --all                # Procesar todos los archivos
+.\run-production.ps1 --interactive         # Modo query
+.\run-production.ps1 --all --interactive   # Ambos
+```
+
+Los scripts automáticamente:
+1. Establecen `DOTNET_ENVIRONMENT=Production`
+2. Verifican que existe `appsettings.Production.json`
+3. Conectan al MongoDB productivo (207.244.249.22:28101 con TLS)
+
+**IMPORTANTE:** `appsettings.Production.json` contiene credenciales y está excluido de Git
 
 ### 📖 Guía Detallada de MongoDB
 

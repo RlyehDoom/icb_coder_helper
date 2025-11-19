@@ -134,10 +134,12 @@ program
   .description('Gestionar el IndexerDb (Graph Data Processor)')
   .argument('[action]', 'Acción a realizar: build, clean, run, status', 'help')
   .option('-f, --file <path>', 'Ruta al archivo de grafo específico')
-  .option('--no-interactive', 'Procesar todos los archivos automáticamente')
+  .option('--all', 'Procesar todos los archivos automáticamente')
+  .option('-i, --interactive', 'Modo query interactivo')
+  .option('-p, --production', 'Ejecutar en modo PRODUCCIÓN (MongoDB remoto con TLS)')
   .action(async (action, options) => {
     displayBanner('GRAFO - IndexerDb');
-    
+
     switch (action) {
       case 'build':
         await indexerDbHandler.build();
@@ -146,9 +148,16 @@ program
         await indexerDbHandler.clean();
         break;
       case 'run':
-        if (options.file || options.noInteractive) {
-          await indexerDbHandler.run(options);
+        // Si hay opciones de línea de comandos, ejecutar directamente
+        if (options.file || options.all || options.production !== undefined) {
+          await indexerDbHandler.run({
+            file: options.file,
+            noInteractive: options.all,
+            interactive: options.interactive,
+            production: options.production
+          });
         } else {
+          // Modo interactivo con selección de ambiente
           await indexerDbHandler.runInteractive();
         }
         break;
@@ -159,12 +168,28 @@ program
         console.log(chalk.yellow('Comandos disponibles para indexerdb:'));
         console.log('  build    - Compila el IndexerDb');
         console.log('  clean    - Limpia los artefactos de compilación');
-        console.log('  run      - Ejecuta IndexerDb (modo interactivo)');
+        console.log('  run      - Ejecuta IndexerDb (modo interactivo si no se especifican opciones)');
         console.log('  status   - Muestra el estado del servicio');
         console.log('');
         console.log(chalk.yellow('Opciones para run:'));
-        console.log('  -f, --file <path>    - Procesa un archivo específico');
-        console.log('  --no-interactive     - Procesa todos los archivos automáticamente');
+        console.log('  -f, --file <path>     - Procesa un archivo específico');
+        console.log('  --all                 - Procesa todos los archivos automáticamente');
+        console.log('  -i, --interactive     - Modo query interactivo (solo consultas)');
+        console.log('  -p, --production      - Ejecutar en modo PRODUCCIÓN');
+        console.log('');
+        console.log(chalk.yellow('Ejemplos:'));
+        console.log(chalk.gray('  # Modo interactivo (seleccionar ambiente y modo)'));
+        console.log(chalk.gray('  grafo indexerdb run'));
+        console.log('');
+        console.log(chalk.gray('  # Development: procesar todos los archivos'));
+        console.log(chalk.gray('  grafo indexerdb run --all'));
+        console.log('');
+        console.log(chalk.gray('  # Production: procesar todos los archivos'));
+        console.log(chalk.gray('  grafo indexerdb run --all --production'));
+        console.log('');
+        console.log(chalk.gray('  # Production: modo query interactivo'));
+        console.log(chalk.gray('  grafo indexerdb run --interactive --production'));
+        console.log('');
     }
   });
 
@@ -172,7 +197,7 @@ program
 program
   .command('query')
   .description('Gestionar el Query Service (Graph Query API)')
-  .argument('[action]', 'Acción a realizar: build, run, stop, delete, restart, logs, status, test', 'help')
+  .argument('[action]', 'Acción a realizar: build, run, stop, delete, restart, logs, status, test, push', 'help')
   .option('-f, --follow', 'Seguir logs en tiempo real', true)
   .option('--tail <n>', 'Número de líneas de log a mostrar')
   .option('--detached', 'Ejecutar en modo detached (background)', true)
@@ -219,6 +244,9 @@ program
         }
         await queryHandler.exec(options.command);
         break;
+      case 'push':
+        await queryHandler.push(options);
+        break;
       default:
         console.log(chalk.yellow('Comandos disponibles para query:'));
         console.log('  build    - Construye la imagen Docker');
@@ -233,6 +261,7 @@ program
         console.log('  clean    - Limpia todos los recursos');
         console.log('  test     - Ejecuta los tests del servicio');
         console.log('  shell    - Abre una shell interactiva en el contenedor');
+        console.log('  push     - Construye y sube imágenes a Docker Hub');
         console.log('');
         console.log(chalk.yellow('Opciones:'));
         console.log('  --tail <n>  - Muestra las últimas n líneas de logs');
@@ -593,7 +622,9 @@ program
           } else if (answers.component === 'indexerdb') {
             choices.push(
               { name: '🏗️  Build (compilar)', value: 'build' },
-              { name: '▶️  Run (ejecutar)', value: 'run' },
+              { name: '▶️  Run (ejecutar - interactivo)', value: 'run' },
+              { name: '🟢 Run Development (dev local)', value: 'run-dev' },
+              { name: '🔴 Run Production (MongoDB remoto)', value: 'run-prod' },
               { name: '🧹 Clean (limpiar)', value: 'clean' }
             );
           } else if (answers.component === 'query') {
@@ -644,6 +675,10 @@ program
       await setupHandler.status();
     } else if (component === 'indexerdb' && action === 'run') {
       await indexerDbHandler.runInteractive();
+    } else if (component === 'indexerdb' && action === 'run-dev') {
+      await indexerDbHandler.run({ production: false });
+    } else if (component === 'indexerdb' && action === 'run-prod') {
+      await indexerDbHandler.run({ production: true });
     } else if (component === 'query') {
       // Ejecutar directamente las acciones de query
       const args = ['node', 'cli.js', 'query', action];

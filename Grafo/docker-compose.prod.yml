@@ -1,0 +1,126 @@
+# Docker Compose para Ambiente PRODUCTIVO
+# Stack: grafo-prod
+# Servicios: Query Service (8081), MCP Server (8083)
+# MongoDB: EXTERNO (207.244.249.22:28101) con TLS
+
+version: '3.8'
+
+services:
+  # ========================
+  # Query Service (REST API) - PRODUCCIÓN
+  # ========================
+  query-service:
+    build:
+      context: ./Query
+      dockerfile: Dockerfile
+    container_name: grafo-query-service-prod
+    ports:
+      - "8081:8081"
+
+    environment:
+      # MongoDB Configuration - PRODUCCIÓN (optimized connection string)
+      - MONGODB_CONNECTION_STRING=mongodb://sonata:qwertY.!1982@207.244.249.22:28101/GraphDB?authSource=admin&tls=true&tlsAllowInvalidCertificates=true&tlsAllowInvalidHostnames=true
+      - MONGODB_DATABASE=GraphDB
+      - MONGODB_PROJECTS_COLLECTION=projects
+
+      # TLS Configuration (optional - connection string handles TLS)
+      - MONGODB_TLS_CERT_FILE=/app/certs/client.pem
+      - MONGODB_TLS_INSECURE=true
+
+      # Server Configuration
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=8081
+
+      # Logging - PRODUCCIÓN
+      - LOG_LEVEL=INFO
+
+      # CORS
+      - CORS_ORIGINS=*
+
+      # Environment
+      - ENVIRONMENT=production
+
+    volumes:
+      # Montar certificados MongoDB desde directorio compartido
+      - ./Certs/prod:/app/certs:ro
+
+    networks:
+      - grafo-network
+
+    restart: unless-stopped
+
+    labels:
+      - "com.grafo.service=query-service"
+      - "com.grafo.version=1.0.0"
+      - "com.grafo.environment=production"
+      - "com.grafo.description=REST API for querying C# code graph - PRODUCTION"
+
+  # ========================
+  # MCP Server (Model Context Protocol) - PRODUCCIÓN
+  # ========================
+  mcp-server:
+    build:
+      context: ./Query
+      dockerfile: Dockerfile.mcp
+    container_name: grafo-mcp-server-prod
+    ports:
+      - "8083:8082"
+
+    environment:
+      # MongoDB Configuration - PRODUCCIÓN (optimized connection string)
+      - MONGODB_CONNECTION_STRING=mongodb://sonata:qwertY.!1982@207.244.249.22:28101/GraphDB?authSource=admin&tls=true&tlsAllowInvalidCertificates=true&tlsAllowInvalidHostnames=true
+      - MONGODB_DATABASE=GraphDB
+      - MONGODB_PROJECTS_COLLECTION=projects
+
+      # TLS Configuration (optional - connection string handles TLS)
+      - MONGODB_TLS_CERT_FILE=/app/certs/client.pem
+      - MONGODB_TLS_INSECURE=true
+
+      # Logging - PRODUCCIÓN
+      - LOG_LEVEL=INFO
+
+      # Python
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+
+      # Environment
+      - ENVIRONMENT=production
+
+    volumes:
+      # Montar certificados MongoDB desde directorio compartido
+      - ./Certs/prod:/app/certs:ro
+
+    networks:
+      - grafo-network
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "python", "healthcheck.py"]
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 3
+
+    labels:
+      - "com.grafo.service=mcp-server"
+      - "com.grafo.version=1.0.0"
+      - "com.grafo.environment=production"
+      - "com.grafo.description=Model Context Protocol Server - PRODUCTION"
+
+# ========================
+# Networks
+# ========================
+networks:
+  grafo-network:
+    name: grafo-network-prod
+    driver: bridge
+
+# ========================
+# Nota sobre Certificados
+# ========================
+# Los certificados se montan directamente desde ./Certs/prod/
+# Asegúrate de que el archivo client.pem exista en esa ubicación antes de iniciar:
+#   - Certificado: ./Certs/prod/client.pem
+#
+# No se requieren volúmenes externos ya que usamos bind mount directo

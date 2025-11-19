@@ -293,6 +293,35 @@ POST /api/semantic/implementations
    docker-compose down
    ```
 
+### Publicación a Docker Hub
+
+El proyecto incluye soporte integrado en el CLI de Grafo para publicar las imágenes Docker a Docker Hub:
+
+1. **Configurar credenciales en `.env`:**
+   ```bash
+   DOCKER_REGISTRY=docker.io
+   DOCKER_USERNAME=tu_usuario
+   DOCKER_PASSWORD=              # Opcional - se solicitará interactivamente
+   DOCKER_REPO_QUERY=tu_usuario/grafo-query
+   DOCKER_REPO_MCP=tu_usuario/grafo-mcp
+   DOCKER_TAG=latest
+   ```
+
+2. **Publicar imágenes:**
+   ```bash
+   cd ../  # Volver al directorio Grafo
+   grafo query push
+   ```
+
+Este comando automáticamente:
+- Solicita autenticación en Docker Hub (si no está en `.env`)
+- Construye ambas imágenes (Query Service y MCP Server)
+- Etiqueta las imágenes con los nombres configurados
+- Sube las imágenes a Docker Hub
+- Opcionalmente cierra la sesión
+
+**Documentación completa:** Ver `../DOCKER_HUB_DEPLOYMENT.md`
+
 ### Uso del Script makefile.sh
 
 El proyecto incluye un script `makefile.sh` compatible con Linux, macOS y Windows (Git Bash/WSL):
@@ -348,6 +377,53 @@ El servicio Query está configurado para usar la misma base de datos que Indexer
   }
 }
 ```
+
+### Configuración para Producción
+
+Para desplegar en producción con MongoDB remoto y TLS:
+
+1. **Copia el archivo de ejemplo:**
+   ```bash
+   cp .env.production.example .env.production
+   ```
+
+2. **Configura las variables de entorno en `.env.production`:**
+   ```bash
+   # MongoDB - PRODUCCIÓN (optimized connection string)
+   MONGODB_CONNECTION_STRING=mongodb://sonata:qwertY.!1982@207.244.249.22:28101/GraphDB?authSource=admin&tls=true&tlsAllowInvalidCertificates=true&tlsAllowInvalidHostnames=true
+   MONGODB_DATABASE=GraphDB
+   MONGODB_PROJECTS_COLLECTION=projects
+
+   # TLS Configuration (optional - connection string handles TLS)
+   MONGODB_TLS_CERT_FILE=/app/certs/client.pem
+   MONGODB_TLS_INSECURE=true
+
+   # Server Configuration
+   SERVER_HOST=0.0.0.0
+   SERVER_PORT=8081
+   LOG_LEVEL=INFO
+   ENVIRONMENT=production
+   ```
+
+3. **Asegúrate de que el certificado TLS existe:**
+   ```bash
+   # El certificado debe estar en:
+   # - Local: ../Certs/prod/client.pem
+   # - Docker: /app/certs/client.pem (montado desde ./Certs/prod)
+   ```
+
+4. **Ejecuta con Docker Compose:**
+   ```bash
+   cd Grafo
+   docker-compose -f docker-compose.prod.yml up -d
+   ```
+
+**Parámetros de Connection String:**
+- `authSource=admin` - Base de datos de autenticación
+- `tls=true` - Habilita TLS/SSL
+- `tlsAllowInvalidCertificates=true` - Acepta certificados auto-firmados
+- `tlsAllowInvalidHostnames=true` - Permite mismatch de hostname
+- `/GraphDB` - Nombre de base de datos en el URI path
 
 ## 🔗 Integración con MCP Server
 
@@ -538,12 +614,89 @@ Response: {"totalProjects": 0}
 - Ejecutar IndexerDb primero para procesar el grafo
 - Verificar que la colección `projects` exista en MongoDB
 
+## 🔧 Herramientas MCP
+
+El Query Service expone **8 herramientas MCP** que pueden ser utilizadas desde IDEs como Cursor o VSCode:
+
+### Herramientas Disponibles
+
+1. **`search_code`** - Busca elementos en el grafo (clases, métodos, interfaces, etc.)
+2. **`get_code_context`** - Obtiene contexto completo de un elemento con sus relaciones
+3. **`list_projects`** - Lista todos los proyectos indexados
+4. **`get_project_structure`** - Obtiene estructura completa de un proyecto
+5. **`find_implementations`** - Encuentra implementaciones y herencias
+6. **`analyze_impact`** - Genera análisis de impacto de cambios
+7. **`get_statistics`** - Obtiene estadísticas generales del grafo
+8. **`get_tailored_guidance`** ⭐ **NUEVA** - Guía especializada para trabajar en proyecto Tailored
+
+### get_tailored_guidance - Guía para Proyecto Tailored
+
+Esta herramienta proporciona guía especializada para trabajar en el proyecto Tailored de ICBanking, que hereda de ICBanking y usa Unity IoC para hacer overrides.
+
+**Parámetros:**
+- `task_type` (requerido): Tipo de tarea
+  - `extend_business_component` - Extender componente de negocio
+  - `create_data_access` - Crear capa de acceso a datos
+  - `create_service_agent` - Crear service agent
+  - `extend_api` - Extender AppServer/WebServer API
+  - `configure_unity` - Configurar Unity IoC
+  - `understand_architecture` - Entender arquitectura
+  - `add_method_override` - Agregar override de método
+  - `create_new_component` - Crear componente nuevo
+- `component_name` (opcional): Nombre del componente (ej: "Accounts", "Clients")
+- `layer` (opcional): Capa de arquitectura (ej: "BusinessComponents", "DataAccess")
+- `details` (opcional): Detalles adicionales
+
+**Ejemplo de uso:**
+```json
+{
+  "task_type": "extend_business_component",
+  "component_name": "Accounts",
+  "layer": "BusinessComponents"
+}
+```
+
+**Respuesta:** Guía completa en Markdown con:
+- Ubicación de archivos
+- Patrones de código (C# y XML)
+- Referencias necesarias (.csproj)
+- Configuración de Unity
+- Convenciones y buenas prácticas
+
+**Documentación completa:** [TAILORED_GUIDANCE_TOOL.md](./docs/TAILORED_GUIDANCE_TOOL.md)
+
+### Configuración MCP en Cursor/VSCode
+
+Para usar las herramientas MCP en Cursor/VSCode, agrega esta configuración:
+
+**Archivo:** `~/.cursor/mcp.json` (macOS/Linux) o `%APPDATA%\Cursor\User\mcp.json` (Windows)
+
+```json
+{
+  "mcpServers": {
+    "grafo-query-http": {
+      "url": "http://localhost:8083/sse",
+      "transport": "sse"
+    }
+  }
+}
+```
+
+**Iniciar servidor MCP:**
+```bash
+cd Grafo
+grafo mcp start
+```
+
+Reinicia Cursor después de agregar la configuración.
+
 ## 📚 Referencias
 
 - [FastAPI Documentation](https://fastapi.tiangolo.com/)
 - [Motor (MongoDB Async Driver)](https://motor.readthedocs.io/)
 - [Pydantic](https://docs.pydantic.dev/)
 - [IndexerDb README](../IndexerDb/README.md)
+- [MCP Protocol Documentation](https://modelcontextprotocol.io/)
 
 ## 🔄 Roadmap
 

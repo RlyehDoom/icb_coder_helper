@@ -16,20 +16,76 @@ namespace IndexerDb.Services
             _logger = logger;
 
             var settings = mongoSettings.Value;
-            
+
             try
             {
-                var client = new MongoClient(settings.ConnectionString);
+                // Parse connection string and create MongoClientSettings
+                var mongoUrl = new MongoUrl(settings.ConnectionString);
+                var clientSettings = MongoClientSettings.FromUrl(mongoUrl);
+
+                // Configure TLS/SSL settings
+                if (settings.TlsInsecure || !string.IsNullOrEmpty(settings.TlsCertificateFile))
+                {
+                    var sslSettings = new SslSettings
+                    {
+                        CheckCertificateRevocation = false,
+                        ServerCertificateValidationCallback = (sender, certificate, chain, sslPolicyErrors) =>
+                        {
+                            // Accept all server certificates when TlsInsecure is enabled
+                            return true;
+                        }
+                    };
+
+                    // Load client certificate if provided
+                    if (!string.IsNullOrEmpty(settings.TlsCertificateFile) &&
+                        System.IO.File.Exists(settings.TlsCertificateFile))
+                    {
+                        try
+                        {
+                            // Read PEM file content
+                            var pemContent = System.IO.File.ReadAllText(settings.TlsCertificateFile);
+
+                            // Convert PEM to X509Certificate2 with persisted key storage
+                            // Windows requires non-ephemeral keys for TLS client authentication
+                            var certWithEphemeralKey = System.Security.Cryptography.X509Certificates.X509Certificate2
+                                .CreateFromPem(pemContent, pemContent);
+
+                            // Export and re-import with Exportable flag to avoid ephemeral key issues on Windows
+                            var certBytes = certWithEphemeralKey.Export(System.Security.Cryptography.X509Certificates.X509ContentType.Pkcs12);
+                            var cert = new System.Security.Cryptography.X509Certificates.X509Certificate2(
+                                certBytes,
+                                (string?)null,
+                                System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.Exportable |
+                                System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.PersistKeySet);
+
+                            sslSettings.ClientCertificates = new[] { cert };
+                            _logger.LogInformation("🔒 TLS enabled with client certificate: {CertFile}",
+                                settings.TlsCertificateFile);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "⚠️ Could not load client certificate, proceeding without it");
+                        }
+                    }
+                    else if (settings.TlsInsecure)
+                    {
+                        _logger.LogInformation("🔒 TLS enabled with certificate validation disabled (no client cert)");
+                    }
+
+                    clientSettings.SslSettings = sslSettings;
+                }
+
+                var client = new MongoClient(clientSettings);
                 var database = client.GetDatabase(settings.DatabaseName);
-                
+
                 _projectsCollection = database.GetCollection<ProjectInfo>("projects");
                 _processingStateCollection = database.GetCollection<ProcessingState>("processing_states");
 
                 // Test connection
                 _ = database.RunCommand<MongoDB.Bson.BsonDocument>(new MongoDB.Bson.BsonDocument("ping", 1));
-                
+
                 _logger.LogInformation("✅ Connected to MongoDB: {Database}/projects", settings.DatabaseName);
-                
+
                 if (settings.EnableAuth && !string.IsNullOrEmpty(settings.Username))
                 {
                     _logger.LogInformation("🔐 Using authenticated connection with user: {Username}", settings.Username);

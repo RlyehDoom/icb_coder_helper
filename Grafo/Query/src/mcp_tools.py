@@ -6,6 +6,7 @@ que pueden ser utilizadas por IDEs como Cursor o VSCode.
 """
 import logging
 from typing import Dict, Any, List
+from pathlib import Path
 from mcp.server import Server
 from mcp.types import Tool, TextContent
 import json
@@ -16,6 +17,7 @@ from .models import (
     CodeContextRequest,
     SearchProjectsRequest
 )
+from .tailored_guidance import TailoredGuidanceService
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +33,7 @@ class GraphMCPTools:
             graph_service: Servicio de consultas del grafo
         """
         self.graph_service = graph_service
+        self.tailored_guidance = TailoredGuidanceService(graph_service)
 
     def get_tools(self) -> List[Tool]:
         """Retorna la lista de herramientas MCP disponibles."""
@@ -241,6 +244,63 @@ class GraphMCPTools:
                     "type": "object",
                     "properties": {}
                 }
+            ),
+            Tool(
+                name="get_tailored_guidance",
+                description=(
+                    "Obtiene guía especializada para trabajar en el proyecto Tailored de ICBanking. "
+                    "Tailored es un proyecto que hereda de ICBanking y usa Unity IoC para hacer overrides. "
+                    "Esta herramienta proporciona: "
+                    "(1) Patrones de extensibilidad - cómo extender clases/métodos de ICBanking en Tailored "
+                    "(2) Referencias necesarias - qué proyectos y assemblies agregar según la capa "
+                    "(3) Convenciones de nombres - patrones de nombres, namespaces y ubicación de archivos "
+                    "(4) Configuración de Unity - cómo registrar componentes en UnityConfiguration.config "
+                    "(5) Ejemplos de código - patrones reales de extensión según la tarea "
+                    "(6) Estructura de capas - organización de BusinessComponents, DataAccess, ServiceAgents, APIs. "
+                    "Usa esta tool cuando necesites guía sobre: crear componentes Tailored, extender clases ICBanking, "
+                    "configurar inyección de dependencias, entender la arquitectura en capas, o seguir convenciones del proyecto."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "task_type": {
+                            "type": "string",
+                            "description": "Tipo de tarea a realizar",
+                            "enum": [
+                                "extend_business_component",
+                                "create_data_access",
+                                "create_service_agent",
+                                "extend_api",
+                                "configure_unity",
+                                "understand_architecture",
+                                "add_method_override",
+                                "create_new_component"
+                            ]
+                        },
+                        "component_name": {
+                            "type": "string",
+                            "description": "Nombre del componente/clase de ICBanking a extender o crear (opcional)"
+                        },
+                        "layer": {
+                            "type": "string",
+                            "description": "Capa de arquitectura donde trabajar (opcional)",
+                            "enum": [
+                                "BusinessComponents",
+                                "DataAccess",
+                                "ServiceAgents",
+                                "AppServerApi",
+                                "WebServerApi",
+                                "BusinessEntities",
+                                "Common"
+                            ]
+                        },
+                        "details": {
+                            "type": "string",
+                            "description": "Detalles adicionales sobre la tarea (opcional)"
+                        }
+                    },
+                    "required": ["task_type"]
+                }
             )
         ]
 
@@ -270,6 +330,8 @@ class GraphMCPTools:
                 return await self._find_implementations(arguments)
             elif tool_name == "get_statistics":
                 return await self._get_statistics(arguments)
+            elif tool_name == "get_tailored_guidance":
+                return await self._get_tailored_guidance(arguments)
             else:
                 return f"# Error en Herramienta MCP\n\n❌ **Herramienta desconocida:** `{tool_name}`"
         except Exception as e:
@@ -915,3 +977,11 @@ class GraphMCPTools:
             md += f"```\n{stats}\n```\n"
 
         return md
+
+    async def _get_tailored_guidance(self, args: Dict[str, Any]) -> str:
+        """
+        Genera guía especializada para trabajar en Tailored.
+
+        Delega al servicio TailoredGuidanceService para toda la lógica.
+        """
+        return await self.tailored_guidance.get_tailored_guidance(args)

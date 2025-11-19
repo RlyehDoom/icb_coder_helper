@@ -68,12 +68,25 @@ export class IndexerDbHandler {
   }
 
   async run(options = {}) {
-    displayProgressStart('Ejecutando IndexerDb');
-    
+    const environment = options.production ? 'Production' : 'Development';
+    const envLabel = options.production ? chalk.red.bold('PRODUCCIÓN') : chalk.green('Development');
+
+    displayProgressStart(`Ejecutando IndexerDb [${envLabel}]`);
+
     // Verificar que .NET esté disponible
     if (!(await this.systemUtils.isCommandAvailable('dotnet'))) {
       displayError('.NET SDK no está instalado o no está en PATH');
       return false;
+    }
+
+    // Verificar certificado si es producción (opcional - solo si está configurado)
+    if (options.production) {
+      const certPath = path.resolve('./Certs/prod/client.pem');
+      if (await this.systemUtils.exists(certPath)) {
+        displayInfo(`✓ Certificado TLS disponible: ${certPath}`);
+      } else {
+        displayInfo('ℹ️  Conectando sin certificado de cliente (TLS sin validación)');
+      }
     }
 
     // Verificar que existe el ejecutable
@@ -88,18 +101,35 @@ export class IndexerDbHandler {
       const args = ['run'];
 
       // Agregar opciones según los parámetros
+      const dotnetArgs = [];
+
       if (options.file) {
-        args.push('--', '--file', options.file);
+        dotnetArgs.push('--file', options.file);
       } else if (options.noInteractive) {
-        args.push('--', '--no-interactive');
+        dotnetArgs.push('--all');
       }
 
-      displayInfo('Iniciando IndexerDb...');
+      if (options.interactive) {
+        dotnetArgs.push('--interactive');
+      }
+
+      if (dotnetArgs.length > 0) {
+        args.push('--', ...dotnetArgs);
+      }
+
+      displayInfo(`Iniciando IndexerDb en modo ${environment}...`);
+      if (options.production) {
+        displayWarning('⚠️  Conectándose a MongoDB PRODUCTIVO (207.244.249.22:28101)');
+      }
       displayInfo('Presiona Ctrl+C para salir');
-      
+
       const result = await this.systemUtils.execute('dotnet', args, {
         cwd: this.indexerDbDir,
-        stdio: 'inherit' // Permite interacción con el usuario
+        stdio: 'inherit', // Permite interacción con el usuario
+        env: {
+          ...process.env,
+          DOTNET_ENVIRONMENT: environment
+        }
       });
 
       if (result.success) {
@@ -117,25 +147,47 @@ export class IndexerDbHandler {
 
   async runInteractive() {
     displayInfo('Modo interactivo de IndexerDb...');
-    
-    const { mode } = await inquirer.prompt([
+
+    const answers = await inquirer.prompt([
+      {
+        type: 'list',
+        name: 'environment',
+        message: '¿En qué ambiente deseas ejecutar?',
+        choices: [
+          { name: '🟢 Development (MongoDB local - 27019)', value: 'development' },
+          { name: '🔴 Production (MongoDB remoto - TLS)', value: 'production' }
+        ]
+      },
       {
         type: 'list',
         name: 'mode',
         message: '¿Cómo deseas ejecutar IndexerDb?',
         choices: [
-          { name: '📋 Selección interactiva (por defecto)', value: 'interactive' },
+          { name: '📋 Selección interactiva', value: 'interactive' },
           { name: '📁 Archivo específico', value: 'file' },
           { name: '🚀 Procesar todos los archivos', value: 'all' },
+          { name: '🔍 Modo query interactivo', value: 'query' },
           { name: '❓ Mostrar ayuda', value: 'help' }
         ]
       }
     ]);
 
-    switch (mode) {
+    const isProduction = answers.environment === 'production';
+
+    // Si es producción, verificar certificado antes de continuar
+    if (isProduction) {
+      const certPath = path.resolve('./Certs/prod/client.pem');
+      if (!(await this.systemUtils.exists(certPath))) {
+        displayError(`Certificado TLS no encontrado: ${certPath}`);
+        displayInfo('Para producción, el certificado debe estar en Grafo/Certs/prod/client.pem');
+        return false;
+      }
+    }
+
+    switch (answers.mode) {
       case 'interactive':
-        return await this.run({});
-      
+        return await this.run({ production: isProduction });
+
       case 'file': {
         const { filePath } = await inquirer.prompt([
           {
@@ -157,17 +209,21 @@ export class IndexerDbHandler {
             }
           }
         ]);
-        return await this.run({ file: filePath });
+        return await this.run({ file: filePath, production: isProduction });
       }
-      
+
       case 'all':
         displayInfo('Procesando todos los archivos automáticamente...');
-        return await this.run({ noInteractive: true });
-      
+        return await this.run({ noInteractive: true, production: isProduction });
+
+      case 'query':
+        displayInfo('Entrando en modo query interactivo...');
+        return await this.run({ interactive: true, production: isProduction });
+
       case 'help':
         await this.showHelp();
         return true;
-        
+
       default:
         return false;
     }
@@ -202,7 +258,7 @@ export class IndexerDbHandler {
 
   async status() {
     console.log(chalk.cyan('📊 Estado del IndexerDb:'));
-    
+
     // Verificar .NET
     const dotnetAvailable = await this.systemUtils.isCommandAvailable('dotnet');
     console.log(chalk.gray('  .NET SDK:'), dotnetAvailable ? chalk.green('✓') : chalk.red('✗'));
@@ -211,7 +267,7 @@ export class IndexerDbHandler {
       try {
         const result = await this.systemUtils.executeShell('dotnet --version', { silent: true });
         if (result.success) {
-          console.log(chalk.gray('  Versión:'), result.stdout);
+          console.log(chalk.gray('  Versión:'), result.stdout.trim());
         }
       } catch {}
     }
@@ -229,39 +285,83 @@ export class IndexerDbHandler {
       const exeExists = await this.systemUtils.exists(this.executable);
       console.log(chalk.gray('  Ejecutable:'), exeExists ? chalk.green('✓') : chalk.red('✗'));
 
-      // Verificar configuración
-      const appsettingsPath = path.join(this.indexerDbDir, 'appsettings.json');
-      const appsettingsExists = await this.systemUtils.exists(appsettingsPath);
-      console.log(chalk.gray('  Configuración:'), appsettingsExists ? chalk.green('✓') : chalk.red('✗'));
+      // Verificar configuraciones
+      console.log('');
+      console.log(chalk.cyan('  📋 Configuraciones:'));
 
-      // Mostrar información de MongoDB desde configuración
-      if (appsettingsExists) {
+      // Development
+      const appsettingsDevPath = path.join(this.indexerDbDir, 'appsettings.Development.json');
+      const appsettingsDevExists = await this.systemUtils.exists(appsettingsDevPath);
+      console.log(chalk.gray('    Development:'), appsettingsDevExists ? chalk.green('✓') : chalk.red('✗'));
+
+      if (appsettingsDevExists) {
         try {
-          const config = await fs.readJson(appsettingsPath);
-          const mongoEnabled = config.Application?.EnableMongoDB;
-          const mockMode = config.Application?.MockDataMode;
-          
-          console.log(chalk.gray('  MongoDB habilitado:'), mongoEnabled ? chalk.green('Sí') : chalk.yellow('No'));
-          console.log(chalk.gray('  Modo Mock:'), mockMode ? chalk.yellow('Sí') : chalk.green('No'));
-          
-          if (mongoEnabled && config.MongoDB?.ConnectionString) {
-            console.log(chalk.gray('  Connection String:'), config.MongoDB.ConnectionString);
+          const config = await fs.readJson(appsettingsDevPath);
+          if (config.MongoDB?.ConnectionString) {
+            console.log(chalk.gray('      MongoDB:'), config.MongoDB.ConnectionString);
           }
-        } catch (error) {
-          displayWarning('  No se pudo leer la configuración');
-        }
+        } catch {}
+      }
+
+      // Production
+      const appsettingsProdPath = path.join(this.indexerDbDir, 'appsettings.Production.json');
+      const appsettingsProdExists = await this.systemUtils.exists(appsettingsProdPath);
+      console.log(chalk.gray('    Production:'), appsettingsProdExists ? chalk.green('✓') : chalk.red('✗'));
+
+      if (appsettingsProdExists) {
+        try {
+          const config = await fs.readJson(appsettingsProdPath);
+          if (config.MongoDB?.ConnectionString) {
+            // Ocultar password en el connection string
+            let connStr = config.MongoDB.ConnectionString;
+            connStr = connStr.replace(/:[^:@]+@/, ':****@');
+            console.log(chalk.gray('      MongoDB:'), connStr);
+          }
+          if (config.MongoDB?.TlsCertificateFile) {
+            console.log(chalk.gray('      TLS Cert:'), config.MongoDB.TlsCertificateFile);
+          }
+        } catch {}
+      }
+
+      // Verificar certificado de producción
+      console.log('');
+      console.log(chalk.cyan('  🔐 Certificado TLS (Producción):'));
+      const certPath = path.resolve('./Certs/prod/client.pem');
+      const certExists = await this.systemUtils.exists(certPath);
+      console.log(chalk.gray('    Certificado:'), certExists ? chalk.green('✓') : chalk.yellow('✗ No encontrado'));
+      if (certExists) {
+        console.log(chalk.gray('    Ubicación:'), certPath);
+        try {
+          const stats = await fs.stat(certPath);
+          console.log(chalk.gray('    Tamaño:'), `${stats.size} bytes`);
+        } catch {}
       }
 
       // Verificar directorio de entrada
+      console.log('');
+      console.log(chalk.cyan('  📂 Datos de entrada:'));
       const inputDir = path.resolve('./Indexer/output');
       const inputDirExists = await this.systemUtils.exists(inputDir);
-      console.log(chalk.gray('  Directorio de entrada:'), inputDirExists ? chalk.green('✓') : chalk.red('✗'));
+      console.log(chalk.gray('    Directorio output:'), inputDirExists ? chalk.green('✓') : chalk.red('✗'));
 
       if (inputDirExists) {
         try {
           const files = await fs.readdir(inputDir);
           const graphDirs = files.filter(f => f.endsWith('GraphFiles'));
-          console.log(chalk.gray('  Directorios de grafo:'), graphDirs.length > 0 ? chalk.green(graphDirs.length) : chalk.yellow('0'));
+          console.log(chalk.gray('    Directorios de grafo:'), graphDirs.length > 0 ? chalk.green(graphDirs.length) : chalk.yellow('0'));
+
+          // Contar archivos de grafo
+          let totalGraphFiles = 0;
+          for (const dir of graphDirs) {
+            const dirPath = path.join(inputDir, dir);
+            try {
+              const graphFiles = await fs.readdir(dirPath);
+              totalGraphFiles += graphFiles.filter(f => f.endsWith('-graph.json')).length;
+            } catch {}
+          }
+          if (totalGraphFiles > 0) {
+            console.log(chalk.gray('    Archivos de grafo:'), chalk.green(totalGraphFiles));
+          }
         } catch (error) {
           // Ignorar errores al leer directorio
         }

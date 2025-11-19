@@ -7,8 +7,8 @@ import { displayProgressStart, displayProgressEnd, displayError, displaySuccess,
 export class QueryHandler {
   constructor(systemUtils) {
     this.systemUtils = systemUtils;
-    this.queryDir = path.resolve('./Grafo/Query');
-    this.dockerComposePath = path.resolve('./Grafo/docker-compose.yml');
+    this.queryDir = path.resolve('./Query');
+    this.dockerComposePath = path.resolve('./docker-compose.yml');
     this.dockerfilePath = path.join(this.queryDir, 'Dockerfile');
     this.projectName = 'grafo';
     this.serviceName = 'query-service';
@@ -41,7 +41,7 @@ export class QueryHandler {
     try {
       displayInfo('Construyendo imagen Docker...');
       const result = await this.systemUtils.execute('docker-compose', ['-f', this.dockerComposePath, '-p', this.projectName, 'build', this.serviceName], {
-        cwd: path.resolve('./Grafo')
+        cwd: process.cwd()
       });
 
       if (result.success) {
@@ -86,11 +86,11 @@ export class QueryHandler {
         
         // Eliminar el contenedor existente sin preguntar
         await this.systemUtils.execute('docker-compose', ['-f', this.dockerComposePath, '-p', this.projectName, 'stop', this.serviceName], {
-          cwd: path.resolve('./Grafo')
+          cwd: process.cwd()
         });
 
         const downResult = await this.systemUtils.execute('docker-compose', ['-f', this.dockerComposePath, '-p', this.projectName, 'rm', '-f', this.serviceName], {
-          cwd: path.resolve('./Grafo')
+          cwd: process.cwd()
         });
 
         if (!downResult.success) {
@@ -110,7 +110,7 @@ export class QueryHandler {
       args.push(this.serviceName);
 
       const result = await this.systemUtils.execute('docker-compose', args, {
-        cwd: path.resolve('./Grafo')
+        cwd: process.cwd()
       });
 
       if (result.success) {
@@ -135,7 +135,7 @@ export class QueryHandler {
 
     try {
       const result = await this.systemUtils.execute('docker-compose', ['-f', this.dockerComposePath, '-p', this.projectName, 'stop', this.serviceName], {
-        cwd: path.resolve('./Grafo')
+        cwd: process.cwd()
       });
 
       if (result.success) {
@@ -157,12 +157,12 @@ export class QueryHandler {
     try {
       // Detener el servicio
       await this.systemUtils.execute('docker-compose', ['-f', this.dockerComposePath, '-p', this.projectName, 'stop', this.serviceName], {
-        cwd: path.resolve('./Grafo')
+        cwd: process.cwd()
       });
 
       // Remover el contenedor
       const result = await this.systemUtils.execute('docker-compose', ['-f', this.dockerComposePath, '-p', this.projectName, 'rm', '-f', this.serviceName], {
-        cwd: path.resolve('./Grafo')
+        cwd: process.cwd()
       });
 
       if (result.success) {
@@ -183,7 +183,7 @@ export class QueryHandler {
 
     try {
       const result = await this.systemUtils.execute('docker-compose', ['-f', this.dockerComposePath, '-p', this.projectName, 'restart', this.serviceName], {
-        cwd: path.resolve('./Grafo')
+        cwd: process.cwd()
       });
 
       if (result.success) {
@@ -218,7 +218,7 @@ export class QueryHandler {
       args.push(this.serviceName);
 
       await this.systemUtils.execute('docker-compose', args, {
-        cwd: path.resolve('./Grafo'),
+        cwd: process.cwd(),
         stdio: 'inherit'
       });
 
@@ -400,7 +400,7 @@ export class QueryHandler {
 
     try {
       await this.systemUtils.execute('docker-compose', ['-f', this.dockerComposePath, '-p', this.projectName, 'exec', this.serviceName, 'sh', '-c', command], {
-        cwd: path.resolve('./Grafo'),
+        cwd: process.cwd(),
         stdio: 'inherit'
       });
 
@@ -417,7 +417,7 @@ export class QueryHandler {
 
     try {
       await this.systemUtils.execute('docker-compose', ['-f', this.dockerComposePath, '-p', this.projectName, 'exec', this.serviceName, 'sh'], {
-        cwd: path.resolve('./Grafo'),
+        cwd: process.cwd(),
         stdio: 'inherit'
       });
 
@@ -430,7 +430,7 @@ export class QueryHandler {
 
   async test() {
     displayProgressStart('Ejecutando tests de Query Service');
-    
+
     try {
       // Verificar que el contenedor esté corriendo
       const containerStatus = await this.getContainerStatus();
@@ -450,7 +450,7 @@ export class QueryHandler {
       // Ejecutar tests dentro del contenedor
       const result = await this.systemUtils.execute('docker-compose',
         ['-f', this.dockerComposePath, '-p', this.projectName, 'exec', '-T', this.serviceName, 'python', '-m', 'pytest', 'tests/', '-v'],
-        { cwd: path.resolve('./Grafo') }
+        { cwd: process.cwd() }
       );
 
       if (result.success) {
@@ -462,6 +462,227 @@ export class QueryHandler {
       }
     } catch (error) {
       displayError(`Error al ejecutar tests: ${error.error || error.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * Lee la configuración de Docker Hub desde el archivo .env
+   */
+  async readDockerConfig() {
+    const envPath = path.join(this.queryDir, '.env');
+
+    if (!(await this.systemUtils.exists(envPath))) {
+      displayError(`Archivo .env no encontrado: ${envPath}`);
+      return null;
+    }
+
+    try {
+      const envContent = await fs.readFile(envPath, 'utf8');
+      const config = {};
+
+      // Parsear el archivo .env línea por línea
+      envContent.split('\n').forEach(line => {
+        const trimmed = line.trim();
+        // Ignorar comentarios y líneas vacías
+        if (!trimmed || trimmed.startsWith('#')) return;
+
+        const [key, ...valueParts] = trimmed.split('=');
+        if (key && valueParts.length > 0) {
+          config[key.trim()] = valueParts.join('=').trim();
+        }
+      });
+
+      // Verificar que existan las variables necesarias
+      const requiredVars = ['DOCKER_REGISTRY', 'DOCKER_USERNAME', 'DOCKER_REPO_QUERY', 'DOCKER_REPO_MCP', 'DOCKER_TAG'];
+      const missingVars = requiredVars.filter(v => !config[v]);
+
+      if (missingVars.length > 0) {
+        displayError(`Variables faltantes en .env: ${missingVars.join(', ')}`);
+        return null;
+      }
+
+      return config;
+    } catch (error) {
+      displayError(`Error al leer .env: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Construye, etiqueta y sube las imágenes Docker a Docker Hub
+   */
+  async push(options = {}) {
+    displayProgressStart('Preparando push a Docker Hub');
+
+    // Verificar que Docker esté disponible
+    if (!(await this.systemUtils.isCommandAvailable('docker'))) {
+      displayError('Docker no está instalado o no está en PATH');
+      return false;
+    }
+
+    // Leer configuración
+    const config = await this.readDockerConfig();
+    if (!config) {
+      return false;
+    }
+
+    const {
+      DOCKER_REGISTRY,
+      DOCKER_USERNAME,
+      DOCKER_PASSWORD,
+      DOCKER_REPO_QUERY,
+      DOCKER_REPO_MCP,
+      DOCKER_TAG
+    } = config;
+
+    displayInfo(`Registry: ${DOCKER_REGISTRY}`);
+    displayInfo(`Usuario: ${DOCKER_USERNAME}`);
+    displayInfo(`Repositorio Query: ${DOCKER_REPO_QUERY}`);
+    displayInfo(`Repositorio MCP: ${DOCKER_REPO_MCP}`);
+    displayInfo(`Tag: ${DOCKER_TAG}`);
+
+    try {
+      // 1. Pedir contraseña si no está en .env
+      let password = DOCKER_PASSWORD;
+      if (!password) {
+        const answers = await inquirer.prompt([
+          {
+            type: 'password',
+            name: 'password',
+            message: `Ingresa la contraseña de Docker Hub para ${DOCKER_USERNAME}:`,
+            validate: (input) => input.length > 0 || 'La contraseña no puede estar vacía'
+          }
+        ]);
+        password = answers.password;
+      }
+
+      // 2. Login en Docker Hub
+      displayProgressStart('Iniciando sesión en Docker Hub');
+
+      const loginResult = await this.systemUtils.executeShell(
+        `echo ${password} | docker login ${DOCKER_REGISTRY} -u ${DOCKER_USERNAME} --password-stdin`,
+        { silent: true }
+      );
+
+      if (!loginResult.success) {
+        displayProgressEnd('Error al iniciar sesión en Docker Hub', false);
+        displayError(loginResult.error || 'No se pudo autenticar');
+        return false;
+      }
+
+      displayProgressEnd('Sesión iniciada exitosamente');
+
+      // 3. Construir imágenes
+      displayProgressStart('Construyendo imagen Query Service');
+
+      const buildQueryResult = await this.systemUtils.execute(
+        'docker-compose',
+        ['-f', this.dockerComposePath, '-p', this.projectName, 'build', 'query-service'],
+        { cwd: process.cwd() }
+      );
+
+      if (!buildQueryResult.success) {
+        displayProgressEnd('Error al construir Query Service', false);
+        return false;
+      }
+      displayProgressEnd('Query Service construido exitosamente');
+
+      displayProgressStart('Construyendo imagen MCP Server');
+
+      const buildMcpResult = await this.systemUtils.execute(
+        'docker-compose',
+        ['-f', this.dockerComposePath, '-p', this.projectName, 'build', 'mcp-server'],
+        { cwd: process.cwd() }
+      );
+
+      if (!buildMcpResult.success) {
+        displayProgressEnd('Error al construir MCP Server', false);
+        return false;
+      }
+      displayProgressEnd('MCP Server construido exitosamente');
+
+      // 4. Etiquetar imágenes
+      displayProgressStart('Etiquetando imágenes');
+
+      // Tag Query Service
+      const tagQueryResult = await this.systemUtils.execute(
+        'docker',
+        ['tag', `${this.projectName}-query-service`, `${DOCKER_REPO_QUERY}:${DOCKER_TAG}`]
+      );
+
+      if (!tagQueryResult.success) {
+        displayProgressEnd('Error al etiquetar Query Service', false);
+        return false;
+      }
+
+      // Tag MCP Server
+      const tagMcpResult = await this.systemUtils.execute(
+        'docker',
+        ['tag', `${this.projectName}-mcp-server`, `${DOCKER_REPO_MCP}:${DOCKER_TAG}`]
+      );
+
+      if (!tagMcpResult.success) {
+        displayProgressEnd('Error al etiquetar MCP Server', false);
+        return false;
+      }
+
+      displayProgressEnd('Imágenes etiquetadas exitosamente');
+
+      // 5. Push a Docker Hub
+      displayProgressStart(`Subiendo Query Service a ${DOCKER_REPO_QUERY}:${DOCKER_TAG}`);
+
+      const pushQueryResult = await this.systemUtils.execute(
+        'docker',
+        ['push', `${DOCKER_REPO_QUERY}:${DOCKER_TAG}`],
+        { stdio: 'inherit' }
+      );
+
+      if (!pushQueryResult.success) {
+        displayProgressEnd('Error al subir Query Service', false);
+        return false;
+      }
+      displayProgressEnd('Query Service subido exitosamente');
+
+      displayProgressStart(`Subiendo MCP Server a ${DOCKER_REPO_MCP}:${DOCKER_TAG}`);
+
+      const pushMcpResult = await this.systemUtils.execute(
+        'docker',
+        ['push', `${DOCKER_REPO_MCP}:${DOCKER_TAG}`],
+        { stdio: 'inherit' }
+      );
+
+      if (!pushMcpResult.success) {
+        displayProgressEnd('Error al subir MCP Server', false);
+        return false;
+      }
+      displayProgressEnd('MCP Server subido exitosamente');
+
+      // 6. Success
+      displaySuccess('✓ Imágenes subidas exitosamente a Docker Hub');
+      displayInfo(`Query Service: ${DOCKER_REPO_QUERY}:${DOCKER_TAG}`);
+      displayInfo(`MCP Server: ${DOCKER_REPO_MCP}:${DOCKER_TAG}`);
+
+      // 7. Logout opcional
+      if (!options.skipLogout) {
+        const { logout } = await inquirer.prompt([
+          {
+            type: 'confirm',
+            name: 'logout',
+            message: '¿Deseas cerrar sesión de Docker Hub?',
+            default: true
+          }
+        ]);
+
+        if (logout) {
+          await this.systemUtils.execute('docker', ['logout', DOCKER_REGISTRY]);
+          displayInfo('Sesión cerrada en Docker Hub');
+        }
+      }
+
+      return true;
+    } catch (error) {
+      displayError(`Error durante el push: ${error.error || error.message}`);
       return false;
     }
   }

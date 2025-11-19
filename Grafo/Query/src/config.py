@@ -15,6 +15,9 @@ MONGODB_DATABASE = os.getenv("MONGODB_DATABASE", "GraphDB")
 MONGODB_PROJECTS_COLLECTION = os.getenv("MONGODB_PROJECTS_COLLECTION", "projects")
 MONGODB_STATES_COLLECTION = os.getenv("MONGODB_STATES_COLLECTION", "processing_states")
 
+# Configuración de TLS (para conexiones con certificado)
+MONGODB_TLS_CERTIFICATE_KEY_FILE = os.getenv("MONGODB_TLS_CERTIFICATE_KEY_FILE", "")
+
 # Configuración del servidor
 SERVER_HOST = os.getenv("SERVER_HOST", "0.0.0.0")
 SERVER_PORT = int(os.getenv("SERVER_PORT", "8081"))
@@ -50,7 +53,8 @@ def get_mongodb_config() -> dict:
         "connection_string": MONGODB_CONNECTION_STRING,
         "database": MONGODB_DATABASE,
         "projects_collection": MONGODB_PROJECTS_COLLECTION,
-        "states_collection": MONGODB_STATES_COLLECTION
+        "states_collection": MONGODB_STATES_COLLECTION,
+        "tls_certificate_key_file": MONGODB_TLS_CERTIFICATE_KEY_FILE
     }
 
 

@@ -23,20 +23,32 @@ class MongoDBService:
         """Establece conexión con MongoDB."""
         try:
             logger.info(f"🔗 Conectando a MongoDB: {self.config['database']}")
+
+            # Configurar opciones de conexión
+            client_options = {
+                "serverSelectionTimeoutMS": 5000
+            }
+
+            # Agregar certificado TLS si está configurado
+            tls_cert = self.config.get('tls_certificate_key_file', '')
+            if tls_cert and tls_cert.strip():
+                logger.info(f"🔐 Usando certificado TLS: {tls_cert}")
+                client_options['tlsCertificateKeyFile'] = tls_cert
+
             self.client = AsyncIOMotorClient(
                 self.config['connection_string'],
-                serverSelectionTimeoutMS=5000
+                **client_options
             )
-            
+
             # Verificar conexión
             await self.client.admin.command('ping')
             self.db = self.client[self.config['database']]
             self._connected = True
-            
+
             # Mostrar estadísticas de conexión
             project_count = await self.db[self.config['projects_collection']].count_documents({})
             logger.info(f"✅ Conectado a MongoDB: {project_count} proyectos disponibles")
-            
+
         except (ConnectionFailure, ServerSelectionTimeoutError) as e:
             logger.error(f"❌ Error conectando a MongoDB: {e}")
             self._connected = False

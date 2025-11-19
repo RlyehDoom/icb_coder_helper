@@ -61,6 +61,7 @@ typings/
 # dotenv environment variables file
 .env
 .env.test
+.env.prod
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
@@ -123,6 +124,12 @@ temp/
 .env.production.local
 *.key
 *.pem
+
+# Production Deployment
+# Exclude production certificates and sensitive configuration
+Certs/prod/
+docker-compose.prod.yml.backup
+IndexerDb/appsettings.Production.json
 
 **/bin/
 **/obj/

@@ -10,6 +10,10 @@ namespace IndexerDb.Models
         public string AuthDatabase { get; set; } = "admin";
         public bool EnableAuth { get; set; } = false;
 
+        // TLS Certificate for production MongoDB connections
+        public string TlsCertificateFile { get; set; } = string.Empty;
+        public bool TlsInsecure { get; set; } = false;
+
         public string GetAuthenticatedConnectionString()
         {
             if (!EnableAuth || string.IsNullOrEmpty(Username))
