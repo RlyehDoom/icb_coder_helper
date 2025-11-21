@@ -81,6 +81,10 @@ public override void UpdateClient(UpdateClientIn input)
 
 ### 4. Consideraciones Importantes
 
+- ✅ **NAMING CONVENTION (CRÍTICO):**
+  - **Clase extendida:** `<ClaseOriginal>Extended` (ejemplo: `Accounts` → `AccountsExtended`)
+  - **Archivo:** `<ArchivoOriginal sin .cs>Extended.cs` (ejemplo: `Accounts.cs` → `AccountsExtended.cs`)
+  - Esta convención es **OBLIGATORIA** para todo código que extiende clases base de ICBanking
 - ✅ **Siempre considera llamar a `base.Metodo()`** a menos que necesites reemplazar completamente
 - ✅ **Mantén la firma del método** (mismo tipo de retorno y parámetros)
 - ✅ **Respeta contratos** (excepciones, validaciones esperadas por ICBanking)

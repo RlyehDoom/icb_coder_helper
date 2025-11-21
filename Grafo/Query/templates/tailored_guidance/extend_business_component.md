@@ -76,6 +76,10 @@ public virtual ICommon CommonComponent
 ### 6. Convenciones Importantes
 
 - ✅ **Namespace:** `Tailored.ICBanking.BusinessComponents`
-{component_convention}- ✅ **Herencia:** Extender de la clase concreta de ICBanking
+{component_convention}- ✅ **NAMING CONVENTION (CRÍTICO):**
+  - **Clase extendida:** `<ClaseOriginal>Extended` (ejemplo: `Accounts` → `AccountsExtended`)
+  - **Archivo:** `<ArchivoOriginal sin .cs>Extended.cs` (ejemplo: `Accounts.cs` → `AccountsExtended.cs`)
+  - Esta convención es **OBLIGATORIA** para todo código que extiende clases base de ICBanking
+- ✅ **Herencia:** Extender de la clase concreta de ICBanking
 - ✅ **Métodos virtuales:** Solo puedes override métodos marcados como `virtual` en ICBanking
 - ✅ **Llamar a base:** Siempre considera llamar a `base.Metodo()` para mantener lógica de ICBanking

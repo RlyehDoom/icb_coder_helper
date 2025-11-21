@@ -1,7 +1,10 @@
 ```csharp
 namespace Tailored.ICBanking.BusinessComponents
 {{{{
-    public class {component_name} : Infocorp.{component_name}.BusinessComponents.{component_name}
+    /// <summary>
+    /// IMPORTANTE: Clase DEBE llamarse {component_name}Extended (convención obligatoria)
+    /// </summary>
+    public class {component_name}Extended : Infocorp.{component_name}.BusinessComponents.{component_name}
     {{{{
         // Override del método
         public override TipoRetorno MetodoAExtender(ParametrosIn input)

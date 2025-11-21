@@ -72,7 +72,8 @@ Los snippets pueden contener:
 ```csharp
 namespace Tailored.ICBanking.BusinessComponents
 {{
-    public class {component_name} : Infocorp.{component_name}.BusinessComponents.{component_name}
+    // IMPORTANTE: Clase DEBE llamarse {component_name}Extended (convención obligatoria)
+    public class {component_name}Extended : Infocorp.{component_name}.BusinessComponents.{component_name}
     {{
         public override TipoRetorno Metodo(ParametrosIn input)
         {{

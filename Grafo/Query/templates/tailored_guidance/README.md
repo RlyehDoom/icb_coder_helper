@@ -91,7 +91,29 @@ result = template_content.format(**variables)
 - ✅ **Escalable:** Agregar nuevas guías fácilmente
 - ✅ **Colaborativo:** Equipo puede editar templates sin conocer Python
 
-## Convenciones
+## ⚠️ CONVENCIONES CRÍTICAS DE TAILORED
+
+### Naming Convention para Clases Extendidas (OBLIGATORIO)
+
+Cuando se extiende una clase de ICBanking en Tailored, **SIEMPRE** seguir esta convención:
+
+- **Clase extendida:** `<ClaseOriginal>Extended`
+  - Ejemplo: `Accounts` → `AccountsExtended`
+  - Ejemplo: `ApprovalScheme` → `ApprovalSchemeExtended`
+
+- **Archivo:** `<ArchivoOriginal sin .cs>Extended.cs`
+  - Ejemplo: `Accounts.cs` → `AccountsExtended.cs`
+  - Ejemplo: `ApprovalScheme.cs` → `ApprovalSchemeExtended.cs`
+
+- **Registro en Unity:** También debe usar el nombre con `Extended`
+  ```xml
+  <register type="Infocorp.ApplicationServer.Interfaces.BusinessComponents.IAccounts"
+           mapTo="Tailored.ICBanking.BusinessComponents.AccountsExtended" />
+  ```
+
+**IMPORTANTE:** Esta convención aplica **SOLO** a clases que heredan de ICBanking. Clases 100% nuevas de Tailored no necesitan el sufijo `Extended`.
+
+## Convenciones de Templates
 
 - Usar Markdown válido
 - Placeholders en formato `{nombre_en_snake_case}`

@@ -35,6 +35,11 @@ Dependiendo de la capa, agregar en `.csproj`:
 ### 5. Convenciones de Código
 
 - ✅ **Namespace:** Sigue el patrón `Tailored.ICBanking.<Layer>`
+- ✅ **NAMING CONVENTION:**
+  - **Componentes NUEVOS (100% Tailored):** Usa el nombre descriptivo sin sufijo (ejemplo: `TailoredValidations`)
+  - **Componentes que EXTIENDEN ICBanking:** OBLIGATORIO usar sufijo `Extended`:
+    - Clase: `<ClaseOriginal>Extended` (ejemplo: `Accounts` → `AccountsExtended`)
+    - Archivo: `<ArchivoOriginal sin .cs>Extended.cs` (ejemplo: `Accounts.cs` → `AccountsExtended.cs`)
 - ✅ **PascalCase:** Para clases, métodos, propiedades
 - ✅ **camelCase:** Para variables locales y parámetros
 - ✅ **Comentarios XML:** Documenta clases y métodos públicos

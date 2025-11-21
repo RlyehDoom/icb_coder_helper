@@ -6,8 +6,9 @@ namespace Tailored.ICBanking.BusinessComponents
 {{
     /// <summary>
     /// Extensión Tailored de {component_name} para agregar funcionalidad personalizada.
+    /// IMPORTANTE: Nombre de clase DEBE ser {component_name}Extended (convención obligatoria)
     /// </summary>
-    public class {component_name} : Infocorp.{component_name}.BusinessComponents.{component_name}
+    public class {component_name}Extended : Infocorp.{component_name}.BusinessComponents.{component_name}
     {{
         // Override de métodos virtuales
         public override TipoRetorno MetodoAExtender(ParametrosIn input)
