@@ -14,7 +14,7 @@ Parámetros:
 {actual_inheritance_info}
 
 **Si el grafo no tiene datos**, revisar manualmente en Visual Studio:
-1. Abrir `C:\GIT\ICB7C\Infocorp.Banking\` en Visual Studio
+1. Abrir la solución de ICBanking en Visual Studio
 2. Buscar clase `{component_name}` (Ctrl+T)
 3. Ver jerarquía de herencia (F12 en clase base)
 4. Identificar métodos `virtual` para override

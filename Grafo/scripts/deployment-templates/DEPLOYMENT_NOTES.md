@@ -155,13 +155,13 @@ scp grafo-prod-YYYYMMDD-HHMMSS.tar.gz sonata@207.244.249.22:~/ftp/
 
 ```bash
 # Create deployment directory
-mkdir -p /home/sonata/grafo/deployment
+mkdir -p $HOME/grafo/deployment
 
 # Copy from FTP
-cp /home/sonata/ftp/grafo-prod-*.tar.gz /home/sonata/grafo/deployment/
+cp $HOME/ftp/grafo-prod-*.tar.gz $HOME/grafo/deployment/
 
 # Navigate and extract
-cd /home/sonata/grafo/deployment
+cd $HOME/grafo/deployment
 tar -xzf grafo-prod-*.tar.gz
 
 # Enter directory

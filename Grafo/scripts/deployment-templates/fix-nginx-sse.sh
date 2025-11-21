@@ -48,13 +48,20 @@ print_info "Buscando archivo de configuración de Nginx..."
 NGINX_CONF=""
 
 # Ubicaciones posibles
+DEPLOYMENT_DIR="${GRAFO_DEPLOYMENT_DIR:-$HOME/grafo/deployment}"
+LATEST_DEPLOYMENT=$(ls -td ${DEPLOYMENT_DIR}/grafo-prod-* 2>/dev/null | head -1)
+
 POSSIBLE_LOCATIONS=(
-    "/home/sonata/1q1/grafo/grafo-nginx.conf"
     "/etc/nginx/sites-available/grafo.conf"
     "/etc/nginx/sites-enabled/grafo.conf"
     "/etc/nginx/conf.d/grafo.conf"
     "$(pwd)/grafo-nginx.conf"
 )
+
+# Si existe deployment reciente, agregar a ubicaciones posibles
+if [ -n "$LATEST_DEPLOYMENT" ]; then
+    POSSIBLE_LOCATIONS=("$LATEST_DEPLOYMENT/grafo-nginx.conf" "${POSSIBLE_LOCATIONS[@]}")
+fi
 
 for location in "${POSSIBLE_LOCATIONS[@]}"; do
     if [ -f "$location" ]; then
@@ -153,7 +160,7 @@ else
     echo ""
     echo "OPCIÓN 1: Copiar configuración desde el deployment más reciente"
     echo ""
-    LATEST_DEPLOYMENT=$(ls -td /home/sonata/grafo/deployment/grafo-prod-* 2>/dev/null | head -1)
+    # Reutilizar LATEST_DEPLOYMENT ya definido al inicio
     if [ -n "$LATEST_DEPLOYMENT" ] && [ -f "$LATEST_DEPLOYMENT/grafo-nginx.conf" ]; then
         echo "  Deployment más reciente: $LATEST_DEPLOYMENT"
         echo ""
@@ -192,7 +199,7 @@ else
             fi
         fi
     else
-        echo "  No se encontró deployment reciente en /home/sonata/grafo/deployment/"
+        echo "  No se encontró deployment reciente en ${DEPLOYMENT_DIR}/"
     fi
 
     echo ""

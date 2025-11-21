@@ -10,7 +10,7 @@ Antes de considerar esta tarea completa, **DEBES** ejecutar las siguientes valid
 
 ```bash
 # Compilar el proyecto Tailored
-cd C:\GIT\ICB7C\Tailored
+cd /Tailored
 dotnet build Tailored.ICBanking.sln --configuration Debug
 
 # Si hay errores, revisar:

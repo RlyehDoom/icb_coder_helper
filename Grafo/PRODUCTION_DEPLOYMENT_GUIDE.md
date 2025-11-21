@@ -122,8 +122,8 @@ mongosh "mongodb://localhost:28101/" --eval "db.adminCommand('ping')"
 
 ```bash
 # Crear directorio de deployment
-mkdir -p /home/sonata/grafo/deployment
-cd /home/sonata/grafo/deployment
+mkdir -p $HOME/grafo/deployment
+cd $HOME/grafo/deployment
 
 # Clonar repositorio o copiar archivos necesarios
 git clone https://github.com/tu-repo/grafo.git
@@ -204,7 +204,7 @@ Cuando usas `network_mode: host`, los contenedores **comparten la red del host**
 # - diagnose-mongodb.sh
 # - README.txt
 
-cd /home/sonata/grafo/deployment
+cd $HOME/grafo/deployment
 tar -xzf grafo-prod-YYYYMMDD-HHMMSS.tar.gz
 cd grafo-prod-YYYYMMDD-HHMMSS
 ```
@@ -613,16 +613,16 @@ grafo query push
 
 ```bash
 # Desde tu máquina local
-scp grafo-prod-*.tar.gz user@tu-servidor:/home/sonata/ftp/
+scp grafo-prod-*.tar.gz user@tu-servidor:~/ftp/
 ```
 
 ### 3. En el Servidor de Producción
 
 ```bash
 # Copiar desde FTP
-mkdir -p /home/sonata/grafo/deployment
-cp /home/sonata/ftp/grafo-prod-*.tar.gz /home/sonata/grafo/deployment/
-cd /home/sonata/grafo/deployment
+mkdir -p $HOME/grafo/deployment
+cp $HOME/ftp/grafo-prod-*.tar.gz $HOME/grafo/deployment/
+cd $HOME/grafo/deployment
 
 # Extraer
 tar -xzf grafo-prod-*.tar.gz

@@ -2,7 +2,7 @@
 
 **Ubicación del .csproj base:**
 ```
-C:\GIT\ICB7C\Infocorp.Banking\
+[Raíz de tu solución ICBanking]
   └── [Ubicación del proyecto que contiene {component_name}]
       └── [ProjectName].csproj
 ```

@@ -20,7 +20,7 @@ echo -e "${CYAN}╚════════════════════�
 echo ""
 
 # Find deployment directory
-DEPLOYMENT_DIR="/home/sonata/grafo/deployment"
+DEPLOYMENT_DIR="${GRAFO_DEPLOYMENT_DIR:-/home/sonata/grafo/deployment}"
 LATEST_DEPLOYMENT=$(ls -td ${DEPLOYMENT_DIR}/grafo-prod-* 2>/dev/null | head -1)
 
 if [ -z "$LATEST_DEPLOYMENT" ]; then
