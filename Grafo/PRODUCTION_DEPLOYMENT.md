@@ -91,7 +91,7 @@ El script automáticamente:
 ```bash
 # Health checks
 curl http://localhost:8081/health    # Query Service
-curl http://localhost:8083/health    # MCP Server
+curl http://localhost:9083/health    # MCP Server
 
 # Ver logs
 docker-compose -f docker-compose.dockerhub.yml --env-file .env.production logs -f
@@ -159,7 +159,7 @@ MONGODB_TLS_CERT_FILE=/app/certs/client.pem
 
 # Puertos
 SERVER_PORT=8081  # Query Service
-MCP_PORT=8083     # MCP Server (externo)
+MCP_PORT=9083     # MCP Server (externo)
 
 # Logging
 LOG_LEVEL=INFO
@@ -313,7 +313,7 @@ El script de deployment ejecuta los siguientes pasos automáticamente:
 6. **Verificar Health**
    - Espera 10 segundos
    - Verifica Query Service (puerto 8081)
-   - Verifica MCP Server (puerto 8083)
+   - Verifica MCP Server (puerto 9083)
 
 7. **Mostrar Estado**
    - Muestra contenedores activos
@@ -328,7 +328,7 @@ El script de deployment ejecuta los siguientes pasos automáticamente:
 curl http://localhost:8081/health
 
 # MCP Server
-curl http://localhost:8083/health
+curl http://localhost:9083/health
 ```
 
 ### Ver Logs
@@ -355,8 +355,8 @@ docker compose -f docker-compose.prod.yml --env-file .env.prod ps
 | Query Service (REST API) | http://localhost:8081 | 8081 |
 | Query Service Health | http://localhost:8081/health | 8081 |
 | Query Service Docs | http://localhost:8081/docs | 8081 |
-| MCP Server (SSE) | http://localhost:8083/sse | 8083 |
-| MCP Server Health | http://localhost:8083/health | 8083 |
+| MCP Server (SSE) | http://localhost:9083/sse | 9083 |
+| MCP Server Health | http://localhost:9083/health | 9083 |
 
 ## 🛠️ Comandos Útiles
 
@@ -430,11 +430,11 @@ ls -la Grafo/Certs/prod/client.pem
    ```bash
    # Linux/Mac
    lsof -i :8081
-   lsof -i :8083
+   lsof -i :9083
 
    # Windows
    netstat -ano | findstr :8081
-   netstat -ano | findstr :8083
+   netstat -ano | findstr :9083
    ```
 
 ### Logs muestran errores de TLS

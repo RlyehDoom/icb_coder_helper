@@ -194,7 +194,7 @@ The script will:
 ```bash
 # Check service health
 curl http://localhost:8081/health    # Query Service
-curl http://localhost:8083/health    # MCP Server
+curl http://localhost:9083/health    # MCP Server
 
 # View logs
 docker compose -f docker-compose.dockerhub.yml --env-file .env.production logs -f
@@ -241,8 +241,8 @@ MongoDB:
 📡 Servicios disponibles:
   • Query Service (REST API): http://localhost:8081
   • Query Service Docs: http://localhost:8081/docs
-  • MCP Server (SSE): http://localhost:8083/sse
-  • MCP Server Health: http://localhost:8083/health
+  • MCP Server (SSE): http://localhost:9083/sse
+  • MCP Server Health: http://localhost:9083/health
 
 ⚠️  Nota: Los servicios se conectan a MongoDB productivo en mongodb-prod:27017
 ```

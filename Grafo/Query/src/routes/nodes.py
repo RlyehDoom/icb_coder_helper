@@ -31,11 +31,11 @@ async def get_node_by_id(
 ):
     """Obtiene un nodo específico por su ID."""
     result = await graph_service.get_node_by_id(node_id)
-    
+
     if not result:
         raise HTTPException(status_code=404, detail=f"Node {node_id} not found")
-    
-    node, project_id = result
+
+    node, project_id, mongo_doc_id = result
     return node
 
 

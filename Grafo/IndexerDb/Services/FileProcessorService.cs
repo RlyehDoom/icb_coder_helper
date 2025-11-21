@@ -75,9 +75,9 @@ namespace IndexerDb.Services
                     // Add metadata about the import
                     graphDocument.ImportedAt = DateTime.UtcNow;
                     graphDocument.SourceFile = Path.GetFileName(filePath);
-                    graphDocument.SourceDirectory = Path.GetDirectoryName(filePath) ?? string.Empty;
+                    graphDocument.SourceDirectory = GetRelativeSourceDirectory(filePath);
 
-                    _logger.LogInformation("Successfully processed graph file: {FilePath}, Nodes: {NodeCount}, Edges: {EdgeCount}", 
+                    _logger.LogInformation("Successfully processed graph file: {FilePath}, Nodes: {NodeCount}, Edges: {EdgeCount}",
                         filePath, graphDocument.Nodes.Count, graphDocument.Edges.Count);
                 }
 
@@ -111,6 +111,36 @@ namespace IndexerDb.Services
 
             _logger.LogInformation("Successfully processed {Count} graph documents", documents.Count);
             return documents;
+        }
+
+        /// <summary>
+        /// Converts absolute path to relative path starting from /Indexer
+        /// Example: C:\Program Files\nodejs\node_modules\grafo-cli\Indexer\output\file.json
+        ///       -> /Indexer/output
+        /// </summary>
+        private static string GetRelativeSourceDirectory(string filePath)
+        {
+            var directory = Path.GetDirectoryName(filePath) ?? string.Empty;
+
+            // Normalize path separators to forward slashes
+            var normalizedPath = directory.Replace('\\', '/');
+
+            // Find the position of "/Indexer" or "Indexer" in the path
+            var indexerIndex = normalizedPath.LastIndexOf("/Indexer", StringComparison.OrdinalIgnoreCase);
+            if (indexerIndex == -1)
+            {
+                indexerIndex = normalizedPath.LastIndexOf("Indexer", StringComparison.OrdinalIgnoreCase);
+                if (indexerIndex == -1)
+                {
+                    // If Indexer not found, return the full normalized path
+                    return normalizedPath;
+                }
+                // Return from /Indexer onwards
+                return "/" + normalizedPath.Substring(indexerIndex);
+            }
+
+            // Return from /Indexer onwards (indexerIndex already includes the /)
+            return normalizedPath.Substring(indexerIndex);
         }
     }
 }

@@ -6,6 +6,7 @@ Este script inicia el servidor MCP que expone las funcionalidades del Query Serv
 vía HTTP usando Server-Sent Events (SSE), permitiendo múltiples clientes simultáneos.
 """
 import sys
+import os
 import uvicorn
 from pathlib import Path
 
@@ -13,16 +14,20 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 if __name__ == "__main__":
+    # Leer puerto de variable de entorno, default a 9083 para producción
+    # (8082 está tomado en el servidor de producción)
+    port = int(os.getenv("SERVER_PORT", "9083"))
+
     print("🌐 Iniciando Grafo MCP Server HTTP...")
-    print("📡 Puerto: 9083")
-    print("🔗 Endpoint SSE: http://0.0.0.0:9083/sse")
-    print("📋 Health: http://0.0.0.0:9083/health")
+    print(f"📡 Puerto: {port}")
+    print(f"🔗 Endpoint SSE: http://0.0.0.0:{port}/sse")
+    print(f"📋 Health: http://0.0.0.0:{port}/health")
     print()
 
     uvicorn.run(
         "src.mcp_server_http:fastapi_app",
         host="0.0.0.0",
-        port=9083,
+        port=port,
         log_level="info",
         access_log=True
     )

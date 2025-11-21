@@ -1,5 +1,6 @@
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.MSBuild;
 using RoslynIndexer.Walkers;
 using RoslynIndexer.Utils;
 using System.Text.RegularExpressions;
@@ -62,6 +63,170 @@ namespace RoslynIndexer.Services
             return false;
         }
 
+        /// <summary>
+        /// Process solution using MSBuildWorkspace (RECOMMENDED - Uses MSBuild's reference resolution)
+        /// </summary>
+        public async Task<List<SymbolInfo>> ProcessSolutionWithMSBuildWorkspace(string solutionPath, bool verbose, IProgress<string>? progress = null)
+        {
+            var allSymbols = new List<SymbolInfo>();
+            AllMethodInvocations.Clear();
+            AllTypeUsages.Clear();
+            AllInheritanceRelations.Clear();
+            AllInterfaceImplementations.Clear();
+
+            if (verbose)
+            {
+                Console.WriteLine($"🔬 Processing solution with MSBuildWorkspace...");
+                progress?.Report($"Loading solution with MSBuild...");
+            }
+
+            // PRE-COMPILE: Build the solution first
+            if (verbose)
+            {
+                Console.WriteLine($"\n📦 Pre-compiling solution with MSBuild...");
+            }
+
+            var buildSuccess = await ExecuteDotnetBuild(solutionPath, verbose);
+            if (!buildSuccess && verbose)
+            {
+                Console.WriteLine($"⚠️  Warning: Build had errors. Continuing with best-effort mode...");
+            }
+
+            // Create MSBuildWorkspace
+            using var workspace = MSBuildWorkspace.Create();
+
+            // Load the solution
+            if (verbose)
+            {
+                Console.WriteLine($"\n📂 Loading solution into MSBuildWorkspace...");
+            }
+
+            var solution = await workspace.OpenSolutionAsync(solutionPath, progress: new Progress<ProjectLoadProgress>(p =>
+            {
+                if (verbose && p.Operation == ProjectLoadOperation.Resolve)
+                {
+                    Console.WriteLine($"   Loading project: {p.FilePath}");
+                }
+            }));
+
+            if (workspace.Diagnostics.Any())
+            {
+                // Filter out non-critical diagnostics (package warnings, SNI compatibility warnings)
+                var criticalDiags = workspace.Diagnostics
+                    .Where(d => d.Kind == WorkspaceDiagnosticKind.Failure &&
+                               !d.Message.Contains("Package") &&
+                               !d.Message.Contains("SNI") &&
+                               !d.Message.Contains("was restored using") &&
+                               !d.Message.Contains("Found project reference without a matching metadata reference"))
+                    .ToList();
+
+                if (verbose && criticalDiags.Any())
+                {
+                    Console.WriteLine($"\n⚠️  MSBuildWorkspace critical diagnostics ({criticalDiags.Count}):");
+                    foreach (var diag in criticalDiags.Take(10))
+                    {
+                        Console.WriteLine($"   {diag.Kind}: {diag.Message}");
+                    }
+                    if (criticalDiags.Count > 10)
+                    {
+                        Console.WriteLine($"   ... and {criticalDiags.Count - 10} more critical diagnostics");
+                    }
+                }
+                else if (verbose)
+                {
+                    Console.WriteLine($"\n✅ MSBuildWorkspace loaded successfully ({workspace.Diagnostics.Count()} non-critical warnings filtered)");
+                }
+            }
+
+            // Process each project
+            foreach (var project in solution.Projects)
+            {
+                // Check if project should be excluded
+                var shouldExclude = _excludeProjectPatterns.Any(pattern => pattern.IsMatch(project.Name));
+                if (shouldExclude)
+                {
+                    if (verbose)
+                        Console.WriteLine($"⏭️  Skipping excluded project: {project.Name}");
+                    continue;
+                }
+
+                if (verbose)
+                    Console.WriteLine($"\n[Project] {project.Name}");
+
+                // Get compilation for this project (with all references resolved by MSBuild!)
+                var compilation = await project.GetCompilationAsync();
+                if (compilation == null)
+                {
+                    if (verbose)
+                        Console.WriteLine($"   ⚠️  Could not get compilation for {project.Name}");
+                    continue;
+                }
+
+                // Check for compilation errors
+                var diagnostics = compilation.GetDiagnostics()
+                    .Where(d => d.Severity == DiagnosticSeverity.Error)
+                    .ToList();
+
+                var config = EnvironmentConfig.Current;
+                var allowErrors = config.GetBool("ALLOW_COMPILATION_ERRORS", true);
+
+                if (diagnostics.Any())
+                {
+                    if (allowErrors)
+                    {
+                        if (verbose)
+                        {
+                            Console.WriteLine($"   ⚠️  {diagnostics.Count} compilation errors (continuing)");
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine($"   ❌ {diagnostics.Count} errors in {project.Name}");
+                        continue;
+                    }
+                }
+
+                // Process each document in the project
+                foreach (var document in project.Documents)
+                {
+                    if (!document.FilePath?.EndsWith(".cs") ?? true)
+                        continue;
+
+                    var semanticModel = await document.GetSemanticModelAsync();
+                    if (semanticModel == null)
+                        continue;
+
+                    var syntaxRoot = await semanticModel.SyntaxTree.GetRootAsync();
+
+                    // Extract symbols using semantic walker
+                    var walker = new SemanticWalker(project.Name, document.FilePath!, semanticModel);
+                    walker.Visit(syntaxRoot);
+
+                    allSymbols.AddRange(walker.Symbols);
+                    AllMethodInvocations.AddRange(walker.MethodInvocations);
+                    AllTypeUsages.AddRange(walker.TypeUsages);
+                    AllInheritanceRelations.AddRange(walker.InheritanceRelations);
+                    AllInterfaceImplementations.AddRange(walker.InterfaceImplementations);
+                }
+
+                if (verbose)
+                {
+                    Console.WriteLine($"   ✅ Processed {project.Documents.Count()} files");
+                }
+            }
+
+            if (verbose)
+            {
+                Console.WriteLine($"\n✅ Processed {solution.Projects.Count()} projects");
+                Console.WriteLine($"   Total symbols: {allSymbols.Count}");
+            }
+
+            return allSymbols;
+        }
+
+        /// <summary>
+        /// Process solution directly (LEGACY - Manual reference resolution)
+        /// </summary>
         public async Task<List<SymbolInfo>> ProcessSolutionDirectly(string solutionPath, bool verbose, IProgress<string>? progress = null)
         {
             var allSymbols = new List<SymbolInfo>();
@@ -69,19 +234,38 @@ namespace RoslynIndexer.Services
             AllTypeUsages.Clear();
             AllInheritanceRelations.Clear();
             AllInterfaceImplementations.Clear();
-            
+
             if (verbose)
             {
                 Console.WriteLine($"🔬 Processing solution with Roslyn Semantic Model...");
                 progress?.Report($"Processing solution with Roslyn Semantic Model...");
             }
-            
+
             var solutionDir = Path.GetDirectoryName(solutionPath);
-            
-            if (string.IsNullOrEmpty(solutionDir)) 
+
+            if (string.IsNullOrEmpty(solutionDir))
             {
                 Console.WriteLine("ERROR: Solution directory is null or empty!");
                 return allSymbols;
+            }
+
+            // PRE-COMPILE: Execute dotnet build to ensure all dependencies are resolved
+            // This is much more robust than trying to replicate MSBuild's reference resolution
+            if (verbose)
+            {
+                Console.WriteLine($"\n📦 Pre-compiling solution with MSBuild to resolve all dependencies...");
+                progress?.Report($"Pre-compiling solution...");
+            }
+
+            var buildSuccess = await ExecuteDotnetBuild(solutionPath, verbose);
+            if (!buildSuccess && verbose)
+            {
+                Console.WriteLine($"⚠️  Warning: dotnet build completed with warnings or errors.");
+                Console.WriteLine($"   Continuing with Roslyn analysis (best-effort mode)...");
+            }
+            else if (verbose)
+            {
+                Console.WriteLine($"✅ Pre-compilation completed successfully");
             }
 
             // Parse solution file to get project references
@@ -188,30 +372,72 @@ namespace RoslynIndexer.Services
                 // Create compilation for the entire project
                 var compilation = builder.CreateCompilation(projectName, csFiles, verbose);
                 
-                // Check for compilation errors (non-blocking)
+                // Check for compilation errors
                 var diagnostics = compilation.GetDiagnostics()
                     .Where(d => d.Severity == DiagnosticSeverity.Error)
                     .ToList();
 
+                // Read ALLOW_COMPILATION_ERRORS from config
+                var config = EnvironmentConfig.Current;
+                var allowErrors = config.GetBool("ALLOW_COMPILATION_ERRORS", true);
+
                 if (diagnostics.Any())
                 {
-                    if (verbose)
+                    if (allowErrors)
                     {
-                        Console.WriteLine($"  Note: {diagnostics.Count} compilation errors (analysis will continue)");
-                    }
+                        // BEST-EFFORT MODE: Show warnings and continue
+                        Console.WriteLine($"\n⚠️  COMPILATION WARNINGS in project '{projectName}'");
+                        Console.WriteLine($"   Total errors: {diagnostics.Count} (continuing in best-effort mode)");
 
-                    // DEBUG: Show errors for ApprovalScheme projects
-                    if (projectName.Contains("ApprovalScheme"))
+                        if (verbose)
+                        {
+                            Console.WriteLine($"\n📋 First 10 errors:");
+                            foreach (var diag in diagnostics.Take(10))
+                            {
+                                var location = diag.Location.GetLineSpan();
+                                var fileName = Path.GetFileName(location.Path);
+                                var line = location.StartLinePosition.Line + 1;
+                                Console.WriteLine($"   [{fileName}:{line}] {diag.GetMessage()}");
+                            }
+
+                            if (diagnostics.Count > 10)
+                            {
+                                Console.WriteLine($"   ... and {diagnostics.Count - 10} more errors");
+                            }
+                        }
+
+                        Console.WriteLine($"   ℹ️  Continuing analysis with available symbols (some types may be incomplete)");
+                        Console.WriteLine($"   💡 Tip: Install missing NuGet packages or set ALLOW_COMPILATION_ERRORS=false to stop on errors\n");
+                    }
+                    else
                     {
-                        Console.WriteLine($"  DEBUG: Compilation errors for {projectName}:");
-                        foreach (var diag in diagnostics.Take(10))
+                        // STRICT MODE: Report compilation errors and STOP analysis
+                        Console.WriteLine($"\n❌ COMPILATION ERRORS FOUND in project '{projectName}'");
+                        Console.WriteLine($"   Total errors: {diagnostics.Count}");
+                        Console.WriteLine($"\n📋 First 20 errors:");
+
+                        foreach (var diag in diagnostics.Take(20))
                         {
-                            Console.WriteLine($"    - {diag.GetMessage()}");
+                            var location = diag.Location.GetLineSpan();
+                            var fileName = Path.GetFileName(location.Path);
+                            var line = location.StartLinePosition.Line + 1;
+
+                            Console.WriteLine($"   [{fileName}:{line}] {diag.GetMessage()}");
                         }
-                        if (diagnostics.Count > 10)
+
+                        if (diagnostics.Count > 20)
                         {
-                            Console.WriteLine($"    ... and {diagnostics.Count - 10} more errors");
+                            Console.WriteLine($"   ... and {diagnostics.Count - 20} more errors");
                         }
+
+                        Console.WriteLine($"\n⚠️  Analysis stopped due to compilation errors.");
+                        Console.WriteLine($"   Fix the compilation errors in '{projectName}' and try again.");
+                        Console.WriteLine($"   Or set ALLOW_COMPILATION_ERRORS=true in .env to continue with best-effort mode.");
+
+                        // Throw exception to stop the analysis
+                        throw new InvalidOperationException(
+                            $"Project '{projectName}' has {diagnostics.Count} compilation error(s). " +
+                            $"Cannot generate graph with compilation errors. Please fix the errors and try again.");
                     }
                 }
 
@@ -320,6 +546,69 @@ namespace RoslynIndexer.Services
             }
 
             return filtered.ToList();
+        }
+
+        /// <summary>
+        /// Executes dotnet build on the solution to ensure all dependencies are resolved
+        /// </summary>
+        private async Task<bool> ExecuteDotnetBuild(string solutionPath, bool verbose)
+        {
+            try
+            {
+                var startInfo = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "dotnet",
+                    Arguments = $"build \"{solutionPath}\" --no-incremental",
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+
+                using var process = System.Diagnostics.Process.Start(startInfo);
+                if (process == null)
+                {
+                    if (verbose)
+                        Console.WriteLine("   Failed to start dotnet build process");
+                    return false;
+                }
+
+                var output = await process.StandardOutput.ReadToEndAsync();
+                var error = await process.StandardError.ReadToEndAsync();
+
+                await process.WaitForExitAsync();
+
+                if (verbose && process.ExitCode != 0)
+                {
+                    Console.WriteLine($"   dotnet build exit code: {process.ExitCode}");
+
+                    // Show only compilation errors, not warnings
+                    var lines = output.Split('\n');
+                    var errorLines = lines.Where(l => l.Contains("error ", StringComparison.OrdinalIgnoreCase)).ToList();
+
+                    if (errorLines.Any())
+                    {
+                        Console.WriteLine($"   Compilation errors found ({errorLines.Count}):");
+                        foreach (var line in errorLines.Take(10))
+                        {
+                            Console.WriteLine($"     {line.Trim()}");
+                        }
+                        if (errorLines.Count > 10)
+                        {
+                            Console.WriteLine($"     ... and {errorLines.Count - 10} more errors");
+                        }
+                    }
+                }
+
+                // Consider it successful if exit code is 0 (no errors)
+                return process.ExitCode == 0;
+            }
+            catch (Exception ex)
+            {
+                if (verbose)
+                    Console.WriteLine($"   Exception during dotnet build: {ex.Message}");
+                return false;
+            }
         }
     }
 }

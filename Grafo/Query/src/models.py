@@ -80,6 +80,7 @@ class ProjectInfo(BaseModel):
     LastModified: datetime = Field(default_factory=datetime.utcnow)
     SourceFile: str = Field(default="", description="Archivo fuente")
     SourceDirectory: str = Field(default="", description="Directorio fuente")
+    ProcessingStateId: Optional[str] = Field(None, description="Reference to ProcessingState ObjectId")
     Nodes: List[GraphNode] = Field(default_factory=list)
     Edges: List[GraphEdge] = Field(default_factory=list)
 
@@ -100,6 +101,7 @@ class ProjectSummary(BaseModel):
     EdgeCount: int
     LastProcessed: datetime
     SourceFile: str
+    Version: Optional[str] = None
 
     class Config:
         populate_by_name = True
@@ -111,6 +113,7 @@ class SearchNodesRequest(BaseModel):
     nodeType: Optional[str] = Field(None, description="Filtrar por tipo de nodo")
     project: Optional[str] = Field(None, description="Filtrar por proyecto")
     namespace: Optional[str] = Field(None, description="Filtrar por namespace")
+    version: Optional[str] = Field(None, description="Filtrar por versión del grafo (e.g., '1.0.0')")
     limit: int = Field(default=50, ge=1, le=500, description="Límite de resultados")
 
 
@@ -118,6 +121,7 @@ class SearchProjectsRequest(BaseModel):
     """Request para búsqueda de proyectos."""
     query: Optional[str] = Field(None, description="Texto a buscar en nombre de proyecto")
     layer: Optional[str] = Field(None, description="Filtrar por capa arquitectónica")
+    version: Optional[str] = Field(None, description="Filtrar por versión del grafo (e.g., '1.0.0')")
     limit: int = Field(default=50, ge=1, le=200)
 
 
@@ -137,6 +141,7 @@ class CodeContextRequest(BaseModel):
     methodName: Optional[str] = Field(None, description="Nombre del método")
     namespace: Optional[str] = Field(None, description="Namespace")
     projectName: Optional[str] = Field(None, description="Nombre del proyecto")
+    version: Optional[str] = Field(None, description="Filtrar por versión del grafo (e.g., '1.0.0')")
     includeRelated: bool = Field(default=True, description="Incluir elementos relacionados")
     maxRelated: int = Field(default=10, ge=1, le=50)
     maxDepth: int = Field(default=2, ge=1, le=5, description="Profundidad máxima de relaciones")
@@ -171,4 +176,27 @@ class ClassHierarchyRequest(BaseModel):
 class InterfaceImplementationsRequest(BaseModel):
     """Request para obtener implementaciones de una interfaz."""
     interfaceId: str = Field(..., description="ID de la interfaz")
+
+
+class ProcessingState(BaseModel):
+    """Estado de procesamiento de un archivo de grafo."""
+    MongoId: Optional[str] = Field(None, alias="_id")
+    SourceFile: str
+    SourceDirectory: str
+    FileHash: str
+    LastProcessed: datetime
+    FileLastModified: datetime
+    FileSize: int
+    Version: Optional[str] = None
+    TotalProjects: int
+    ProcessedProjects: int
+    SkippedProjects: int
+    NewProjects: int
+    UpdatedProjects: int
+
+    class Config:
+        populate_by_name = True
+        json_encoders = {
+            datetime: lambda v: v.isoformat()
+        }
 

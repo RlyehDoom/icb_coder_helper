@@ -101,14 +101,32 @@ static class Program
                 ? new Progress<string>(message => Console.WriteLine($"  {message}"))
                 : null;
 
-            // Process solution
-            var allSymbols = await analysisService.ProcessSolutionDirectly(
-                options.SolutionPath, 
-                options.Verbose, 
+            // Process solution using MSBuildWorkspace (uses MSBuild's reference resolution)
+            var allSymbols = await analysisService.ProcessSolutionWithMSBuildWorkspace(
+                options.SolutionPath,
+                options.Verbose,
                 progress);
 
             // Apply filters
             var filteredSymbols = ApplyFilters(allSymbols, options);
+
+            // Apply repository-based output directory naming if configured
+            if (envConfig.UseRepoNameInOutput)
+            {
+                var repoName = RoslynIndexer.Utils.SolutionDiscovery.GetRepositoryName(options.SolutionPath);
+                if (!string.IsNullOrEmpty(repoName))
+                {
+                    // If OutputPath is a directory, append {repoName}_GraphFiles
+                    if (Directory.Exists(options.OutputPath) || !Path.HasExtension(options.OutputPath))
+                    {
+                        options.OutputPath = Path.Combine(options.OutputPath, $"{repoName}_GraphFiles");
+                        if (options.Verbose)
+                        {
+                            Console.WriteLine($"📂 Using repository-based output directory: {repoName}_GraphFiles");
+                        }
+                    }
+                }
+            }
 
             // Determine if OutputPath is a directory or file
             string outputDirectory;
@@ -199,11 +217,21 @@ static class Program
 
             return 0;
         }
+        catch (InvalidOperationException ex) when (ex.Message.Contains("compilation error"))
+        {
+            // Compilation errors - already reported in detail, just show summary
+            Console.WriteLine($"\n❌ {ex.Message}");
+            Console.WriteLine($"\n💡 Tip: No graph files were generated due to compilation errors.");
+            return 1;
+        }
         catch (Exception ex)
         {
-            Console.WriteLine($"Error: {ex.Message}");
+            Console.WriteLine($"\n❌ Error: {ex.Message}");
             if (options.Verbose)
+            {
+                Console.WriteLine("\nStack trace:");
                 Console.WriteLine(ex.StackTrace);
+            }
             return 1;
         }
     }

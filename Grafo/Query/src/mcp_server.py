@@ -57,6 +57,38 @@ async def initialize_services():
         raise
 
 
+async def create_session_tools(client_version: str = None) -> GraphMCPTools:
+    """
+    Crea una instancia de GraphMCPTools para una sesión específica de cliente.
+
+    Args:
+        client_version: Versión del grafo solicitada por el cliente.
+                        Si es None, usa GRAFO_DEFAULT_VERSION del servidor.
+
+    Returns:
+        GraphMCPTools: Instancia configurada para la sesión
+    """
+    global graph_service
+
+    if graph_service is None:
+        logger.error("Graph service not initialized!")
+        raise RuntimeError("Graph service must be initialized before creating session tools")
+
+    # Usar versión del cliente o fallback a versión del servidor
+    from .config import GRAFO_DEFAULT_VERSION
+    effective_version = client_version or GRAFO_DEFAULT_VERSION
+
+    # Crear instancia de herramientas con la versión específica
+    session_tools = GraphMCPTools(graph_service, default_version=effective_version)
+
+    if effective_version:
+        logger.info(f"✅ Herramientas MCP creadas con versión: {effective_version}")
+    else:
+        logger.info("✅ Herramientas MCP creadas sin filtro de versión")
+
+    return session_tools
+
+
 async def cleanup_services():
     """Limpia los servicios al cerrar."""
     global mongodb_service

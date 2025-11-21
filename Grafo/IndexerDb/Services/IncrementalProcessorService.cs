@@ -25,19 +25,23 @@ namespace IndexerDb.Services
             _projectDatabaseService = projectDatabaseService;
         }
 
-        public async Task<ProcessingState> ProcessGraphFileIncrementallyAsync(string filePath)
+        public async Task<ProcessingState> ProcessGraphFileIncrementallyAsync(string filePath, string? version = null)
         {
             var stopwatch = System.Diagnostics.Stopwatch.StartNew();
             var fileName = Path.GetFileName(filePath);
-            
+
             _logger.LogInformation("=== Starting Incremental Processing ===");
             _logger.LogInformation("File: {FileName}", fileName);
             _logger.LogInformation("Path: {FilePath}", filePath);
+            if (!string.IsNullOrEmpty(version))
+            {
+                _logger.LogInformation("Version: {Version}", version);
+            }
 
             var processingState = new ProcessingState
             {
                 SourceFile = fileName,
-                SourceDirectory = Path.GetDirectoryName(filePath) ?? string.Empty,
+                SourceDirectory = GetRelativeSourceDirectory(filePath),
                 FileLastModified = File.GetLastWriteTime(filePath),
                 FileSize = new FileInfo(filePath).Length
             };
@@ -84,21 +88,48 @@ namespace IndexerDb.Services
                     throw new InvalidOperationException("Failed to parse graph document");
                 }
 
-                _logger.LogInformation("✅ Parsed document with {NodeCount} nodes and {EdgeCount} edges", 
+                _logger.LogInformation("✅ Parsed document with {NodeCount} nodes and {EdgeCount} edges",
                     graphDocument.Nodes.Count, graphDocument.Edges.Count);
+
+                // Extract version from graph metadata
+                string? graphVersion = version ?? graphDocument.Metadata?.ToolVersion;
+                if (!string.IsNullOrEmpty(graphVersion))
+                {
+                    processingState.Version = graphVersion;
+                    _logger.LogInformation("📌 Graph Version: {Version}", graphVersion);
+                }
+
+                // Save processing state BEFORE processing projects to obtain MongoId for relationships
+                _logger.LogInformation("📋 Step 3.5/6: Saving initial processing state to establish relationships...");
+                await _projectDatabaseService.SaveProcessingStateAsync(processingState);
+                _logger.LogInformation("✅ Processing state saved with ID: {StateId}", processingState.MongoId);
 
                 // Step 4: Extract projects
                 _logger.LogInformation("📋 Step 4/6: Extracting individual projects...");
                 var projects = await ExtractProjectsFromGraphAsync(graphDocument);
                 processingState.TotalProjects = projects.Count;
-                
+
                 _logger.LogInformation("✅ Extracted {ProjectCount} projects", projects.Count);
 
                 // Step 5: Process each project incrementally
                 _logger.LogInformation("📋 Step 5/6: Processing projects incrementally...");
-                await ProcessProjectsIncrementallyAsync(projects, processingState, previousState);
-                _logger.LogInformation("✅ Step 5/6: Project processing complete - New: {New}, Updated: {Updated}, Skipped: {Skipped}", 
-                    processingState.NewProjects, processingState.UpdatedProjects, processingState.SkippedProjects);
+                await ProcessProjectsIncrementallyAsync(projects, processingState, previousState, processingState.MongoId);
+
+                var summaryParts = new List<string>
+                {
+                    $"New: {processingState.NewProjects}",
+                    $"Updated: {processingState.UpdatedProjects}",
+                    $"Skipped: {processingState.SkippedProjects}"
+                };
+
+                if (processingState.FailedProjects > 0)
+                    summaryParts.Add($"Failed: {processingState.FailedProjects}");
+
+                if (processingState.FragmentedProjects > 0)
+                    summaryParts.Add($"Fragmented: {processingState.FragmentedProjects}");
+
+                _logger.LogInformation("✅ Step 5/6: Project processing complete - {Summary}",
+                    string.Join(", ", summaryParts));
 
                 // Step 6: Save processing state
                 _logger.LogInformation("📋 Step 6/6: Saving processing state...");
@@ -106,9 +137,23 @@ namespace IndexerDb.Services
                 _logger.LogInformation("✅ Step 6/6: Processing state saved successfully");
 
                 stopwatch.Stop();
-                _logger.LogInformation("✅ Processing Complete in {ElapsedTime:mm\\:ss\\.fff} | Projects: {Total} total, {New} new, {Updated} updated, {Skipped} skipped", 
-                    stopwatch.Elapsed, processingState.TotalProjects, processingState.NewProjects, 
-                    processingState.UpdatedProjects, processingState.SkippedProjects);
+
+                var finalSummaryParts = new List<string>
+                {
+                    $"{processingState.TotalProjects} total",
+                    $"{processingState.NewProjects} new",
+                    $"{processingState.UpdatedProjects} updated",
+                    $"{processingState.SkippedProjects} skipped"
+                };
+
+                if (processingState.FailedProjects > 0)
+                    finalSummaryParts.Add($"{processingState.FailedProjects} failed");
+
+                if (processingState.FragmentedProjects > 0)
+                    finalSummaryParts.Add($"{processingState.FragmentedProjects} fragmented");
+
+                _logger.LogInformation("✅ Processing Complete in {ElapsedTime:mm\\:ss\\.fff} | Projects: {Summary}",
+                    stopwatch.Elapsed, string.Join(", ", finalSummaryParts));
 
                 return processingState;
             }
@@ -121,20 +166,27 @@ namespace IndexerDb.Services
         }
 
         private async Task ProcessProjectsIncrementallyAsync(
-            List<ProjectInfo> projects, 
-            ProcessingState currentState, 
-            ProcessingState? previousState)
+            List<ProjectInfo> projects,
+            ProcessingState currentState,
+            ProcessingState? previousState,
+            string? processingStateId = null)
         {
             var projectIndex = 0;
             foreach (var project in projects)
             {
                 projectIndex++;
                 var projectPrefix = $"[{projectIndex}/{projects.Count}]";
-                
+
                 _logger.LogInformation("{Prefix} Processing project: {ProjectName}", projectPrefix, project.ProjectName);
 
                 try
                 {
+                    // Set relationship to ProcessingState
+                    if (!string.IsNullOrEmpty(processingStateId))
+                    {
+                        project.ProcessingStateId = processingStateId;
+                    }
+
                     // Calculate project hash
                     project.ContentHash = await CalculateProjectHashAsync(project);
 
@@ -162,15 +214,29 @@ namespace IndexerDb.Services
                     else
                     {
                         var isNew = previousProjectInfo == null;
-                        _logger.LogInformation("   🔄 Project {Status} - Nodes: {NodeCount}, Edges: {EdgeCount}", 
+                        _logger.LogInformation("   🔄 Project {Status} - Nodes: {NodeCount}, Edges: {EdgeCount}",
                             isNew ? "NEW" : "UPDATED", project.NodeCount, project.EdgeCount);
 
                         // Save project to database
-                        var success = await _projectDatabaseService.SaveProjectInfoAsync(project);
-                        
-                        if (success)
+                        var saveResult = await _projectDatabaseService.SaveProjectInfoDetailedAsync(project);
+
+                        if (saveResult.Success)
                         {
-                            if (isNew)
+                            if (saveResult.IsFragmented)
+                            {
+                                _logger.LogInformation("   📦 {Status} project saved as fragmented ({Count} fragments, too large)",
+                                    isNew ? "New" : "Updated", saveResult.FragmentCount);
+                                projectProcessingInfo.Status = ProcessingStatus.Fragmented;
+                                projectProcessingInfo.ProcessingMessage = $"Saved as {saveResult.FragmentCount} fragments (exceeds 15MB limit)";
+                                currentState.FragmentedProjects++;
+
+                                // Still count as new or updated
+                                if (isNew)
+                                    currentState.NewProjects++;
+                                else
+                                    currentState.UpdatedProjects++;
+                            }
+                            else if (isNew)
                             {
                                 _logger.LogInformation("   ✅ New project saved successfully");
                                 projectProcessingInfo.Status = ProcessingStatus.New;
@@ -187,9 +253,10 @@ namespace IndexerDb.Services
                         }
                         else
                         {
-                            _logger.LogWarning("   ⚠️  Failed to save project");
+                            _logger.LogWarning("   ⚠️  Failed to save project: {Error}", saveResult.ErrorMessage);
                             projectProcessingInfo.Status = ProcessingStatus.Failed;
-                            projectProcessingInfo.ProcessingMessage = "Failed to save to database";
+                            projectProcessingInfo.ProcessingMessage = $"Failed to save to database: {saveResult.ErrorMessage}";
+                            currentState.FailedProjects++;
                         }
                     }
 
@@ -199,7 +266,7 @@ namespace IndexerDb.Services
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, "   ❌ Error processing project {ProjectName}", project.ProjectName);
-                    
+
                     currentState.ProjectStates[project.ProjectId] = new ProjectProcessingInfo
                     {
                         ProjectId = project.ProjectId,
@@ -208,6 +275,8 @@ namespace IndexerDb.Services
                         ProcessingMessage = ex.Message,
                         LastProcessed = DateTime.UtcNow
                     };
+
+                    currentState.FailedProjects++;
                 }
             }
         }
@@ -306,6 +375,36 @@ namespace IndexerDb.Services
             using var sha256 = SHA256.Create();
             var hashBytes = sha256.ComputeHash(Encoding.UTF8.GetBytes(input));
             return Convert.ToBase64String(hashBytes);
+        }
+
+        /// <summary>
+        /// Converts absolute path to relative path starting from /Indexer
+        /// Example: C:\Program Files\nodejs\node_modules\grafo-cli\Indexer\output\file.json
+        ///       -> /Indexer/output
+        /// </summary>
+        private static string GetRelativeSourceDirectory(string filePath)
+        {
+            var directory = Path.GetDirectoryName(filePath) ?? string.Empty;
+
+            // Normalize path separators to forward slashes
+            var normalizedPath = directory.Replace('\\', '/');
+
+            // Find the position of "/Indexer" or "Indexer" in the path
+            var indexerIndex = normalizedPath.LastIndexOf("/Indexer", StringComparison.OrdinalIgnoreCase);
+            if (indexerIndex == -1)
+            {
+                indexerIndex = normalizedPath.LastIndexOf("Indexer", StringComparison.OrdinalIgnoreCase);
+                if (indexerIndex == -1)
+                {
+                    // If Indexer not found, return the full normalized path
+                    return normalizedPath;
+                }
+                // Return from /Indexer onwards
+                return "/" + normalizedPath.Substring(indexerIndex);
+            }
+
+            // Return from /Indexer onwards (indexerIndex already includes the /)
+            return normalizedPath.Substring(indexerIndex);
         }
     }
 }

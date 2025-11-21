@@ -18,6 +18,7 @@ from .models import (
     SearchProjectsRequest
 )
 from .tailored_guidance import TailoredGuidanceService
+from .config import GRAFO_DEFAULT_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -25,15 +26,20 @@ logger = logging.getLogger(__name__)
 class GraphMCPTools:
     """Herramientas MCP para consultar el grafo de código."""
 
-    def __init__(self, graph_service: GraphQueryService):
+    def __init__(self, graph_service: GraphQueryService, default_version: str = None):
         """
         Inicializa las herramientas MCP.
 
         Args:
             graph_service: Servicio de consultas del grafo
+            default_version: Versión por defecto del grafo a consultar (e.g., "1.0.0")
         """
         self.graph_service = graph_service
         self.tailored_guidance = TailoredGuidanceService(graph_service)
+        self.default_version = default_version or GRAFO_DEFAULT_VERSION
+
+        if self.default_version:
+            logger.info(f"🏷️  MCP Tools configurado con versión por defecto: {self.default_version}")
 
     def get_tools(self) -> List[Tool]:
         """Retorna la lista de herramientas MCP disponibles."""
@@ -41,24 +47,36 @@ class GraphMCPTools:
             Tool(
                 name="search_code",
                 description=(
-                    "Busca elementos en el grafo de código fuente de ICBanking y Tailored. "
-                    "El grafo contiene todas las clases, métodos, interfaces y sus conexiones en los proyectos ICBanking/Tailored. "
-                    "Esta herramienta es la FUENTE DE INFORMACIÓN para localizar cualquier componente del código: "
-                    "clases, métodos, interfaces, propiedades, campos. "
-                    "Busca por nombre, tipo (Class, Interface, Method, etc.), proyecto específico o namespace. "
-                    "Retorna información detallada de cada elemento encontrado incluyendo ubicación y atributos."
+                    "Busca UN SOLO elemento en el grafo de código fuente de ICBanking y Tailored. "
+                    "El grafo contiene métodos, clases, interfaces, propiedades y sus conexiones en los proyectos ICBanking/Tailored. "
+                    "Esta herramienta es la FUENTE DE INFORMACIÓN para localizar cualquier componente del código. "
+                    "Busca por nombre en todos los tipos de elementos (métodos, clases, interfaces, propiedades, campos). "
+                    "IMPORTANTE: Para buscar 'el método X de la clase Y', primero busca el método X, "
+                    "luego usa get_code_context para ver su clase contenedora. "
+                    "NO combines múltiples nombres en una sola búsqueda. "
+                    "Retorna información detallada de cada elemento encontrado incluyendo ubicación, tipo y atributos."
                 ),
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "Término de búsqueda (nombre de clase, método, etc.)"
+                            "description": (
+                                "UN SOLO término de búsqueda (nombre de método, clase, interfaz, etc.). "
+                                "Para elementos relacionados (ej: 'método X de clase Y'), busca el método primero, "
+                                "luego usa get_code_context para obtener detalles de la clase contenedora. "
+                                "Ejemplos: 'ProcessUserPendingApproval', 'ApprovalScheme', 'GetCustomer'"
+                            )
                         },
                         "node_type": {
                             "type": "string",
-                            "description": "Tipo de nodo: Class, Interface, Method, Property, etc.",
-                            "enum": ["Class", "Interface", "Method", "Property", "Field", "Enum", "Struct"]
+                            "description": (
+                                "OPCIONAL: Filtrar por tipo específico de nodo. "
+                                "SOLO usa este parámetro si necesitas filtrar resultados por tipo. "
+                                "Si buscas cualquier elemento (método, clase, etc.), NO especifiques este parámetro. "
+                                "Valores: Method (métodos/funciones), Class (clases), Interface, Property, Field, Enum, Struct"
+                            ),
+                            "enum": ["Method", "Class", "Interface", "Property", "Field", "Enum", "Struct"]
                         },
                         "project": {
                             "type": "string",
@@ -345,6 +363,7 @@ class GraphMCPTools:
             nodeType=args.get("node_type"),
             project=args.get("project"),
             namespace=args.get("namespace"),
+            version=self.default_version,
             limit=args.get("limit", 20)
         )
 
@@ -386,6 +405,7 @@ class GraphMCPTools:
             relativePath=args.get("relativePath"),
             absolutePath=args.get("absolutePath"),
             projectName=args.get("projectName"),
+            version=self.default_version,
             includeRelated=args.get("includeRelated", True),
             maxDepth=args.get("maxDepth", 2)
         )
@@ -500,6 +520,7 @@ class GraphMCPTools:
         """Lista proyectos disponibles."""
         request = SearchProjectsRequest(
             query=args.get("query"),
+            version=self.default_version,
             limit=args.get("limit", 50)
         )
 
@@ -591,6 +612,7 @@ class GraphMCPTools:
             query=interface_name,
             nodeType=None,
             namespace=namespace,
+            version=self.default_version,
             limit=20  # Aumentar límite para tener más opciones
         )
 
@@ -626,6 +648,7 @@ class GraphMCPTools:
             className=target.Name,
             namespace=target.Namespace,
             projectName=target.Project,
+            version=self.default_version,
             includeRelated=True,
             maxDepth=2
         )
@@ -752,6 +775,7 @@ class GraphMCPTools:
             methodName=args.get("methodName"),
             namespace=args.get("namespace"),
             projectName=args.get("project"),
+            version=self.default_version,
             includeRelated=True,
             maxDepth=3  # Mayor profundidad para análisis de impacto
         )

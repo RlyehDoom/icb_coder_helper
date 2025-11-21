@@ -1,6 +1,6 @@
 # Docker Compose para Ambiente PRODUCTIVO
 # Stack: grafo-prod
-# Servicios: Query Service (8081), MCP Server (8083)
+# Servicios: Query Service (8081), MCP Server (9083)
 # MongoDB: EXTERNO (207.244.249.22:28101) con TLS
 
 version: '3.8'
@@ -64,9 +64,11 @@ services:
       dockerfile: Dockerfile.mcp
     container_name: grafo-mcp-server-prod
     ports:
-      - "8083:8082"
+      - "9083:9083"
 
     environment:
+      # Server Configuration (puerto 8082 está tomado en producción)
+      - SERVER_PORT=9083
       # MongoDB Configuration - PRODUCCIÓN (optimized connection string)
       - MONGODB_CONNECTION_STRING=mongodb://sonata:qwertY.!1982@207.244.249.22:28101/GraphDB?authSource=admin&tls=true&tlsAllowInvalidCertificates=true&tlsAllowInvalidHostnames=true
       - MONGODB_DATABASE=GraphDB

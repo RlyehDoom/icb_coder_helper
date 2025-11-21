@@ -37,6 +37,10 @@ CACHE_TTL = int(os.getenv("CACHE_TTL", "300"))  # 5 minutos por defecto
 # Logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
+# Configuración de versión de grafo (para MCP)
+# Si se especifica, todas las consultas MCP filtrarán por esta versión
+GRAFO_DEFAULT_VERSION = os.getenv("GRAFO_DEFAULT_VERSION", None)
+
 
 def validate_config() -> bool:
     """Valida que la configuración esté completa."""
@@ -67,4 +71,6 @@ def display_config():
     print(f"   🔐 Auth enabled: {ENABLE_AUTH}")
     print(f"   💾 Cache enabled: {ENABLE_CACHE} (TTL: {CACHE_TTL}s)")
     print(f"   📝 Log level: {LOG_LEVEL}")
+    if GRAFO_DEFAULT_VERSION:
+        print(f"   🏷️  Default Graph Version: {GRAFO_DEFAULT_VERSION}")
 

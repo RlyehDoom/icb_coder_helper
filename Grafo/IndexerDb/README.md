@@ -112,6 +112,58 @@ Para empezar rápidamente **sin MongoDB**:
 }
 ```
 
+### 🔐 Configuración con Variables de Entorno (.env)
+
+**⚠️ Recomendado para Producción**: Para evitar comprometer credenciales en git, usa archivos `.env`:
+
+1. **Copia el template:**
+   ```bash
+   cp .env.example .env
+   ```
+
+2. **Edita `.env` con tus credenciales:**
+   ```bash
+   MongoDB__ConnectionString=mongodb://username:password@host:port/database?authSource=admin&tls=true
+   MongoDB__DatabaseName=GraphDB
+   ```
+
+3. **Ejecuta normalmente:**
+   ```bash
+   dotnet run
+   # Verás: ✓ Loaded configuration from .env file
+   ```
+
+**Ventajas:**
+- ✅ Credenciales **no se suben a git** (`.env` está en `.gitignore`)
+- ✅ Diferentes configuraciones por desarrollador/servidor
+- ✅ Fácil rotación de credenciales sin cambiar código
+- ✅ Compatible con deployment en Docker y servidores
+
+Ver [ENV_CONFIGURATION.md](./ENV_CONFIGURATION.md) para detalles completos.
+
+### 🔒 Configuración TLS con Certificado Automático
+
+**🎯 Certificado por Defecto:** Cuando `tls=true` está en la connection string, IndexerDb usa automáticamente el certificado ubicado en `../Certs/prod/client.pem`.
+
+```bash
+# 1. Colocar certificado en la ubicación por defecto
+# Grafo/Certs/prod/client.pem
+
+# 2. Configurar .env con tls=true
+MongoDB__ConnectionString=mongodb://user:pass@host:port/db?authSource=admin&tls=true&tlsAllowInvalidCertificates=true&tlsAllowInvalidHostnames=true
+
+# 3. Ejecutar - el certificado se carga automáticamente
+dotnet run
+# Output: 🔒 TLS enabled with client certificate (default): ../Certs/prod/client.pem
+```
+
+**Ventajas:**
+- ✅ No necesitas configurar `TlsCertificateFile` explícitamente
+- ✅ Funciona automáticamente para todos los desarrolladores
+- ✅ Ubicación estándar compartida: `Grafo/Certs/prod/client.pem`
+
+Ver [TLS_CERTIFICATE_SETUP.md](./TLS_CERTIFICATE_SETUP.md) para guía completa de TLS.
+
 **Para producción con TLS/SSL:**
 
 ```json

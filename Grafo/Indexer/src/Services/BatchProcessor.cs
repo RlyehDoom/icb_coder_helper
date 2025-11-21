@@ -97,8 +97,8 @@ namespace RoslynIndexer.Services
                 ? Path.Combine(config.OutputDirectory, $"{prefix}-stats.csv") 
                 : null;
 
-            // Process solution
-            var allSymbols = await _analysisService.ProcessSolutionDirectly(solution.SolutionPath, verbose, progress);
+            // Process solution using MSBuildWorkspace
+            var allSymbols = await _analysisService.ProcessSolutionWithMSBuildWorkspace(solution.SolutionPath, verbose, progress);
 
             // Apply filters from batch configuration
             var filterTypes = config.FilterTypes?.Any() == true 

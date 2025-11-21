@@ -7,16 +7,32 @@ import { displayProgressStart, displayProgressEnd, displayError, displaySuccess,
 export class IndexerHandler {
   constructor(systemUtils) {
     this.systemUtils = systemUtils;
-    this.indexerDir = path.resolve('./Indexer');
+    this.projectRoot = null; // Se inicializará en init()
+    this.indexerDir = null;
+    this.projectFile = null;
+    this.executable = null;
+    this.debugExecutable = null;
+  }
+
+  /**
+   * Inicializa las rutas del handler basándose en la raíz del proyecto
+   */
+  async init() {
+    if (this.projectRoot) {
+      return; // Ya inicializado
+    }
+
+    this.projectRoot = await this.systemUtils.getProjectRoot();
+    this.indexerDir = path.join(this.projectRoot, 'Indexer');
     this.projectFile = path.join(this.indexerDir, 'RoslynIndexer.csproj');
     this.executable = path.join(this.indexerDir, 'bin', 'Release', 'net8.0', 'RoslynIndexer.dll');
     this.debugExecutable = path.join(this.indexerDir, 'bin', 'Debug', 'net8.0', 'RoslynIndexer.dll');
-    
+
     // Cargar variables de entorno desde .env en el directorio Indexer
-    this.loadEnvVars();
+    await this.loadEnvVars();
   }
 
-  loadEnvVars() {
+  async loadEnvVars() {
     try {
       // Cargar .env desde el directorio Indexer
       const envPath = path.join(this.indexerDir, '.env');
@@ -43,8 +59,10 @@ export class IndexerHandler {
   }
 
   async build() {
+    await this.init();
+
     displayProgressStart('Compilando RoslynIndexer');
-    
+
     // Verificar que .NET esté disponible
     if (!(await this.systemUtils.isCommandAvailable('dotnet'))) {
       displayError('.NET SDK no está instalado o no está en PATH');
@@ -82,8 +100,10 @@ export class IndexerHandler {
   }
 
   async clean() {
+    await this.init();
+
     displayProgressStart('Limpiando artefactos de compilación');
-    
+
     try {
       await this.systemUtils.execute('dotnet', ['clean'], {
         cwd: this.indexerDir
@@ -113,8 +133,10 @@ export class IndexerHandler {
   }
 
   async test() {
+    await this.init();
+
     displayProgressStart('Ejecutando tests unitarios');
-    
+
     const testsDir = path.join(this.indexerDir, 'tests');
     
     if (!(await this.systemUtils.exists(testsDir))) {
@@ -201,7 +223,9 @@ export class IndexerHandler {
 
   // Discover repositories in Grafo/Repo/Cloned/
   async discoverRepositories() {
-    const repoBaseDir = path.resolve('./Repo/Cloned');
+    await this.init();
+
+    const repoBaseDir = path.join(this.projectRoot, 'Repo', 'Cloned');
     
     if (!(await this.systemUtils.exists(repoBaseDir))) {
       displayWarning(`Directorio de repositorios no encontrado: ${repoBaseDir}`);
@@ -379,8 +403,10 @@ export class IndexerHandler {
 
   // List available solutions from all repositories
   async listSolutions() {
+    await this.init();
+
     displayInfo('Buscando soluciones disponibles...');
-    
+
     const repositories = await this.discoverRepositories();
     if (repositories.length === 0) {
       displayWarning('No se encontraron repositorios');
@@ -438,8 +464,10 @@ export class IndexerHandler {
   }
 
   async analyze(options) {
+    await this.init();
+
     let solutionPath;
-    
+
     // Check if solution is provided or needs auto-discovery
     if (options.solution) {
       solutionPath = path.resolve(options.solution);
@@ -605,8 +633,10 @@ export class IndexerHandler {
   }
 
   async status() {
+    await this.init();
+
     console.log(chalk.cyan('📊 Estado del RoslynIndexer:'));
-    
+
     // Verificar .NET
     const dotnetAvailable = await this.systemUtils.isCommandAvailable('dotnet');
     console.log(chalk.gray('  .NET SDK:'), dotnetAvailable ? chalk.green('✓') : chalk.red('✗'));

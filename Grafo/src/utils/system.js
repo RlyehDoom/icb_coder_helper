@@ -118,17 +118,19 @@ export default class SystemUtils {
     return new Promise((resolve, reject) => {
       // Para rutas completas de bash (con espacios), no usar shell
       // Para comandos simples, usar shell en Windows
-      // EXCEPTO para docker y docker-compose que deben ejecutarse sin shell
+      // EXCEPTO para docker, docker-compose y dotnet que deben ejecutarse sin shell
+      // dotnet sin shell evita problemas con rutas que contienen espacios
       const isFullPath = command.includes('\\') || command.includes('/');
       const isDockerCommand = command === 'docker' || command === 'docker-compose';
-      const useShell = this.isWindows && !isFullPath && !isDockerCommand;
+      const isDotnetCommand = command === 'dotnet';
+      const useShell = this.isWindows && !isFullPath && !isDockerCommand && !isDotnetCommand;
 
       const child = spawn(command, args, {
-        stdio: options.silent ? 'pipe' : 'inherit',
+        stdio: options.stdio || (options.silent ? 'pipe' : 'inherit'),
         shell: useShell,
         cwd: options.cwd || process.cwd(),
         env: { ...process.env, ...options.env },
-        windowsVerbatimArguments: isFullPath && this.isWindows
+        windowsVerbatimArguments: false // Siempre false para que Node.js maneje el escape correctamente
       });
 
       let stdout = '';
@@ -460,5 +462,109 @@ export default class SystemUtils {
    */
   async wait(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Encuentra la raíz del proyecto Grafo buscando hacia arriba desde el directorio actual.
+   * Busca el directorio que contiene package.json con "name": "grafo"
+   * o que contiene las carpetas características: IndexerDb, Indexer, Query, Repo
+   *
+   * @param {string} startPath - Directorio desde donde empezar a buscar (por defecto: process.cwd())
+   * @returns {string|null} - Ruta absoluta a la raíz del proyecto Grafo, o null si no se encuentra
+   */
+  async findProjectRoot(startPath = process.cwd()) {
+    let currentPath = path.resolve(startPath);
+    const root = path.parse(currentPath).root;
+
+    while (currentPath !== root) {
+      // Verificar si existe package.json y si es el proyecto Grafo
+      const packageJsonPath = path.join(currentPath, 'package.json');
+      if (await this.exists(packageJsonPath)) {
+        try {
+          const packageJson = await this.readJson(packageJsonPath);
+          if (packageJson && packageJson.name === 'grafo') {
+            return currentPath;
+          }
+        } catch {
+          // Si falla leer package.json, continuar buscando
+        }
+      }
+
+      // Verificar si existen las carpetas características del proyecto Grafo
+      const indexerDbPath = path.join(currentPath, 'IndexerDb');
+      const indexerPath = path.join(currentPath, 'Indexer');
+      const queryPath = path.join(currentPath, 'Query');
+
+      const hasIndexerDb = await this.exists(indexerDbPath);
+      const hasIndexer = await this.exists(indexerPath);
+      const hasQuery = await this.exists(queryPath);
+
+      // Si tiene al menos 2 de las 3 carpetas características, es la raíz del proyecto
+      if ((hasIndexerDb && hasIndexer) || (hasIndexerDb && hasQuery) || (hasIndexer && hasQuery)) {
+        return currentPath;
+      }
+
+      // Subir un nivel
+      currentPath = path.dirname(currentPath);
+    }
+
+    return null;
+  }
+
+  /**
+   * Obtiene la raíz del proyecto Grafo o lanza un error si no se encuentra
+   *
+   * @returns {string} - Ruta absoluta a la raíz del proyecto Grafo
+   * @throws {Error} - Si no se encuentra la raíz del proyecto
+   */
+  async getProjectRoot() {
+    // Primero buscar desde el directorio actual
+    let projectRoot = await this.findProjectRoot();
+
+    // Si no se encuentra desde cwd, buscar desde la ubicación del script
+    if (!projectRoot && process.argv[1]) {
+      // process.argv[1] es la ruta completa al script que se está ejecutando
+      // Si el script está en Grafo/src/cli.js, la raíz de Grafo está 2 niveles arriba
+      const scriptPath = path.resolve(process.argv[1]);
+      const scriptDir = path.dirname(scriptPath);
+
+      // Buscar desde el directorio del script hacia arriba
+      projectRoot = await this.findProjectRoot(scriptDir);
+    }
+
+    // Si aún no se encuentra, intentar desde el directorio padre de cwd
+    if (!projectRoot) {
+      const parentDir = path.dirname(process.cwd());
+      projectRoot = await this.findProjectRoot(parentDir);
+    }
+
+    // Como último recurso, si el script está en un subdirectorio conocido (src/),
+    // intentar buscar directamente 2 niveles arriba
+    if (!projectRoot && process.argv[1]) {
+      const scriptPath = path.resolve(process.argv[1]);
+      const twoLevelsUp = path.dirname(path.dirname(scriptPath));
+
+      // Verificar si este directorio tiene las características del proyecto Grafo
+      const packageJsonPath = path.join(twoLevelsUp, 'package.json');
+      if (await this.exists(packageJsonPath)) {
+        try {
+          const packageJson = await this.readJson(packageJsonPath);
+          if (packageJson && packageJson.name === 'grafo') {
+            projectRoot = twoLevelsUp;
+          }
+        } catch {
+          // Continuar si falla
+        }
+      }
+    }
+
+    if (!projectRoot) {
+      throw new Error(
+        'No se pudo encontrar la raíz del proyecto Grafo. ' +
+        'Asegúrate de que el comando se ejecuta dentro del proyecto Grafo o uno de sus subdirectorios.'
+      );
+    }
+
+    return projectRoot;
   }
 }

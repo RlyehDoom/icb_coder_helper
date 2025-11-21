@@ -7,14 +7,31 @@ import { displayProgressStart, displayProgressEnd, displayError, displaySuccess,
 export class IndexerDbHandler {
   constructor(systemUtils) {
     this.systemUtils = systemUtils;
-    this.indexerDbDir = path.resolve('./IndexerDb');
+    this.projectRoot = null; // Se inicializará en init()
+    this.indexerDbDir = null;
+    this.projectFile = null;
+    this.executable = null;
+  }
+
+  /**
+   * Inicializa las rutas del handler basándose en la raíz del proyecto
+   */
+  async init() {
+    if (this.projectRoot) {
+      return; // Ya inicializado
+    }
+
+    this.projectRoot = await this.systemUtils.getProjectRoot();
+    this.indexerDbDir = path.join(this.projectRoot, 'IndexerDb');
     this.projectFile = path.join(this.indexerDbDir, 'IndexerDb.csproj');
     this.executable = path.join(this.indexerDbDir, 'bin', 'Debug', 'net8.0', 'IndexerDb.dll');
   }
 
   async build() {
+    await this.init();
+
     displayProgressStart('Compilando IndexerDb');
-    
+
     // Verificar que .NET esté disponible
     if (!(await this.systemUtils.isCommandAvailable('dotnet'))) {
       displayError('.NET SDK no está instalado o no está en PATH');
@@ -52,8 +69,10 @@ export class IndexerDbHandler {
   }
 
   async clean() {
+    await this.init();
+
     displayProgressStart('Limpiando artefactos de compilación de IndexerDb');
-    
+
     try {
       await this.systemUtils.execute('dotnet', ['clean'], {
         cwd: this.indexerDbDir
@@ -68,6 +87,8 @@ export class IndexerDbHandler {
   }
 
   async run(options = {}) {
+    await this.init();
+
     const environment = options.production ? 'Production' : 'Development';
     const envLabel = options.production ? chalk.red.bold('PRODUCCIÓN') : chalk.green('Development');
 
@@ -81,12 +102,17 @@ export class IndexerDbHandler {
 
     // Verificar certificado si es producción (opcional - solo si está configurado)
     if (options.production) {
-      const certPath = path.resolve('./Certs/prod/client.pem');
+      const certPath = path.join(this.projectRoot, 'Certs', 'prod', 'client.pem');
       if (await this.systemUtils.exists(certPath)) {
         displayInfo(`✓ Certificado TLS disponible: ${certPath}`);
       } else {
         displayInfo('ℹ️  Conectando sin certificado de cliente (TLS sin validación)');
       }
+    }
+
+    // Mostrar versión si está configurada
+    if (options.version) {
+      displayInfo(`🏷️  Versión del grafo: ${chalk.cyan(options.version)}`);
     }
 
     // Verificar que existe el ejecutable
@@ -111,6 +137,10 @@ export class IndexerDbHandler {
 
       if (options.interactive) {
         dotnetArgs.push('--interactive');
+      }
+
+      if (options.version) {
+        dotnetArgs.push('--version', options.version);
       }
 
       if (dotnetArgs.length > 0) {
@@ -146,6 +176,8 @@ export class IndexerDbHandler {
   }
 
   async runInteractive() {
+    await this.init();
+
     displayInfo('Modo interactivo de IndexerDb...');
 
     const answers = await inquirer.prompt([
@@ -169,6 +201,29 @@ export class IndexerDbHandler {
           { name: '🔍 Modo query interactivo', value: 'query' },
           { name: '❓ Mostrar ayuda', value: 'help' }
         ]
+      },
+      {
+        type: 'confirm',
+        name: 'useVersion',
+        message: '¿Deseas especificar una versión del grafo?',
+        default: false,
+        when: (answers) => answers.mode !== 'help' && answers.mode !== 'query'
+      },
+      {
+        type: 'input',
+        name: 'version',
+        message: 'Versión del grafo (ej: 1.0.0, 7.8.0, 7.9.2):',
+        when: (answers) => answers.useVersion,
+        validate: (input) => {
+          if (!input || input.trim() === '') {
+            return 'La versión es requerida';
+          }
+          // Validar formato semántico básico (opcional)
+          if (!/^\d+\.\d+\.\d+$/.test(input.trim())) {
+            return 'Use formato semántico: X.Y.Z (ej: 1.0.0)';
+          }
+          return true;
+        }
       }
     ]);
 
@@ -176,7 +231,7 @@ export class IndexerDbHandler {
 
     // Si es producción, verificar certificado antes de continuar
     if (isProduction) {
-      const certPath = path.resolve('./Certs/prod/client.pem');
+      const certPath = path.join(this.projectRoot, 'Certs', 'prod', 'client.pem');
       if (!(await this.systemUtils.exists(certPath))) {
         displayError(`Certificado TLS no encontrado: ${certPath}`);
         displayInfo('Para producción, el certificado debe estar en Grafo/Certs/prod/client.pem');
@@ -184,9 +239,11 @@ export class IndexerDbHandler {
       }
     }
 
+    const version = answers.version ? answers.version.trim() : undefined;
+
     switch (answers.mode) {
       case 'interactive':
-        return await this.run({ production: isProduction });
+        return await this.run({ production: isProduction, version });
 
       case 'file': {
         const { filePath } = await inquirer.prompt([
@@ -209,12 +266,12 @@ export class IndexerDbHandler {
             }
           }
         ]);
-        return await this.run({ file: filePath, production: isProduction });
+        return await this.run({ file: filePath, production: isProduction, version });
       }
 
       case 'all':
         displayInfo('Procesando todos los archivos automáticamente...');
-        return await this.run({ noInteractive: true, production: isProduction });
+        return await this.run({ noInteractive: true, production: isProduction, version });
 
       case 'query':
         displayInfo('Entrando en modo query interactivo...');
@@ -248,15 +305,42 @@ export class IndexerDbHandler {
     console.log(chalk.gray('     grafo indexerdb run --no-interactive'));
     console.log(chalk.gray('     - Procesa todos automáticamente'));
     console.log('');
+    console.log(chalk.yellow('Opciones:'));
+    console.log('');
+    console.log('  --production        - Ejecutar en modo producción');
+    console.log('  --version <ver>     - Especificar versión del grafo (ej: 1.0.0, 7.8.0)');
+    console.log(chalk.gray('                        Permite almacenar múltiples versiones'));
+    console.log('');
+    console.log(chalk.yellow('Ejemplos con versionado:'));
+    console.log('');
+    console.log(chalk.gray('  # Indexar con versión 1.0.0'));
+    console.log(chalk.cyan('  grafo indexerdb run --no-interactive --version 1.0.0'));
+    console.log('');
+    console.log(chalk.gray('  # Indexar producción con versión 7.8.0'));
+    console.log(chalk.cyan('  grafo indexerdb run --no-interactive --production --version 7.8.0'));
+    console.log('');
+    console.log(chalk.gray('  # Indexar desarrollo con versión 7.9.0'));
+    console.log(chalk.cyan('  grafo indexerdb run --no-interactive --version 7.9.0'));
+    console.log('');
     console.log(chalk.yellow('Otros comandos:'));
     console.log('');
     console.log('  build   - Compila el proyecto');
     console.log('  clean   - Limpia artefactos de compilación');
     console.log('  status  - Muestra el estado del servicio');
     console.log('');
+    console.log(chalk.yellow('Gestión de versiones:'));
+    console.log('');
+    console.log(chalk.gray('  # Para ver o eliminar versiones de la base de datos, usa:'));
+    console.log(chalk.cyan('  grafo mongodb shell'));
+    console.log(chalk.gray('    - Ver versiones disponibles'));
+    console.log(chalk.gray('    - Eliminar versión específica (con confirmación)'));
+    console.log(chalk.gray('    - Abrir MongoDB shell (mongosh)'));
+    console.log('');
   }
 
   async status() {
+    await this.init();
+
     console.log(chalk.cyan('📊 Estado del IndexerDb:'));
 
     // Verificar .NET
@@ -326,7 +410,7 @@ export class IndexerDbHandler {
       // Verificar certificado de producción
       console.log('');
       console.log(chalk.cyan('  🔐 Certificado TLS (Producción):'));
-      const certPath = path.resolve('./Certs/prod/client.pem');
+      const certPath = path.join(this.projectRoot, 'Certs', 'prod', 'client.pem');
       const certExists = await this.systemUtils.exists(certPath);
       console.log(chalk.gray('    Certificado:'), certExists ? chalk.green('✓') : chalk.yellow('✗ No encontrado'));
       if (certExists) {
@@ -340,7 +424,7 @@ export class IndexerDbHandler {
       // Verificar directorio de entrada
       console.log('');
       console.log(chalk.cyan('  📂 Datos de entrada:'));
-      const inputDir = path.resolve('./Indexer/output');
+      const inputDir = path.join(this.projectRoot, 'Indexer', 'output');
       const inputDirExists = await this.systemUtils.exists(inputDir);
       console.log(chalk.gray('    Directorio output:'), inputDirExists ? chalk.green('✓') : chalk.red('✗'));
 

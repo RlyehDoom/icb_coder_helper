@@ -58,7 +58,7 @@ Una vez completado el deployment:
 ```bash
 # Verificar servicios
 curl http://localhost:8081/health    # Query Service
-curl http://localhost:8083/health    # MCP Server
+curl http://localhost:9083/health    # MCP Server
 
 # Ver logs
 docker-compose -f docker-compose.dockerhub.yml --env-file .env.production logs -f
@@ -84,8 +84,8 @@ docker-compose -f docker-compose.dockerhub.yml --env-file .env.production logs -
 |----------|--------|-----|-------------|
 | Query Service | 8081 | http://servidor:8081 | REST API |
 | Query Docs | 8081 | http://servidor:8081/docs | Swagger UI |
-| MCP Server | 8083 | http://servidor:8083/sse | SSE Endpoint |
-| MCP Health | 8083 | http://servidor:8083/health | Health Check |
+| MCP Server | 9083 | http://servidor:9083/sse | SSE Endpoint |
+| MCP Health | 9083 | http://servidor:9083/health | Health Check |
 
 ## 🛠️ Comandos Útiles
 

@@ -137,6 +137,7 @@ program
   .option('--all', 'Procesar todos los archivos automáticamente')
   .option('-i, --interactive', 'Modo query interactivo')
   .option('-p, --production', 'Ejecutar en modo PRODUCCIÓN (MongoDB remoto con TLS)')
+  .option('-v, --version <version>', 'Versión del grafo (ej: 1.0.0, 7.8.0, 7.9.2)')
   .action(async (action, options) => {
     displayBanner('GRAFO - IndexerDb');
 
@@ -149,12 +150,13 @@ program
         break;
       case 'run':
         // Si hay opciones de línea de comandos, ejecutar directamente
-        if (options.file || options.all || options.production !== undefined) {
+        if (options.file || options.all || options.production !== undefined || options.version) {
           await indexerDbHandler.run({
             file: options.file,
             noInteractive: options.all,
             interactive: options.interactive,
-            production: options.production
+            production: options.production,
+            version: options.version
           });
         } else {
           // Modo interactivo con selección de ambiente
@@ -171,11 +173,16 @@ program
         console.log('  run      - Ejecuta IndexerDb (modo interactivo si no se especifican opciones)');
         console.log('  status   - Muestra el estado del servicio');
         console.log('');
+        console.log(chalk.yellow('Gestión de versiones:'));
+        console.log(chalk.gray('  Para ver o eliminar versiones de la base de datos, usa:'));
+        console.log(chalk.cyan('  grafo mongodb shell'));
+        console.log('');
         console.log(chalk.yellow('Opciones para run:'));
         console.log('  -f, --file <path>     - Procesa un archivo específico');
         console.log('  --all                 - Procesa todos los archivos automáticamente');
         console.log('  -i, --interactive     - Modo query interactivo (solo consultas)');
         console.log('  -p, --production      - Ejecutar en modo PRODUCCIÓN');
+        console.log('  -v, --version <ver>   - Versión del grafo (ej: 1.0.0, 7.8.0)');
         console.log('');
         console.log(chalk.yellow('Ejemplos:'));
         console.log(chalk.gray('  # Modo interactivo (seleccionar ambiente y modo)'));
@@ -184,11 +191,17 @@ program
         console.log(chalk.gray('  # Development: procesar todos los archivos'));
         console.log(chalk.gray('  grafo indexerdb run --all'));
         console.log('');
-        console.log(chalk.gray('  # Production: procesar todos los archivos'));
-        console.log(chalk.gray('  grafo indexerdb run --all --production'));
+        console.log(chalk.gray('  # Production: procesar todos con versión 7.8.0'));
+        console.log(chalk.gray('  grafo indexerdb run --all --production --version 7.8.0'));
+        console.log('');
+        console.log(chalk.gray('  # Development: procesar con versión 1.0.0'));
+        console.log(chalk.gray('  grafo indexerdb run --all --version 1.0.0'));
         console.log('');
         console.log(chalk.gray('  # Production: modo query interactivo'));
         console.log(chalk.gray('  grafo indexerdb run --interactive --production'));
+        console.log('');
+        console.log(chalk.gray('  # Gestión de versiones en la base de datos'));
+        console.log(chalk.gray('  grafo mongodb shell'));
         console.log('');
     }
   });

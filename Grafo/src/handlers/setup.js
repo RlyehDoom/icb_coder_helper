@@ -375,7 +375,7 @@ export class SetupHandler {
         username: match[1] || config.MongoDB?.Username || 'InfocorpAI',
         password: match[2] || config.MongoDB?.Password || 'InfocorpAI2025',
         host: match[3] || 'localhost',
-        port: match[4] || '27017',
+        port: match[4] || '27019',
         database: config.MongoDB?.DatabaseName || 'GraphDB',
         authDatabase: config.MongoDB?.AuthDatabase || 'admin'
       };

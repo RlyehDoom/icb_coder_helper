@@ -56,5 +56,13 @@ namespace IndexerDb.Models
 
         [BsonIgnoreIfDefault]
         public DateTime LastModified { get; set; }
+
+        /// <summary>
+        /// Semantic version of the graph (e.g., "1.0.0", "7.8.0", "7.9.2")
+        /// Allows storing multiple versions of the same project
+        /// </summary>
+        [BsonElement("Version")]
+        [BsonIgnoreIfNull]
+        public string? Version { get; set; }
     }
 }

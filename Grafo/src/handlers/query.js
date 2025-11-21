@@ -7,16 +7,33 @@ import { displayProgressStart, displayProgressEnd, displayError, displaySuccess,
 export class QueryHandler {
   constructor(systemUtils) {
     this.systemUtils = systemUtils;
-    this.queryDir = path.resolve('./Query');
-    this.dockerComposePath = path.resolve('./docker-compose.yml');
-    this.dockerfilePath = path.join(this.queryDir, 'Dockerfile');
+    this.projectRoot = null; // Se inicializará en init()
+    this.queryDir = null;
+    this.dockerComposePath = null;
+    this.dockerfilePath = null;
     this.projectName = 'grafo';
     this.serviceName = 'query-service';
     this.containerName = 'grafo-query-service';
     this.port = 8081;
   }
 
+  /**
+   * Inicializa las rutas del handler basándose en la raíz del proyecto
+   */
+  async init() {
+    if (this.projectRoot) {
+      return; // Ya inicializado
+    }
+
+    this.projectRoot = await this.systemUtils.getProjectRoot();
+    this.queryDir = path.join(this.projectRoot, 'Query');
+    this.dockerComposePath = path.join(this.projectRoot, 'docker-compose.yml');
+    this.dockerfilePath = path.join(this.queryDir, 'Dockerfile');
+  }
+
   async build() {
+    await this.init();
+
     displayProgressStart('Construyendo imagen Docker de Query Service');
     
     // Verificar que Docker esté disponible
@@ -59,8 +76,10 @@ export class QueryHandler {
   }
 
   async run(options = {}) {
+    await this.init();
+
     displayProgressStart('Levantando Query Service con Docker Compose');
-    
+
     // Verificar que Docker esté disponible
     if (!(await this.systemUtils.isCommandAvailable('docker'))) {
       displayError('Docker no está instalado o no está en PATH');
@@ -131,6 +150,8 @@ export class QueryHandler {
   }
 
   async stop() {
+    await this.init();
+
     displayProgressStart('Deteniendo Query Service');
 
     try {
@@ -259,8 +280,10 @@ export class QueryHandler {
   }
 
   async status() {
+    await this.init();
+
     console.log(chalk.cyan('📊 Estado del Query Service:'));
-    
+
     // Verificar Docker
     const dockerAvailable = await this.systemUtils.isCommandAvailable('docker');
     console.log(chalk.gray('  Docker:'), dockerAvailable ? chalk.green('✓') : chalk.red('✗'));
@@ -514,6 +537,9 @@ export class QueryHandler {
    */
   async push(options = {}) {
     displayProgressStart('Preparando push a Docker Hub');
+
+    // Inicializar rutas
+    await this.init();
 
     // Verificar que Docker esté disponible
     if (!(await this.systemUtils.isCommandAvailable('docker'))) {

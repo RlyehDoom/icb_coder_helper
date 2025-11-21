@@ -212,8 +212,8 @@ else
 fi
 
 # Verificar MCP Server
-print_info "Verificando MCP Server (puerto 8083)..."
-if curl -f -s http://localhost:8083/health > /dev/null 2>&1; then
+print_info "Verificando MCP Server (puerto 9083)..."
+if curl -f -s http://localhost:9083/health > /dev/null 2>&1; then
     print_success "MCP Server está saludable"
 else
     print_warning "MCP Server no responde - verificar logs"
@@ -238,7 +238,7 @@ echo "✅ Servicios desplegados exitosamente en PRODUCCIÓN"
 echo ""
 echo "📡 Endpoints disponibles:"
 echo "   Query Service: http://localhost:8081"
-echo "   MCP Server:    http://localhost:8083/sse"
+echo "   MCP Server:    http://localhost:9083/sse"
 echo "   Health Check:  http://localhost:8081/health"
 echo ""
 echo "📊 MongoDB Configuración:"

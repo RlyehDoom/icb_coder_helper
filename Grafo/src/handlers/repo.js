@@ -6,11 +6,26 @@ import { displayProgressStart, displayProgressEnd, displayError, displaySuccess,
 export class RepoHandler {
   constructor(systemUtils) {
     this.systemUtils = systemUtils;
-    this.repoBaseDir = path.resolve('./Repo/Cloned');
-    this.cloneScript = path.resolve('./Repo/clone-repo.sh');
+    this.projectRoot = null; // Se inicializará en init()
+    this.repoBaseDir = null;
+    this.cloneScript = null;
+  }
+
+  /**
+   * Inicializa las rutas del handler basándose en la raíz del proyecto
+   */
+  async init() {
+    if (this.projectRoot) {
+      return; // Ya inicializado
+    }
+
+    this.projectRoot = await this.systemUtils.getProjectRoot();
+    this.repoBaseDir = path.join(this.projectRoot, 'Repo', 'Cloned');
+    this.cloneScript = path.join(this.projectRoot, 'Repo', 'clone-repo.sh');
   }
 
   async clone(options) {
+    await this.init();
     const { url, name, folder, sparse, branch, token } = options;
     
     displayProgressStart(`Clonando repositorio: ${url}`);
@@ -142,8 +157,10 @@ export class RepoHandler {
   }
 
   async list() {
+    await this.init();
+
     displayInfo('📦 Repositorios disponibles:');
-    
+
     if (!(await this.systemUtils.exists(this.repoBaseDir))) {
       displayWarning('Directorio Repo/Cloned no existe. Use "grafo repo clone" para clonar repositorios.');
       return true;
@@ -195,8 +212,10 @@ export class RepoHandler {
   }
 
   async clean() {
+    await this.init();
+
     displayProgressStart('Limpiando repositorios obsoletos y archivos temporales');
-    
+
     if (!(await this.systemUtils.exists(this.repoBaseDir))) {
       displayInfo('No hay directorio Repo/Cloned para limpiar.');
       return true;
@@ -241,8 +260,10 @@ export class RepoHandler {
   }
 
   async status() {
+    await this.init();
+
     console.log(chalk.cyan('📦 Estado de Repositorios:'));
-    
+
     // Verificar Git
     const gitAvailable = await this.systemUtils.isCommandAvailable('git');
     console.log(chalk.gray('  Git:'), gitAvailable ? chalk.green('✓') : chalk.red('✗'));

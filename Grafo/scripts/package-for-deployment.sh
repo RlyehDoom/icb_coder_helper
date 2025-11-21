@@ -42,10 +42,18 @@ echo -e "${BLUE}▶ Copying deployment script...${NC}"
 cp "$SCRIPT_DIR/deploy-from-dockerhub.sh" "$PACKAGE_DIR/"
 chmod +x "$PACKAGE_DIR/deploy-from-dockerhub.sh"
 
-# Copy diagnostic script
-echo -e "${BLUE}▶ Copying diagnostic script...${NC}"
+# Copy diagnostic scripts
+echo -e "${BLUE}▶ Copying diagnostic scripts...${NC}"
 cp "$SCRIPT_DIR/deployment-templates/diagnose-mongodb.sh" "$PACKAGE_DIR/"
+cp "$SCRIPT_DIR/deployment-templates/verify-mcp-server.sh" "$PACKAGE_DIR/"
+cp "$SCRIPT_DIR/deployment-templates/fix-nginx-sse.sh" "$PACKAGE_DIR/"
 chmod +x "$PACKAGE_DIR/diagnose-mongodb.sh"
+chmod +x "$PACKAGE_DIR/verify-mcp-server.sh"
+chmod +x "$PACKAGE_DIR/fix-nginx-sse.sh"
+
+# Copy troubleshooting guide
+echo -e "${BLUE}▶ Copying troubleshooting guide...${NC}"
+cp "$SCRIPT_DIR/MCP_PRODUCTION_TROUBLESHOOTING.md" "$PACKAGE_DIR/"
 
 # Create simple README
 echo -e "${BLUE}▶ Creating README...${NC}"
@@ -54,10 +62,13 @@ GRAFO PRODUCTION DEPLOYMENT
 ===========================
 
 Contents:
-- deploy-from-dockerhub.sh : Automated deployment script
-- diagnose-mongodb.sh      : MongoDB connection diagnostic tool
-- Certs/prod/client.pem    : TLS certificate for MongoDB
-- README.txt               : This file
+- deploy-from-dockerhub.sh           : Automated deployment script
+- diagnose-mongodb.sh                : MongoDB connection diagnostic tool
+- verify-mcp-server.sh               : MCP Server configuration verification
+- fix-nginx-sse.sh                   : Nginx SSE configuration fix tool
+- MCP_PRODUCTION_TROUBLESHOOTING.md  : Complete troubleshooting guide
+- Certs/prod/client.pem              : TLS certificate for MongoDB
+- README.txt                         : This file
 
 QUICK START:
 1. chmod +x deploy-from-dockerhub.sh
@@ -67,16 +78,60 @@ The script will:
 - Verify Docker and Docker Compose are installed
 - Download images from Docker Hub (rlyehdoom/grafo-query, rlyehdoom/grafo-mcp)
 - Create configuration files
-- Start services on ports 8081 (Query) and 8083 (MCP)
+- Start services:
+  * Query Service on port 9081
+  * MCP Server on port 9083
+- Generate Nginx configuration (grafo-nginx.conf)
+
+IMPORTANT: After deployment, copy the Nginx configuration:
+  sudo cp grafo-nginx.conf /etc/nginx/sites-available/grafo.conf
+  sudo nginx -t
+  sudo systemctl reload nginx
 
 TROUBLESHOOTING:
-If the deployment fails with MongoDB connection errors, run:
 
-  chmod +x diagnose-mongodb.sh
-  sudo ./diagnose-mongodb.sh
+1. MongoDB connection issues:
+   chmod +x diagnose-mongodb.sh
+   sudo ./diagnose-mongodb.sh
 
-This will test all possible connection methods and show which one works.
-Use the working configuration in deploy-from-dockerhub.sh
+2. MCP Server not connecting (Cursor stuck on "Loading tools..."):
+   chmod +x verify-mcp-server.sh
+   sudo ./verify-mcp-server.sh
+
+   This will check:
+   - Container status
+   - Port configuration (should be 9083)
+   - Health checks
+   - Nginx proxy configuration
+   - SSE endpoint functionality
+
+3. Nginx SSE configuration issues (proxy_buffering, proxy_cache):
+   chmod +x fix-nginx-sse.sh
+   sudo ./fix-nginx-sse.sh
+
+   This will:
+   - Detect Nginx configuration file for Grafo
+   - Verify SSE-required directives (proxy_buffering off, proxy_cache off)
+   - Offer to automatically fix configuration if issues found
+   - Reload Nginx after fixing
+
+4. Full troubleshooting guide:
+   See MCP_PRODUCTION_TROUBLESHOOTING.md
+
+CURSOR CONFIGURATION:
+
+After deployment, configure Cursor with:
+
+{
+  "mcpServers": {
+    "grafo-mcp-prod": {
+      "url": "https://your-domain.com/api/grafo/mcp/sse?version=7.10.2",
+      "transport": "sse"
+    }
+  }
+}
+
+Replace "your-domain.com" with your actual domain and "7.10.2" with your version.
 
 For full documentation, see:
 https://github.com/your-repo/Grafo/blob/main/PRODUCTION_DEPLOYMENT.md

@@ -97,7 +97,22 @@ Esto inicia el servidor MCP en **http://localhost:8083** usando HTTP/SSE.
 
 #### Configurar Cursor/VSCode
 
-Agrega esto a `~/.cursor/mcp.json` (o `%APPDATA%\Cursor\User\mcp.json` en Windows):
+**Agrega esto a `~/.cursor/mcp.json`** (o `%APPDATA%\Cursor\User\mcp.json` en Windows):
+
+**RECOMENDADO - Con versión específica:**
+
+```json
+{
+  "mcpServers": {
+    "grafo-7.10.3": {
+      "url": "http://localhost:8083/sse?version=7.10.3",
+      "transport": "sse"
+    }
+  }
+}
+```
+
+**Alternativa - Sin versión específica:**
 
 ```json
 {
@@ -109,6 +124,8 @@ Agrega esto a `~/.cursor/mcp.json` (o `%APPDATA%\Cursor\User\mcp.json` en Window
   }
 }
 ```
+
+💡 **Tip:** Especificar la versión en la URL (`?version=7.10.3`) te da control explícito sobre qué versión del código consultas. Ver [MCP_CURSOR_SETUP.md](MCP_CURSOR_SETUP.md) para más detalles.
 
 Reinicia Cursor y ya puedes consultar tu código desde el chat.
 

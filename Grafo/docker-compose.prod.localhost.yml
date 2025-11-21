@@ -1,0 +1,197 @@
+# Docker Compose para Ambiente PRODUCTIVO - MongoDB en LOCALHOST
+# Stack: grafo-prod-localhost
+# Servicios: Query Service (9081), MCP Server (9083)
+# MongoDB: LOCALHOST (mismo servidor Ubuntu/Linux) - host.docker.internal
+#
+# IMPORTANTE: Este archivo es para cuando MongoDB está instalado en el MISMO servidor
+# donde corren los contenedores Docker. Para MongoDB externo, usa docker-compose.prod.yml
+#
+# Uso en Linux/Ubuntu:
+#   docker compose -f docker-compose.prod.localhost.yml --env-file .env.prod up -d
+
+version: '3.8'
+
+services:
+  # ========================
+  # Query Service (REST API) - PRODUCCIÓN
+  # ========================
+  query-service:
+    build:
+      context: ./Query
+      dockerfile: Dockerfile
+    image: rlyehdoom/grafo-query:latest
+    container_name: grafo-query-service-prod
+
+    # OPCIÓN 1: network_mode: host (Recomendado para Linux)
+    # El contenedor comparte la red del host, puede acceder directamente a localhost:28101
+    network_mode: host
+
+    # OPCIÓN 2: Usar extra_hosts (comentado, activar si no usas network_mode: host)
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"  # Docker 20.10+
+    # networks:
+    #   - grafo-network
+    # ports:
+    #   - "9081:9081"
+
+    environment:
+      # MongoDB Configuration - LOCALHOST
+      # Con network_mode: host, usa localhost directamente
+      - MONGODB_CONNECTION_STRING=mongodb://sonata:qwertY.!1982@localhost:28101/GraphDB?authSource=admin&tls=true&tlsInsecure=true
+
+      # Con extra_hosts (comentado)
+      # - MONGODB_CONNECTION_STRING=mongodb://sonata:qwertY.!1982@host.docker.internal:28101/GraphDB?authSource=admin&tls=true&tlsInsecure=true
+
+      - MONGODB_DATABASE=GraphDB
+      - MONGODB_PROJECTS_COLLECTION=projects
+
+      # TLS Configuration
+      - MONGODB_TLS_CERTIFICATE_KEY_FILE=/app/certs/client.pem
+      - MONGODB_TLS_INSECURE=true
+
+      # Server Configuration
+      # Con network_mode: host, usa directamente el puerto 9081 del host
+      - SERVER_HOST=0.0.0.0
+      - SERVER_PORT=9081
+
+      # Logging - PRODUCCIÓN
+      - LOG_LEVEL=INFO
+
+      # CORS
+      - CORS_ORIGINS=*
+
+      # Environment
+      - ENVIRONMENT=production
+
+    volumes:
+      # Montar certificados MongoDB
+      - ./Certs/prod:/app/certs:ro
+
+    restart: unless-stopped
+
+    labels:
+      - "com.grafo.service=query-service"
+      - "com.grafo.version=1.0.0"
+      - "com.grafo.environment=production"
+      - "com.grafo.mongodb=localhost"
+      - "com.grafo.description=REST API for querying C# code graph - PRODUCTION (localhost MongoDB)"
+
+  # ========================
+  # MCP Server (Model Context Protocol) - PRODUCCIÓN
+  # ========================
+  mcp-server:
+    build:
+      context: ./Query
+      dockerfile: Dockerfile.mcp
+    image: rlyehdoom/grafo-mcp:latest
+    container_name: grafo-mcp-server-prod
+
+    # OPCIÓN 1: network_mode: host (Recomendado para Linux)
+    network_mode: host
+
+    # OPCIÓN 2: Usar extra_hosts (comentado)
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
+    # networks:
+    #   - grafo-network
+    # ports:
+    #   - "9083:8082"
+
+    environment:
+      # MongoDB Configuration - LOCALHOST
+      - MONGODB_CONNECTION_STRING=mongodb://sonata:qwertY.!1982@localhost:28101/GraphDB?authSource=admin&tls=true&tlsInsecure=true
+
+      # Con extra_hosts (comentado)
+      # - MONGODB_CONNECTION_STRING=mongodb://sonata:qwertY.!1982@host.docker.internal:28101/GraphDB?authSource=admin&tls=true&tlsInsecure=true
+
+      - MONGODB_DATABASE=GraphDB
+      - MONGODB_PROJECTS_COLLECTION=projects
+
+      # TLS Configuration
+      - MONGODB_TLS_CERTIFICATE_KEY_FILE=/app/certs/client.pem
+      - MONGODB_TLS_INSECURE=true
+
+      # Server Configuration
+      # Con network_mode: host, el puerto interno (8082) se expone directamente en el host como 8082
+      # NO usar 9083:8082, solo configurar el puerto interno
+      - SERVER_PORT=8082
+
+      # Logging - PRODUCCIÓN
+      - LOG_LEVEL=INFO
+
+      # Python
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
+
+      # Environment
+      - ENVIRONMENT=production
+
+      # Graph Version Filtering (FALLBACK - Opcional)
+      # RECOMENDADO: Cada cliente especifica versión en su mcp.json URL
+      #   Ejemplo: "url": "http://server:9083/sse?version=7.10.3"
+      # Esta variable es solo fallback cuando el cliente no especifica ?version=
+      # Comentar o dejar vacío para consultar todas las versiones (cuando cliente no especifica)
+      # - GRAFO_DEFAULT_VERSION=7.10.3
+
+    volumes:
+      # Montar certificados MongoDB
+      - ./Certs/prod:/app/certs:ro
+
+    restart: unless-stopped
+
+    healthcheck:
+      # Con network_mode: host, usa localhost directamente
+      test: ["CMD", "curl", "-f", "http://localhost:8082/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 3
+
+    labels:
+      - "com.grafo.service=mcp-server"
+      - "com.grafo.version=1.0.0"
+      - "com.grafo.environment=production"
+      - "com.grafo.mongodb=localhost"
+      - "com.grafo.description=Model Context Protocol Server - PRODUCTION (localhost MongoDB)"
+
+# ========================
+# Networks (solo si NO usas network_mode: host)
+# ========================
+# Comentado porque estamos usando network_mode: host
+# Si decides usar extra_hosts en lugar de network_mode: host, descomenta esto:
+#
+# networks:
+#   grafo-network:
+#     name: grafo-network-prod-localhost
+#     driver: bridge
+
+# ========================
+# NOTAS IMPORTANTES
+# ========================
+#
+# 1. network_mode: host
+#    - Recomendado para Linux cuando MongoDB está en localhost
+#    - El contenedor comparte la red del host
+#    - Puede acceder directamente a localhost:28101 sin traducción
+#    - Los puertos se exponen directamente en el host (no se mapean)
+#    - Query Service estará en localhost:9081
+#    - MCP Server estará en localhost:8082 (NO 9083)
+#
+# 2. extra_hosts (alternativa)
+#    - Requiere Docker 20.10+
+#    - Usa host.docker.internal:host-gateway
+#    - Necesitas descomentar las secciones marcadas
+#    - Mapeo de puertos explícito: 9081:9081 y 9083:8082
+#
+# 3. MongoDB Connection String
+#    - Con network_mode: host -> localhost:28101
+#    - Con extra_hosts -> host.docker.internal:28101
+#
+# 4. Certificados TLS
+#    - Deben estar en ./Certs/prod/client.pem
+#    - Se montan en /app/certs/ dentro del contenedor
+#
+# 5. Verificación
+#    - Query Service: curl http://localhost:9081/health
+#    - MCP Server: curl http://localhost:8082/health
+#    - MongoDB: mongosh "mongodb://localhost:28101/"

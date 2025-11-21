@@ -5,6 +5,7 @@ namespace IndexerDb.Services
     public interface IProjectDatabaseService
     {
         Task<bool> SaveProjectInfoAsync(ProjectInfo project);
+        Task<SaveProjectResult> SaveProjectInfoDetailedAsync(ProjectInfo project);
         Task<bool> SaveProjectsAsync(IEnumerable<ProjectInfo> projects);
         Task<ProjectInfo?> GetProjectByIdAsync(string projectId);
         Task<IEnumerable<ProjectInfo>> GetProjectsBySourceFileAsync(string sourceFile);

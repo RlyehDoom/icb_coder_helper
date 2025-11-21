@@ -5,6 +5,7 @@ Proporciona métodos de alto nivel para el MCP y otras aplicaciones.
 import logging
 from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
+from bson import ObjectId
 from ..models import (
     ProjectInfo, ProjectSummary, GraphNode, GraphEdge,
     SearchNodesRequest, SearchProjectsRequest, GetRelatedNodesRequest,
@@ -34,12 +35,20 @@ class GraphQueryService:
                 {
                     "ProjectId": 1, "ProjectName": 1, "Layer": 1,
                     "NodeCount": 1, "EdgeCount": 1, "LastProcessed": 1,
-                    "SourceFile": 1
+                    "SourceFile": 1, "ProcessingStateId": 1
                 }
             ).limit(limit)
-            
+
             results = []
             async for doc in cursor:
+                # Get version from ProcessingState if ProcessingStateId exists
+                version = None
+                if doc.get("ProcessingStateId"):
+                    states_col = self.mongodb.states_collection
+                    state = await states_col.find_one({"_id": doc["ProcessingStateId"]})
+                    if state:
+                        version = state.get("Version")
+
                 results.append(ProjectSummary(
                     MongoId=str(doc.get("_id", "")),
                     ProjectId=doc.get("ProjectId", ""),
@@ -48,7 +57,8 @@ class GraphQueryService:
                     NodeCount=doc.get("NodeCount", 0),
                     EdgeCount=doc.get("EdgeCount", 0),
                     LastProcessed=doc.get("LastProcessed", datetime.utcnow()),
-                    SourceFile=doc.get("SourceFile", "")
+                    SourceFile=doc.get("SourceFile", ""),
+                    Version=version
                 ))
             
             return results
@@ -60,25 +70,47 @@ class GraphQueryService:
         """Busca proyectos por nombre o capa."""
         try:
             query = {}
-            
+
             if request.query:
                 query["ProjectName"] = {"$regex": request.query, "$options": "i"}
-            
+
             if request.layer:
                 query["Layer"] = request.layer
-            
+
+            # Filter by version using ProcessingState relationship
+            processing_state_id = None
+            if request.version:
+                states_col = self.mongodb.states_collection
+                state = await states_col.find_one({"Version": request.version})
+                if state:
+                    # Mantener como ObjectId para coincidir con el tipo en MongoDB
+                    processing_state_id = state["_id"]
+                    query["ProcessingStateId"] = processing_state_id
+                else:
+                    # No processing state found for this version, return empty
+                    logger.warning(f"No processing state found for version: {request.version}")
+                    return []
+
             projects_col = self.mongodb.projects_collection
             cursor = projects_col.find(
                 query,
                 {
                     "ProjectId": 1, "ProjectName": 1, "Layer": 1,
                     "NodeCount": 1, "EdgeCount": 1, "LastProcessed": 1,
-                    "SourceFile": 1
+                    "SourceFile": 1, "ProcessingStateId": 1
                 }
             ).limit(request.limit)
-            
+
             results = []
             async for doc in cursor:
+                # Get version from ProcessingState if ProcessingStateId exists
+                version = None
+                if doc.get("ProcessingStateId"):
+                    states_col = self.mongodb.states_collection
+                    state = await states_col.find_one({"_id": doc["ProcessingStateId"]})
+                    if state:
+                        version = state.get("Version")
+
                 results.append(ProjectSummary(
                     MongoId=str(doc.get("_id", "")),
                     ProjectId=doc.get("ProjectId", ""),
@@ -87,12 +119,13 @@ class GraphQueryService:
                     NodeCount=doc.get("NodeCount", 0),
                     EdgeCount=doc.get("EdgeCount", 0),
                     LastProcessed=doc.get("LastProcessed", datetime.utcnow()),
-                    SourceFile=doc.get("SourceFile", "")
+                    SourceFile=doc.get("SourceFile", ""),
+                    Version=version
                 ))
-            
+
             logger.info(f"Found {len(results)} projects matching query")
             return results
-            
+
         except Exception as e:
             logger.error(f"Error searching projects: {e}")
             return []
@@ -150,11 +183,11 @@ class GraphQueryService:
         """Busca nodos en el grafo por criterios."""
         try:
             projects_col = self.mongodb.projects_collection
-            
+
             # Construir query para búsqueda dentro de arrays
             match_conditions = []
-            
-            # Filtro de texto en nombre (búsqueda amplia)
+
+            # Filtro de texto en nombre (búsqueda amplia de UN SOLO término)
             match_conditions.append({
                 "$or": [
                     {"Nodes.Name": {"$regex": request.query, "$options": "i"}},
@@ -162,17 +195,30 @@ class GraphQueryService:
                     {"Nodes.Id": {"$regex": request.query, "$options": "i"}}
                 ]
             })
-            
+
             # Filtros adicionales
             if request.nodeType:
                 match_conditions.append({"Nodes.Type": request.nodeType})
-            
+
             if request.project:
                 match_conditions.append({"ProjectId": request.project})
-            
+
             if request.namespace:
                 match_conditions.append({"Nodes.Namespace": {"$regex": request.namespace, "$options": "i"}})
-            
+
+            # Filter by version using ProcessingState relationship
+            if request.version:
+                states_col = self.mongodb.states_collection
+                state = await states_col.find_one({"Version": request.version})
+                if state:
+                    # Mantener como ObjectId para coincidir con el tipo en MongoDB
+                    processing_state_id = state["_id"]
+                    match_conditions.append({"ProcessingStateId": processing_state_id})
+                else:
+                    # No processing state found for this version, return empty
+                    logger.warning(f"No processing state found for version: {request.version}")
+                    return []
+
             # Pipeline de agregación para buscar dentro de arrays
             pipeline = [
                 {"$match": {"$and": match_conditions} if len(match_conditions) > 1 else match_conditions[0]},
@@ -212,28 +258,31 @@ class GraphQueryService:
             logger.error(f"Error searching nodes: {e}")
             return []
     
-    async def get_node_by_id(self, node_id: str) -> Optional[Tuple[GraphNode, str]]:
+    async def get_node_by_id(self, node_id: str) -> Optional[Tuple[GraphNode, str, str]]:
         """
         Obtiene un nodo específico por su ID.
-        Retorna tupla (nodo, project_id) o None si no se encuentra.
+        Retorna tupla (nodo, project_id, mongo_doc_id) o None si no se encuentra.
+        El mongo_doc_id es el _id del documento de MongoDB para queries exactas.
         """
         try:
             projects_col = self.mongodb.projects_collection
-            
+
             pipeline = [
                 {"$unwind": "$Nodes"},
                 {"$match": {"Nodes._id": node_id}},  # CORREGIDO: usar _id en lugar de Id
                 {"$project": {
                     "node": "$Nodes",
-                    "projectId": "$ProjectId"
+                    "projectId": "$ProjectId",
+                    "mongoDocId": {"$toString": "$_id"}
                 }},
                 {"$limit": 1}
             ]
-            
+
             async for doc in projects_col.aggregate(pipeline):
                 node = GraphNode(**doc["node"])
                 project_id = doc["projectId"]
-                return (node, project_id)
+                mongo_doc_id = doc["mongoDocId"]
+                return (node, project_id, mongo_doc_id)
             
             return None
             
@@ -311,12 +360,12 @@ class GraphQueryService:
                     "edges": [],
                     "message": "Node not found"
                 }
-            
-            source_node, project_id = node_info
-            
-            # Obtener las aristas del proyecto
+
+            source_node, project_id, mongo_doc_id = node_info
+
+            # Obtener el proyecto exacto usando MongoDB _id para garantizar version correcta
             projects_col = self.mongodb.projects_collection
-            project = await projects_col.find_one({"ProjectId": project_id})
+            project = await projects_col.find_one({"_id": ObjectId(mongo_doc_id)})
             
             if not project:
                 return {
@@ -392,6 +441,7 @@ class GraphQueryService:
                     nodeType="Class" if not request.methodName else None,
                     project=request.projectName,
                     namespace=request.namespace,
+                    version=request.version,
                     limit=5
                 )
                 nodes = await self.search_nodes(search_req)
@@ -420,20 +470,49 @@ class GraphQueryService:
             elif request.relativePath or request.absolutePath:
                 # Buscar nodos que coincidan con el filepath
                 projects_col = self.mongodb.projects_collection
-                
+
+                # Filter by version using ProcessingState relationship
+                version_filter = {}
+                if request.version:
+                    states_col = self.mongodb.states_collection
+                    state = await states_col.find_one({"Version": request.version})
+                    if state:
+                        # Mantener como ObjectId para coincidir con el tipo en MongoDB
+                        processing_state_id = state["_id"]
+                        version_filter = {"ProcessingStateId": processing_state_id}
+                    else:
+                        # No processing state found for this version, return empty
+                        logger.warning(f"No processing state found for version: {request.version}")
+                        # Continue but won't find any results
+                        version_filter = {"ProcessingStateId": ObjectId("000000000000000000000000")}
+
                 # Construir condición de búsqueda
                 path_conditions = []
                 if request.relativePath:
                     path_conditions.append({"Nodes.Location.RelativePath": {"$regex": request.relativePath, "$options": "i"}})
                 if request.absolutePath:
                     path_conditions.append({"Nodes.Location.AbsolutePath": {"$regex": request.absolutePath, "$options": "i"}})
-                
-                pipeline = [
-                    {"$unwind": "$Nodes"},
-                    {"$match": {"$or": path_conditions}},
-                    {"$limit": 10},
-                    {"$replaceRoot": {"newRoot": "$Nodes"}}
-                ]
+
+                # Construir pipeline con filtro de versión opcional
+                match_stage = {"$or": path_conditions}
+
+                # Combine version filter and path conditions at document level
+                document_filter = {**version_filter}
+                if document_filter:
+                    pipeline = [
+                        {"$match": document_filter},
+                        {"$unwind": "$Nodes"},
+                        {"$match": match_stage},
+                        {"$limit": 10},
+                        {"$replaceRoot": {"newRoot": "$Nodes"}}
+                    ]
+                else:
+                    pipeline = [
+                        {"$unwind": "$Nodes"},
+                        {"$match": match_stage},
+                        {"$limit": 10},
+                        {"$replaceRoot": {"newRoot": "$Nodes"}}
+                    ]
                 
                 async for doc in projects_col.aggregate(pipeline):
                     node = GraphNode(**doc)
@@ -472,7 +551,8 @@ class GraphQueryService:
                             NodeCount=project.NodeCount,
                             EdgeCount=project.EdgeCount,
                             LastProcessed=project.LastProcessed,
-                            SourceFile=project.SourceFile
+                            SourceFile=project.SourceFile,
+                            Version=project.Version
                         )
                 
                 # Generar sugerencias basadas en el contexto

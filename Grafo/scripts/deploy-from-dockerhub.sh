@@ -354,6 +354,12 @@ services:
       - MONGODB_TLS_CERTIFICATE_KEY_FILE=${MONGODB_TLS_CERTIFICATE_KEY_FILE}
       - MONGODB_TLS_INSECURE=${MONGODB_TLS_INSECURE}
 
+      # Server Configuration
+      # IMPORTANTE: Con network_mode: host, este puerto se expone directamente en el host
+      # Nginx está configurado para hacer proxy a localhost:9083
+      # Nota: Puerto 8082 está tomado en el servidor de producción
+      - SERVER_PORT=9083
+
       # Logging - PRODUCCIÓN
       - LOG_LEVEL=${LOG_LEVEL}
 
@@ -371,7 +377,8 @@ services:
     restart: unless-stopped
 
     healthcheck:
-      test: ["CMD", "python", "healthcheck.py"]
+      # Con network_mode: host, usa localhost directamente en el puerto 9083
+      test: ["CMD", "curl", "-f", "http://localhost:9083/health"]
       interval: 30s
       timeout: 10s
       start_period: 40s
@@ -504,7 +511,9 @@ cat > "$NGINX_CONFIG_FILE" <<'NGINX_EOF'
 # ========================
 # Grafo Query Service (REST API)
 # ========================
-location /api/grafo/query/ {
+# Using ^~ modifier to prevent regex location processing
+# This ensures /api/grafo/query/ is matched before generic /api/ regex locations
+location ^~ /api/grafo/query/ {
     # Remove /api/grafo/query prefix before forwarding
     rewrite ^/api/grafo/query/(.*)$ /$1 break;
 
@@ -541,7 +550,9 @@ location /api/grafo/query/ {
 # ========================
 # Grafo MCP Server (SSE)
 # ========================
-location /api/grafo/mcp/ {
+# Using ^~ modifier to prevent regex location processing
+# This ensures /api/grafo/mcp/ is matched before generic /api/ regex locations
+location ^~ /api/grafo/mcp/ {
     # Remove /api/grafo/mcp prefix before forwarding
     rewrite ^/api/grafo/mcp/(.*)$ /$1 break;
 
@@ -607,6 +618,22 @@ location /grafo/mcp/health {
     proxy_pass http://localhost:9083/health;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
+}
+
+# MCP Server - Messages Endpoint (for hybrid SSE mode)
+# Cursor posts messages to /messages/ directly when using hybrid mode
+location /messages/ {
+    proxy_pass http://localhost:9083/messages/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+
+    # CORS
+    add_header 'Access-Control-Allow-Origin' '*' always;
+    add_header 'Access-Control-Allow-Methods' 'POST, OPTIONS' always;
+    add_header 'Access-Control-Allow-Headers' 'Content-Type' always;
 }
 NGINX_EOF
 

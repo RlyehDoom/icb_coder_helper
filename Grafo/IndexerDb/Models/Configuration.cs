@@ -11,8 +11,31 @@ namespace IndexerDb.Models
         public bool EnableAuth { get; set; } = false;
 
         // TLS Certificate for production MongoDB connections
+        // Default: ../Certs/prod/client.pem (relative to IndexerDb directory)
         public string TlsCertificateFile { get; set; } = string.Empty;
         public bool TlsInsecure { get; set; } = false;
+
+        /// <summary>
+        /// Gets the TLS certificate file path to use.
+        /// If TlsCertificateFile is not set and TLS is enabled in the connection string,
+        /// returns the default certificate path: ../Certs/prod/client.pem
+        /// </summary>
+        public string GetTlsCertificatePath()
+        {
+            // If explicitly set, use that
+            if (!string.IsNullOrEmpty(TlsCertificateFile))
+                return TlsCertificateFile;
+
+            // Check if TLS is enabled in connection string
+            bool tlsEnabled = ConnectionString.Contains("tls=true", StringComparison.OrdinalIgnoreCase) ||
+                             ConnectionString.Contains("ssl=true", StringComparison.OrdinalIgnoreCase);
+
+            // Return default path if TLS is enabled
+            if (tlsEnabled)
+                return "../Certs/prod/client.pem";
+
+            return string.Empty;
+        }
 
         public string GetAuthenticatedConnectionString()
         {

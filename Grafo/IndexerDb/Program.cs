@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using DotNetEnv;
 
 namespace IndexerDb
 {
@@ -12,6 +13,15 @@ namespace IndexerDb
     {
         static async Task Main(string[] args)
         {
+            // Load .env file if it exists (for sensitive data like connection strings)
+            // .env files are not committed to git and override appsettings.json values
+            var envPath = Path.Combine(Directory.GetCurrentDirectory(), ".env");
+            if (File.Exists(envPath))
+            {
+                Env.Load(envPath);
+                Console.WriteLine("✓ Loaded configuration from .env file");
+            }
+
             // Parse command line arguments
             var options = ParseArguments(args);
             
@@ -77,7 +87,7 @@ namespace IndexerDb
                         return;
                     }
 
-                    var result = await incrementalProcessor.ProcessGraphFileIncrementallyAsync(options.SpecificFile);
+                    var result = await incrementalProcessor.ProcessGraphFileIncrementallyAsync(options.SpecificFile, options.Version);
                     processingResults.Add(result);
                 }
                 else
@@ -118,9 +128,9 @@ namespace IndexerDb
                         
                         foreach (var filePath in filesToProcess)
                         {
-                            try 
+                            try
                             {
-                                var result = await incrementalProcessor.ProcessGraphFileIncrementallyAsync(filePath);
+                                var result = await incrementalProcessor.ProcessGraphFileIncrementallyAsync(filePath, options.Version);
                                 processingResults.Add(result);
                                 
                                 // Small pause between files for readability
@@ -144,11 +154,26 @@ namespace IndexerDb
                     var totalNew = processingResults.Sum(r => r.NewProjects);
                     var totalUpdated = processingResults.Sum(r => r.UpdatedProjects);
                     var totalSkipped = processingResults.Sum(r => r.SkippedProjects);
+                    var totalFailed = processingResults.Sum(r => r.FailedProjects);
+                    var totalFragmented = processingResults.Sum(r => r.FragmentedProjects);
                     var totalProcessed = processingResults.Sum(r => r.ProcessedProjects);
                     var finalProjectCount = await projectDatabaseService.GetTotalProjectCountAsync();
 
-                    logger.LogInformation("📊 FINAL SUMMARY: Files: {Files} | Projects: New: {New}, Updated: {Updated}, Skipped: {Skipped} | Total in DB: {TotalDB}", 
-                        processingResults.Count, totalNew, totalUpdated, totalSkipped, finalProjectCount);
+                    var summaryParts = new List<string>
+                    {
+                        $"New: {totalNew}",
+                        $"Updated: {totalUpdated}",
+                        $"Skipped: {totalSkipped}"
+                    };
+
+                    if (totalFailed > 0)
+                        summaryParts.Add($"Failed: {totalFailed}");
+
+                    if (totalFragmented > 0)
+                        summaryParts.Add($"Fragmented: {totalFragmented}");
+
+                    logger.LogInformation("📊 FINAL SUMMARY: Files: {Files} | Projects: {ProjectsSummary} | Total in DB: {TotalDB}",
+                        processingResults.Count, string.Join(", ", summaryParts), finalProjectCount);
                 }
 
                 // Interactive mode for querying (only if --interactive specified)
@@ -526,6 +551,14 @@ namespace IndexerDb
                     case "-h":
                         options.ShowHelp = true;
                         break;
+
+                    case "--version":
+                    case "-v":
+                        if (i + 1 < args.Length)
+                        {
+                            options.Version = args[++i];
+                        }
+                        break;
                 }
             }
 
@@ -541,6 +574,7 @@ namespace IndexerDb
             Console.WriteLine("  --file, -f <path>       Process a specific graph file by path");
             Console.WriteLine("  --all, --no-select      Process all found files without file selection");
             Console.WriteLine("  --interactive, -i       Enter interactive query mode (skips file processing if used alone)");
+            Console.WriteLine("  --version, -v <ver>     Set semantic version for the graph (e.g., \"1.0.0\", \"7.9.2\")");
             Console.WriteLine("  --help, -h              Show this help message");
             Console.WriteLine();
             Console.WriteLine("Processing Modes:");
@@ -904,6 +938,7 @@ namespace IndexerDb
             public bool Interactive { get; set; } = false;
             public bool ProcessAll { get; set; } = false;
             public bool ShowHelp { get; set; } = false;
+            public string? Version { get; set; } = null;
         }
     }
 }
