@@ -105,6 +105,7 @@ export class RepoHandler {
         console.log(`  Bash ejecutable: ${bashCommand}`);
         console.log(`  Script: ${this.cloneScript}`);
         console.log(`  Working dir: ${workingDir}`);
+        console.log(`  Repo base dir: ${this.repoBaseDir}`);
         console.log(`  Comando completo: "${bashCommand}" "${this.cloneScript}" ${args.join(' ')}\n`);
       }
 
@@ -114,9 +115,13 @@ export class RepoHandler {
         ? {
             ...process.env,
             MSYS_NO_PATHCONV: '1',
-            MSYS2_ARG_CONV_EXCL: '-s'  // No convertir el argumento -s (sparse folders)
+            MSYS2_ARG_CONV_EXCL: '-s',  // No convertir el argumento -s (sparse folders)
+            GRAFO_REPO_BASE_DIR: this.repoBaseDir  // Pasar el directorio base correcto al script
           }
-        : process.env;
+        : {
+            ...process.env,
+            GRAFO_REPO_BASE_DIR: this.repoBaseDir  // Pasar el directorio base correcto al script
+          };
 
       const result = await this.systemUtils.execute(bashCommand, [this.cloneScript, ...args], {
         cwd: workingDir,

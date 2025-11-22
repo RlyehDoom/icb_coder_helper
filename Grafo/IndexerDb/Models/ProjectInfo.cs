@@ -35,12 +35,20 @@ namespace IndexerDb.Models
         /// <summary>
         /// Reference to the ProcessingState document (ObjectId).
         /// Establishes a relationship: 1 ProcessingState -> N ProjectInfo
-        /// The Version is stored in the ProcessingState document to avoid duplication.
         /// </summary>
         [BsonElement("ProcessingStateId")]
         [BsonRepresentation(BsonType.ObjectId)]
         [BsonIgnoreIfNull]
         public string? ProcessingStateId { get; set; }
+
+        /// <summary>
+        /// Version identifier for this project (e.g., "7.10.2", "6.5.0").
+        /// Stored here for easy querying without joining with ProcessingState.
+        /// This is part of what makes the ProjectId unique across versions.
+        /// </summary>
+        [BsonElement("Version")]
+        [BsonIgnoreIfNull]
+        public string? Version { get; set; }
 
         // Fragmentation fields (for projects >15MB)
         /// <summary>

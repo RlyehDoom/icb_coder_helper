@@ -301,6 +301,11 @@ namespace IndexerDb.Services
             {
                 var projects = new Dictionary<string, ProjectInfo>();
 
+                // Extract repository/version identifier from SourceDirectory
+                // Example: /Indexer/output/ICB7C_GraphFiles -> ICB7C
+                // Example: /Indexer/output/6_5_main_GraphFiles -> 6_5_main
+                var repoIdentifier = ExtractRepositoryIdentifier(graphDocument.SourceDirectory, graphDocument.SourceFile);
+
                 // Group nodes by project
                 var projectNodes = graphDocument.Nodes
                     .Where(n => !string.IsNullOrEmpty(n.Project) && n.Type != "Solution" && n.Type != "Layer")
@@ -320,9 +325,15 @@ namespace IndexerDb.Services
                         .Where(e => nodeIds.Contains(e.Source) || nodeIds.Contains(e.Target))
                         .ToList();
 
+                    // IMPORTANT: Include repository identifier in ProjectId to support multiple versions
+                    // This prevents different versions of the same project from overwriting each other
+                    var projectId = string.IsNullOrEmpty(repoIdentifier)
+                        ? $"project:{projectName}"
+                        : $"project:{projectName}::{repoIdentifier}";
+
                     var project = new ProjectInfo
                     {
-                        ProjectId = $"project:{projectName}",
+                        ProjectId = projectId,
                         ProjectName = projectName,
                         Layer = layer,
                         NodeCount = nodes.Count,
@@ -331,7 +342,8 @@ namespace IndexerDb.Services
                         Edges = edges,
                         SourceFile = graphDocument.SourceFile,
                         SourceDirectory = graphDocument.SourceDirectory,
-                        LastModified = graphDocument.ImportedAt
+                        LastModified = graphDocument.ImportedAt,
+                        Version = graphDocument.Version // Preserve version if available
                     };
 
                     projects[project.ProjectId] = project;
@@ -339,6 +351,51 @@ namespace IndexerDb.Services
 
                 return projects.Values.ToList();
             });
+        }
+
+        /// <summary>
+        /// Extracts a repository/version identifier from the source directory path.
+        /// Examples:
+        ///   /Indexer/output/ICB7C_GraphFiles -> ICB7C
+        ///   /Indexer/output/6_5_main_GraphFiles -> 6_5_main
+        ///   /Indexer/output/MyProject_GraphFiles -> MyProject
+        /// </summary>
+        private static string ExtractRepositoryIdentifier(string sourceDirectory, string sourceFile)
+        {
+            // Try to extract from directory name first
+            if (!string.IsNullOrEmpty(sourceDirectory))
+            {
+                var dirParts = sourceDirectory.Split('/', '\\');
+                var graphFilesDir = dirParts.LastOrDefault(p => p.EndsWith("_GraphFiles", StringComparison.OrdinalIgnoreCase));
+
+                if (!string.IsNullOrEmpty(graphFilesDir))
+                {
+                    // Remove _GraphFiles suffix
+                    return graphFilesDir.Substring(0, graphFilesDir.Length - "_GraphFiles".Length);
+                }
+            }
+
+            // Fallback: try to extract from source file name
+            // Example: Infocorp.Banking-graph.json -> Infocorp.Banking
+            if (!string.IsNullOrEmpty(sourceFile))
+            {
+                var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(sourceFile);
+                // Remove -graph, -symbols, or other suffixes
+                var baseName = fileNameWithoutExtension
+                    .Replace("-graph-structural", "")
+                    .Replace("-graph", "")
+                    .Replace("-symbols", "")
+                    .Replace("-stats", "");
+
+                if (!string.IsNullOrEmpty(baseName))
+                {
+                    return baseName;
+                }
+            }
+
+            // If we can't determine the identifier, return empty string
+            // This will fallback to the old behavior (project name only)
+            return string.Empty;
         }
 
         public async Task<string> CalculateProjectHashAsync(ProjectInfo project)

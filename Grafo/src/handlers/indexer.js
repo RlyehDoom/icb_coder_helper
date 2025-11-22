@@ -542,20 +542,17 @@ export class IndexerHandler {
       await this.systemUtils.ensureDir(outputDir);
 
       // Construir argumentos
+      // IMPORTANTE: Pasar solo el directorio como -o, no un archivo con nombre completo
+      // El Indexer C# se encargará de generar los nombres correctos con sufijos (-symbols, -graph, etc.)
       const args = [
         exe,
         '-s', solutionPath,
-        '-o', path.join(outputDir, `${solutionName}-symbols.${options.format || 'json'}`)
+        '-o', outputDir  // Pasar solo el directorio, no un archivo completo
       ];
 
-      // Opciones adicionales
-      if (!options.noGraph) {
-        args.push('-g', path.join(outputDir, `${solutionName}-graph.${options.format}`));
-      }
-
-      if (!options.noStats) {
-        args.push('--stats-csv', path.join(outputDir, `${solutionName}-stats.csv`));
-      }
+      // El Indexer ahora genera automáticamente todos los archivos (symbols, graph, structural, stats)
+      // Por lo tanto, las opciones -g y --stats-csv ya no son necesarias aquí
+      // Si se necesita controlar esto, debe hacerse mediante opciones del Indexer
 
       if (options.verbose) {
         args.push('-v');
@@ -590,7 +587,10 @@ export class IndexerHandler {
         displayInfo(`🔊 Modo verbose habilitado desde .env`);
       }
 
-      args.push('--output-format', options.format);
+      // Agregar formato de salida si se especifica (por defecto JSON)
+      if (options.format && options.format !== 'json') {
+        args.push('--output-format', options.format);
+      }
 
       const result = await this.systemUtils.execute('dotnet', args, {
         cwd: this.indexerDir

@@ -22,7 +22,13 @@ SPARSE_FOLDERS=""
 REPO_URL=""
 PAT_TOKEN=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_BASE_DIR="${SCRIPT_DIR}/Cloned"
+# Allow overriding REPO_BASE_DIR via environment variable (used by grafo CLI)
+REPO_BASE_DIR="${GRAFO_REPO_BASE_DIR:-${SCRIPT_DIR}/Cloned}"
+
+# Debug: mostrar directorio base (solo si se está usando override)
+if [[ -n "${GRAFO_REPO_BASE_DIR}" ]]; then
+    echo "📍 Usando directorio base personalizado: $REPO_BASE_DIR"
+fi
 
 # Load .env file if it exists (for default values)
 ENV_FILE="${SCRIPT_DIR}/.env"
@@ -77,10 +83,11 @@ Examples:
 
 Environment Variables & .env file:
     AZURE_DEVOPS_PAT          Azure DevOps Personal Access Token
-    GITHUB_TOKEN              GitHub Personal Access Token  
-    GRAFO_DEFAULT_BRANCH      Default branch to clone (alternative to -b option)  
+    GITHUB_TOKEN              GitHub Personal Access Token
+    GRAFO_DEFAULT_BRANCH      Default branch to clone (alternative to -b option)
     GRAFO_DEFAULT_SPARSE      Default sparse checkout folders (alternative to -s option)
-    
+    GRAFO_REPO_BASE_DIR       Override base directory for cloning (used by grafo CLI)
+
     Create a .env file in the same directory as this script with your default values:
         AZURE_DEVOPS_PAT="your-azure-token-here"
         GITHUB_TOKEN="your-github-token-here"

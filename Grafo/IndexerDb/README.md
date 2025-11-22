@@ -21,6 +21,23 @@ IndexerDB está completamente integrado con el **Roslyn Semantic Model** del Ros
 - **Timestamps**: Rastrea cuándo se procesó cada proyecto por última vez
 - **Optimización**: Evita reprocesar proyectos sin cambios, mejorando significativamente la performance
 
+### 🔄 **Soporte de Múltiples Versiones**
+- **Identificación Única**: Cada proyecto se identifica por nombre + repositorio/versión
+- **Coexistencia de Versiones**: Permite almacenar múltiples versiones del mismo proyecto simultáneamente
+- **ProjectId Compuesto**: Formato `project:{nombre}::{repo-identifier}` (ej: `project:Infocorp.Banking::ICB7C`)
+- **No Sobrescritura**: Las diferentes versiones no se sobrescriben entre sí
+- **Ejemplo**: Puedes tener `ICB7C` (v7.10.2) e `ICB6` (v6.5.0) en la misma base de datos
+
+**Formato de Directorio Requerido:**
+```
+Indexer/
+  output/
+    ICB7C_GraphFiles/         # Versión 7.10.2
+      Infocorp.Banking-graph.json
+    6_5_main_GraphFiles/      # Versión 6.5.0
+      Infocorp.Banking-graph.json
+```
+
 ### 📊 **Logging Detallado**
 - **Progreso en Tiempo Real**: Muestra el progreso detallado paso a paso
 - **Estadísticas por Proyecto**: Información específica de cada proyecto procesado
