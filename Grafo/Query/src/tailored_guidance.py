@@ -131,28 +131,117 @@ class TailoredGuidanceService:
             logger.error(f"Error al cargar code snippet {snippet_name}: {e}")
             raise
 
+    def _get_task_steps(self, task_type: str) -> Dict[str, Any]:
+        """
+        Retorna la estructura de pasos para cada tipo de tarea.
+
+        Returns:
+            Dict con total_steps y descripción de cada paso
+        """
+        steps_map = {
+            "extend_business_component": {
+                "total_steps": 3,
+                "steps": {
+                    1: "Verificar herencia y referencias del grafo",
+                    2: "Crear clase Extended y código",
+                    3: "Configurar Unity y compilar"
+                }
+            },
+            "create_data_access": {
+                "total_steps": 2,
+                "steps": {
+                    1: "Crear clase DataAccess y código",
+                    2: "Configurar referencias y compilar"
+                }
+            },
+            "create_service_agent": {
+                "total_steps": 2,
+                "steps": {
+                    1: "Crear ServiceAgent y código",
+                    2: "Configurar referencias y compilar"
+                }
+            },
+            "add_method_override": {
+                "total_steps": 3,
+                "steps": {
+                    1: "Verificar método virtual y crear override",
+                    2: "Compilar y validar override",
+                    3: "Configurar Unity y compilar final"
+                }
+            },
+            "configure_unity": {
+                "total_steps": 1,
+                "steps": {
+                    1: "Configurar UnityConfiguration.config"
+                }
+            },
+            "extend_api": {
+                "total_steps": 2,
+                "steps": {
+                    1: "Crear controlador y endpoints",
+                    2: "Configurar y compilar"
+                }
+            },
+            "create_new_component": {
+                "total_steps": 3,
+                "steps": {
+                    1: "Crear estructura y código",
+                    2: "Configurar referencias",
+                    3: "Registrar en Unity y compilar"
+                }
+            },
+            "understand_architecture": {
+                "total_steps": 1,
+                "steps": {
+                    1: "Entender arquitectura Tailored"
+                }
+            }
+        }
+
+        return steps_map.get(task_type, {"total_steps": 1, "steps": {1: "Ejecutar tarea"}})
+
     async def get_tailored_guidance(self, args: Dict[str, Any]) -> str:
         """
         Genera guía especializada para trabajar en Tailored.
 
         Args:
-            args: Diccionario con task_type, component_name, layer, details, version
+            args: Diccionario con task_type, component_name, layer, details, version, step
 
         Returns:
-            Guía completa en formato Markdown
+            Guía (overview o paso específico) en formato Markdown
         """
         task_type = args["task_type"]
         component_name = args.get("component_name", "")
         layer = args.get("layer", "")
         details = args.get("details", "")
+        step = args.get("step", "overview")  # overview, 1, 2, 3, etc
         self.version = args.get("version", "")  # Establecer versión para este request
+
+        # Si pide overview, mostrar guía de navegación
+        if step == "overview" or step == 0:
+            return self._generate_overview(task_type, component_name, layer)
 
         # Determinar framework version para mostrar en header
         framework_version = ".NET Framework 4.5.2" if self.version and self.version.startswith("6.") else ".NET 8"
 
+        # Obtener info de pasos
+        task_steps_info = self._get_task_steps(task_type)
+        total_steps = task_steps_info["total_steps"]
+
+        # Convertir step a int si es string
+        try:
+            step_num = int(step)
+        except (ValueError, TypeError):
+            step_num = 1  # Default a paso 1
+
+        # Validar que el paso existe
+        if step_num < 1 or step_num > total_steps:
+            return f"# ❌ Error\n\nPaso {step_num} no válido. Esta tarea tiene {total_steps} pasos."
+
         # Header común
         md = "# 🎯 Guía Tailored - ICBanking\n\n"
         md += f"**Tarea:** `{task_type}`  \n"
+        md += f"**Paso:** `{step_num} de {total_steps}` - {task_steps_info['steps'][step_num]}  \n"
         md += f"**Framework:** `{framework_version}`  \n"
         if component_name:
             md += f"**Componente:** `{component_name}`  \n"
@@ -162,28 +251,99 @@ class TailoredGuidanceService:
             md += f"**Versión del Proyecto:** `{self.version}`  \n"
         md += "\n---\n\n"
 
-        # Generar contenido específico según el tipo de tarea
+        # Generar contenido del paso específico
         if task_type == "extend_business_component":
-            md += await self._guidance_extend_business_component(component_name, details)
+            md += await self._guidance_extend_business_component_step(component_name, details, step_num)
         elif task_type == "create_data_access":
-            md += self._guidance_create_data_access(component_name, details)
+            md += self._guidance_create_data_access_step(component_name, details, step_num)
         elif task_type == "create_service_agent":
-            md += self._guidance_create_service_agent(component_name, details)
+            md += self._guidance_create_service_agent_step(component_name, details, step_num)
         elif task_type == "extend_api":
-            md += self._guidance_extend_api(layer, details)
+            md += self._guidance_extend_api_step(layer, details, step_num)
         elif task_type == "configure_unity":
-            md += self._guidance_configure_unity(component_name, layer, details)
+            md += self._guidance_configure_unity_step(component_name, layer, details, step_num)
         elif task_type == "understand_architecture":
             md += self._guidance_understand_architecture()
         elif task_type == "add_method_override":
-            md += self._guidance_add_method_override(component_name, details)
+            md += self._guidance_add_method_override_step(component_name, details, step_num)
         elif task_type == "create_new_component":
-            md += self._guidance_create_new_component(component_name, layer, details)
+            md += self._guidance_create_new_component_step(component_name, layer, details, step_num)
         else:
             md += f"❌ Tipo de tarea no reconocido: `{task_type}`\n"
 
-        # Agregar validaciones finales SIEMPRE
-        md += self._append_final_validations(task_type)
+        # Navegación entre pasos
+        md += "\n\n---\n\n"
+        md += self._build_step_navigation(task_type, step_num, total_steps, component_name, layer)
+
+        return md
+
+    def _generate_overview(self, task_type: str, component_name: str, layer: str) -> str:
+        """Genera un overview de la tarea con los pasos a seguir."""
+        task_steps_info = self._get_task_steps(task_type)
+        total_steps = task_steps_info["total_steps"]
+
+        md = "# 🎯 Guía Tailored - Overview\n\n"
+        md += f"**Tarea:** `{task_type}`  \n"
+        if component_name:
+            md += f"**Componente:** `{component_name}`  \n"
+        if layer:
+            md += f"**Capa:** `{layer}`  \n"
+        md += "\n---\n\n"
+
+        md += "## 📋 Pasos a Seguir\n\n"
+        md += f"Esta tarea consta de **{total_steps} pasos**:\n\n"
+
+        for step_num, step_desc in task_steps_info["steps"].items():
+            md += f"{step_num}. **{step_desc}**\n"
+
+        md += "\n---\n\n"
+        md += "## 🚀 Cómo Usar Este Sistema\n\n"
+        md += "1. **Comienza por el Paso 1:** Llama la herramienta `get_tailored_guidance` con `step=1`\n"
+        md += "2. **Sigue las instrucciones** del paso actual\n"
+        md += "3. **Al terminar cada paso:** La guía te indicará qué hacer después\n"
+        md += "4. **Llama el siguiente paso:** Usa `get_tailored_guidance` con `step=2`, `step=3`, etc.\n\n"
+
+        md += "**Importante:** Completa cada paso ANTES de avanzar al siguiente.\n\n"
+
+        md += "---\n\n"
+        md += "## 🎬 Comenzar Ahora\n\n"
+        md += f"Para empezar, llama:\n\n"
+        md += f"```\nget_tailored_guidance(\n"
+        md += f"  task_type='{task_type}',\n"
+        if component_name:
+            md += f"  component_name='{component_name}',\n"
+        if layer:
+            md += f"  layer='{layer}',\n"
+        md += f"  step=1\n"
+        md += f")\n```"
+
+        return md
+
+    def _build_step_navigation(self, task_type: str, current_step: int, total_steps: int,
+                                component_name: str, layer: str) -> str:
+        """Construye la navegación para el paso siguiente."""
+        md = "## 🔄 Siguiente Paso\n\n"
+
+        if current_step < total_steps:
+            next_step = current_step + 1
+            task_steps_info = self._get_task_steps(task_type)
+            next_step_desc = task_steps_info["steps"][next_step]
+
+            md += f"✅ **Completaste el Paso {current_step}**\n\n"
+            md += f"**Siguiente:** Paso {next_step} - {next_step_desc}\n\n"
+            md += f"Para continuar, llama:\n\n"
+            md += f"```\nget_tailored_guidance(\n"
+            md += f"  task_type='{task_type}',\n"
+            if component_name:
+                md += f"  component_name='{component_name}',\n"
+            if layer:
+                md += f"  layer='{layer}',\n"
+            md += f"  step={next_step}\n"
+            md += f")\n```"
+        else:
+            md += f"🎉 **¡Completaste todos los pasos!**\n\n"
+            md += f"Has terminado la tarea `{task_type}`. "
+            md += f"Verifica que todo compile correctamente antes de continuar."
 
         return md
 
@@ -309,6 +469,178 @@ class TailoredGuidanceService:
         }
 
         return template.format(**variables)
+
+    # ==================== MÉTODOS DE GUÍA POR PASOS ====================
+
+    async def _guidance_extend_business_component_step(self, component_name: str, details: str, step: int) -> str:
+        """Guía por pasos para extender Business Component."""
+        if step == 1:
+            # Paso 1: Verificar herencia y referencias del grafo
+            md = "## Paso 1: Verificar Herencia y Referencias del Grafo\n\n"
+            md += "Antes de escribir código, DEBES consultar el grafo de ICBanking para obtener:\n\n"
+
+            if component_name:
+                inheritance_info = await self._build_inheritance_verification(component_name)
+                csproj_verification = await self._build_csproj_verification(component_name)
+                md += inheritance_info + "\n\n"
+                md += csproj_verification + "\n\n"
+            else:
+                md += "⚠️ **No especificaste component_name.** Usa el grafo para buscar la clase que quieres extender.\n\n"
+
+            return md
+
+        elif step == 2:
+            # Paso 2: Crear clase Extended y código
+            md = "## Paso 2: Crear Clase Extended y Código\n\n"
+            md += "### Ubicación del Archivo\n\n"
+            md += "```\n"
+            md += "Tailored.ICBanking.sln/\n"
+            md += "└── 3_BusinessLayer/\n"
+            md += "    └── BusinessComponents/\n"
+            md += "        └── Tailored.ICBanking.BusinessComponents/\n"
+            if component_name:
+                md += f"            └── {component_name}Extended.cs  ← CREAR AQUÍ\n"
+            md += "```\n\n"
+
+            md += "### Patrón de Código\n\n"
+            md += self._build_business_component_code_pattern(component_name) + "\n\n"
+
+            md += "### Referencias Necesarias en .csproj\n\n"
+            md += "```xml\n"
+            md += "<ItemGroup>\n"
+            md += "  <!-- Referencias internas de Tailored -->\n"
+            md += "  <ProjectReference Include=\"..\\..\\..\\4_DataLayer\\DataAccess\\Tailored.ICBanking.DataAccess\\Tailored.ICBanking.DataAccess.csproj\" />\n"
+            if component_name:
+                md += self._build_component_reference(component_name)
+            md += "</ItemGroup>\n"
+            md += "```\n\n"
+
+            return md
+
+        elif step == 3:
+            # Paso 3: Configurar Unity y compilar
+            md = "## Paso 3: Configurar Unity y Compilar\n\n"
+            md += "### Registrar en Unity\n\n"
+            md += "Editar `Tailored.ICBanking.AppServer.Api/UnityConfiguration.config`:\n\n"
+            md += "```xml\n"
+            md += "<unity xmlns=\"http://schemas.microsoft.com/practices/2010/unity\">\n"
+            md += "  <container>\n"
+            md += self._build_unity_registration(component_name)
+            md += "  </container>\n"
+            md += "</unity>\n"
+            md += "```\n\n"
+
+            md += "### Compilar y Validar\n\n"
+            md += "1. **Compilar el proyecto:** `dotnet build`\n"
+            md += "2. **Verificar errores de compilación**\n"
+            md += "3. **Probar que Unity resuelva correctamente** la inyección de dependencias\n\n"
+
+            return md
+
+        return ""
+
+    def _guidance_create_data_access_step(self, component_name: str, details: str, step: int) -> str:
+        """Guía por pasos para crear Data Access."""
+        if step == 1:
+            md = "## Paso 1: Crear Clase DataAccess\n\n"
+            md += self._guidance_create_data_access(component_name, details)
+            return md
+        elif step == 2:
+            md = "## Paso 2: Compilar y Validar\n\n"
+            md += "1. **Compilar:** `dotnet build`\n"
+            md += "2. **Verificar que no haya errores**\n"
+            return md
+        return ""
+
+    def _guidance_create_service_agent_step(self, component_name: str, details: str, step: int) -> str:
+        """Guía por pasos para crear Service Agent."""
+        if step == 1:
+            md = "## Paso 1: Crear ServiceAgent\n\n"
+            md += self._guidance_create_service_agent(component_name, details)
+            return md
+        elif step == 2:
+            md = "## Paso 2: Compilar y Validar\n\n"
+            md += "1. **Compilar:** `dotnet build`\n"
+            md += "2. **Verificar que no haya errores**\n"
+            return md
+        return ""
+
+    def _guidance_extend_api_step(self, layer: str, details: str, step: int) -> str:
+        """Guía por pasos para extender API."""
+        if step == 1:
+            md = "## Paso 1: Crear Controlador\n\n"
+            md += self._guidance_extend_api(layer, details)
+            return md
+        elif step == 2:
+            md = "## Paso 2: Compilar y Probar\n\n"
+            md += "1. **Compilar:** `dotnet build`\n"
+            md += "2. **Probar endpoint** con Postman o similar\n"
+            return md
+        return ""
+
+    def _guidance_configure_unity_step(self, component_name: str, layer: str, details: str, step: int) -> str:
+        """Guía para configurar Unity."""
+        if step == 1:
+            return self._guidance_configure_unity(component_name, layer, details)
+        return ""
+
+    def _guidance_add_method_override_step(self, component_name: str, details: str, step: int) -> str:
+        """Guía por pasos para override de método."""
+        if step == 1:
+            md = "## Paso 1: Verificar Método Virtual y Crear Override\n\n"
+            md += self._guidance_add_method_override(component_name, details)
+            return md
+        elif step == 2:
+            md = "## Paso 2: Compilar y Validar Override\n\n"
+            md += "### Compilar el Proyecto\n\n"
+            md += "```bash\n"
+            md += "dotnet build\n"
+            md += "```\n\n"
+            md += "### Verificar\n\n"
+            md += "1. ✅ **Sin errores de compilación**\n"
+            md += "2. ✅ **El método override tiene la firma correcta**\n"
+            md += "3. ✅ **La clase Extended compila correctamente**\n\n"
+            md += "⚠️ **IMPORTANTE:** Aún falta configurar Unity para que este override se use en runtime.\n\n"
+            return md
+        elif step == 3:
+            md = "## Paso 3: Configurar Unity y Compilar Final\n\n"
+            md += "### ⚠️ CRÍTICO: Registrar en Unity\n\n"
+            md += "**Sin esta configuración, tu override NUNCA se ejecutará** porque ICBanking seguirá usando la clase base.\n\n"
+            md += "Editar `Tailored.ICBanking.AppServer.Api/UnityConfiguration.config`:\n\n"
+            md += "```xml\n"
+            md += "<unity xmlns=\"http://schemas.microsoft.com/practices/2010/unity\">\n"
+            md += "  <container>\n"
+            md += self._build_unity_registration(component_name)
+            md += "  </container>\n"
+            md += "</unity>\n"
+            md += "```\n\n"
+            md += "### Compilación Final\n\n"
+            md += "```bash\n"
+            md += "dotnet build\n"
+            md += "```\n\n"
+            md += "### Verificación Final\n\n"
+            md += "1. ✅ **Compilación exitosa**\n"
+            md += "2. ✅ **Unity está configurado para usar tu clase Extended**\n"
+            md += "3. ✅ **El override se ejecutará en runtime**\n\n"
+            return md
+        return ""
+
+    def _guidance_create_new_component_step(self, component_name: str, layer: str, details: str, step: int) -> str:
+        """Guía por pasos para crear nuevo componente."""
+        if step == 1:
+            md = "## Paso 1: Crear Estructura\n\n"
+            md += self._guidance_create_new_component(component_name, layer, details)
+            return md
+        elif step == 2:
+            md = "## Paso 2: Configurar Referencias\n\n"
+            md += "Agrega las referencias necesarias en el .csproj\n"
+            return md
+        elif step == 3:
+            md = "## Paso 3: Registrar en Unity y Compilar\n\n"
+            md += "1. Configurar en `UnityConfiguration.config`\n"
+            md += "2. Compilar: `dotnet build`\n"
+            return md
+        return ""
 
     # ==================== MÉTODOS HELPER PARA CONSTRUIR CÓDIGO ====================
 

@@ -10,7 +10,7 @@ services:
       - MONGODB_PROJECTS_COLLECTION=projects
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=8081
-      - LOG_LEVEL=INFO
+      - LOG_LEVEL=DEBUG
       - CORS_ORIGINS=*
     networks:
       - grafo-network

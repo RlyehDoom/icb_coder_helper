@@ -17,7 +17,7 @@ services:
       - MONGODB_PROJECTS_COLLECTION=projects
 
       # Logging
-      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - LOG_LEVEL=${LOG_LEVEL:-DEBUG}
 
       # Python
       - PYTHONUNBUFFERED=1

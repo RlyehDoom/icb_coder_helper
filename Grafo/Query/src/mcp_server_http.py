@@ -10,6 +10,7 @@ Arquitectura Híbrida:
 """
 import asyncio
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import Dict, Any, Optional
 from fastapi import FastAPI
@@ -20,12 +21,21 @@ from .services import MongoDBService, GraphQueryService, get_mongodb_service
 from .mcp_tools import GraphMCPTools
 from .mcp_server import app as mcp_app, initialize_services, cleanup_services, create_session_tools
 
-# Configurar logging
+# Configurar logging desde variable de entorno
+LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
+log_level_map = {
+    'DEBUG': logging.DEBUG,
+    'INFO': logging.INFO,
+    'WARNING': logging.WARNING,
+    'ERROR': logging.ERROR,
+    'CRITICAL': logging.CRITICAL
+}
 logging.basicConfig(
-    level=logging.INFO,
+    level=log_level_map.get(LOG_LEVEL, logging.INFO),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+logger.info(f"📊 Log level configurado: {LOG_LEVEL}")
 
 # Almacenamiento de sesiones activas
 # Mapea session_id -> {"tools": GraphMCPTools, "version": str, "initialized": bool}
@@ -173,12 +183,42 @@ async def handle_messages(request: Request):
     """
     try:
         body = await request.json()
-        session_id = request.query_params.get("session_id", "default")
+
+        # Traza completa del body recibido (útil para debugging)
+        import json
+        logger.debug(f"📦 Body completo recibido:\n{json.dumps(body, indent=2, ensure_ascii=False)}")
+
         method = body.get("method", "")
         msg_id = body.get("id")
         params = body.get("params", {})
 
-        logger.info(f"📨 [{session_id}] Mensaje: {method}")
+        # Obtener session_id temporal del query param (generado durante GET /sse en modo SSE estándar)
+        # En modo streamableHttp (POST directo a /sse), NO habrá session_id en query param
+        session_id = request.query_params.get("session_id")
+
+        # ESTÁNDAR MCP: Durante initialize, el cliente envía clientState.sessionId (su ID real)
+        client_state = body.get("clientState", {})
+        client_session_id = client_state.get("sessionId") if client_state else None
+
+        # Si no hay session_id (modo streamableHttp o cliente sin SSE), generar uno basado en fingerprint
+        if not session_id:
+            import hashlib
+            client_ip = request.client.host if request.client else "unknown"
+            user_agent = request.headers.get("user-agent", "")
+            client_fingerprint = f"{client_ip}:{user_agent}"
+            session_id = hashlib.md5(client_fingerprint.encode()).hexdigest()[:8]
+
+            # Solo logear warning durante initialize si tampoco hay clientState
+            if method == "initialize" and not client_session_id:
+                logger.warning(f"⚠️ Initialize sin session_id ni clientState, generando: [{session_id}]")
+            elif method == "initialize":
+                logger.debug(f"🔍 Modo streamableHttp detectado, usando fingerprint: [{session_id}]")
+
+        # Logging con ambos IDs cuando están disponibles
+        if client_session_id:
+            logger.info(f"📨 [{session_id}|{client_session_id}] Mensaje: {method}")
+        else:
+            logger.info(f"📨 [{session_id}] Mensaje: {method}")
 
         # === INITIALIZE ===
         if method == "initialize":
@@ -189,17 +229,49 @@ async def handle_messages(request: Request):
             version = params.get("version") or request.query_params.get("version")
             client_info = params.get("clientInfo", {})
 
+            # Extraer info del cliente
+            client_name = client_info.get("name") if client_info else None
+            client_version = client_info.get("version") if client_info else None
+
             # Crear sesión con herramientas
             session_tools = await create_session_tools(version)
             active_sessions[session_id] = {
                 "tools": session_tools,
                 "version": version,
                 "initialized": True,
-                "client_info": client_info
+                "client_info": client_info,
+                "client_session_id": client_session_id  # Guardar el sessionId real del cliente (de clientState)
             }
 
-            logger.info(f"✅ [{session_id}] Sesión inicializada (versión: {version or 'default'})")
+            # Log con toda la información disponible
+            session_log = f"[{session_id}"
+            if client_session_id:
+                session_log += f"|{client_session_id}"
+            session_log += "]"
 
+            # Construir mensaje de log
+            log_msg = f"✅ {session_log} Sesión inicializada"
+            log_details = []
+
+            if version:
+                log_details.append(f"versión: {version}")
+            if client_name:
+                log_details.append(f"cliente: {client_name}")
+            if client_version:
+                log_details.append(f"v{client_version}")
+
+            if log_details:
+                log_msg += f" ({', '.join(log_details)})"
+
+            logger.info(log_msg)
+
+            # Log detallado de clientInfo si existe
+            if client_info:
+                logger.debug(f"🔍 {session_log} clientInfo completo: {client_info}")
+
+            # Capabilities: indicamos qué funcionalidades soporta este servidor MCP
+            # - tools: {} = Tenemos herramientas (6 tools: search_code, get_code_context, etc.)
+            # - logging: {} = Soportamos logging (generamos logs que el cliente puede consumir)
             return {
                 "jsonrpc": "2.0",
                 "id": msg_id,
@@ -210,7 +282,8 @@ async def handle_messages(request: Request):
                         "version": "1.0.0"
                     },
                     "capabilities": {
-                        "tools": {}
+                        "tools": {},      # Soportamos tools (herramientas MCP)
+                        "logging": {}     # Soportamos logging
                     }
                 }
             }
@@ -391,18 +464,24 @@ async def handle_sse(request: Request):
     # Si es POST, procesar como mensaje MCP (delegar a handle_messages)
     if request.method == "POST":
         # Cursor en modo streamableHttp envía POST directamente a /sse
-        # Procesamos igual que /messages/
+        # El sessionId vendrá en clientState del body (estándar MCP)
         logger.info(f"📨 POST recibido en /sse (modo streamableHttp)")
         return await handle_messages(request)
 
     # GET: Establecer conexión SSE
     from sse_starlette.sse import EventSourceResponse
     import asyncio
+    import uuid
 
     client_version = request.query_params.get("version")
     client_host = request.client.host
 
-    logger.info(f"📡 Nueva conexión SSE desde {client_host} (versión: {client_version or 'default'})")
+    # Generar session_id temporal para tracking interno
+    # El cliente lo usará en /messages/?session_id=xxx
+    # Durante initialize, guardaremos el clientState.sessionId real del cliente
+    temp_session_id = str(uuid.uuid4())[:8]
+
+    logger.info(f"📡 Nueva conexión SSE desde {client_host} [temp_session: {temp_session_id}] (versión: {client_version or 'default'})")
 
     async def event_generator():
         """
@@ -410,11 +489,12 @@ async def handle_sse(request: Request):
         Envía heartbeats cada 30 segundos.
         """
         try:
-            # Enviar evento endpoint con la URL donde enviar mensajes
-            # Importante: data debe ser solo la URL, no un objeto JSON
+            # Enviar evento endpoint con session_id temporal en la URL
+            # El cliente usará este session_id en todos sus requests
+            # Durante initialize, recibiremos el clientState.sessionId real
             yield {
                 "event": "endpoint",
-                "data": "/messages/",
+                "data": f"/messages/?session_id={temp_session_id}",
             }
 
             # Mantener conexión con heartbeats

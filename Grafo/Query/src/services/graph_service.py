@@ -140,14 +140,18 @@ class GraphQueryService:
             }
             
             doc = await projects_col.find_one({"ProjectId": project_id}, projection)
-            
+
             if not doc:
                 return None
-            
+
             # Convertir ObjectId a string para Pydantic
             if "_id" in doc:
                 doc["_id"] = str(doc["_id"])
-            
+
+            # Convertir ProcessingStateId de ObjectId a string si existe
+            if "ProcessingStateId" in doc and doc["ProcessingStateId"] is not None:
+                doc["ProcessingStateId"] = str(doc["ProcessingStateId"])
+
             return ProjectInfo(**doc)
             
         except Exception as e:
@@ -426,6 +430,9 @@ class GraphQueryService:
         """
         Obtiene contexto de código para asistir al MCP en generación/modificación de código.
         Esta es una consulta de alto nivel que combina múltiples búsquedas.
+
+        MEJORADO: Cuando se especifica className + methodName, busca primero el método
+        y valida que pertenezca a la clase correcta, evitando ambigüedades.
         """
         try:
             main_element = None
@@ -433,38 +440,119 @@ class GraphQueryService:
             edges = []
             project_info = None
             suggestions = []
-            
+
             # Estrategia 1: Búsqueda por className
             if request.className:
-                search_req = SearchNodesRequest(
-                    query=request.className,
-                    nodeType="Class" if not request.methodName else None,
-                    project=request.projectName,
-                    namespace=request.namespace,
-                    version=request.version,
-                    limit=5
-                )
-                nodes = await self.search_nodes(search_req)
-                
-                if nodes:
-                    main_element = nodes[0]
-                    
-                    # Si también busca un método, buscar dentro de la clase
-                    if request.methodName and main_element:
-                        # Buscar métodos relacionados
-                        related_req = GetRelatedNodesRequest(
-                            nodeId=main_element.Id,
-                            relationshipType="Contains",
-                            direction="outgoing"
+                # MEJORADO: Si busca método + clase, buscar el método primero
+                if request.methodName:
+                    logger.info(f"🔍 Buscando método '{request.methodName}' en clase '{request.className}'")
+
+                    # Buscar todos los métodos con ese nombre
+                    method_search_req = SearchNodesRequest(
+                        query=request.methodName,
+                        nodeType="Method",
+                        project=request.projectName,
+                        namespace=request.namespace,
+                        version=request.version,
+                        limit=20  # Aumentar límite para encontrar el correcto
+                    )
+                    method_nodes = await self.search_nodes(method_search_req)
+
+                    # Filtrar: encontrar el método que pertenece a la clase buscada
+                    # Estrategia: Extraer el nombre de la clase desde Id o FullName del método
+                    matching_methods = []
+                    for method in method_nodes:
+                        # Extraer nombre de clase del Id o FullName
+                        # Ejemplos de Id: "method:Infocorp.Banking.Communication.ProcessMessage"
+                        # Ejemplos de FullName: "Infocorp.Banking.Communication.ProcessMessage"
+
+                        containing_class_name = None
+
+                        # Opción 1: Extraer de FullName (más confiable)
+                        if method.FullName and "." in method.FullName:
+                            parts = method.FullName.split(".")
+                            # El penúltimo elemento suele ser la clase
+                            # FullName: "Infocorp.Banking.Communication.ProcessMessage"
+                            # Parts: ["Infocorp", "Banking", "Communication", "ProcessMessage"]
+                            # Clase: "Communication" (parts[-2])
+                            if len(parts) >= 2:
+                                containing_class_name = parts[-2]
+
+                        # Opción 2: Extraer de Id si FullName no funcionó
+                        if not containing_class_name and method.Id and "." in method.Id:
+                            # Remover prefijo "method:" si existe
+                            id_without_prefix = method.Id.split(":", 1)[-1]
+                            parts = id_without_prefix.split(".")
+                            if len(parts) >= 2:
+                                containing_class_name = parts[-2]
+
+                        # Verificar si el nombre de clase extraído coincide con el buscado
+                        if containing_class_name:
+                            is_match = request.className.lower() in containing_class_name.lower()
+                            is_exact = containing_class_name.lower() == request.className.lower()
+
+                            if is_match:
+                                matching_methods.append({
+                                    "method": method,
+                                    "class_name": containing_class_name,
+                                    "exact_match": is_exact
+                                })
+                                logger.info(f"✅ Encontrado: {containing_class_name}.{method.Name}")
+                        else:
+                            logger.debug(f"No se pudo extraer clase de método: {method.Name} (Id: {method.Id}, FullName: {method.FullName})")
+
+                    # Seleccionar el mejor match
+                    if matching_methods:
+                        # Priorizar exact match
+                        exact_matches = [m for m in matching_methods if m["exact_match"]]
+                        if exact_matches:
+                            main_element = exact_matches[0]["method"]
+                            logger.info(f"✅ Método exacto: {exact_matches[0]['class_name']}.{main_element.Name}")
+                        else:
+                            main_element = matching_methods[0]["method"]
+                            logger.warning(f"⚠️ Match parcial: {matching_methods[0]['class_name']}.{main_element.Name}")
+
+                        if len(matching_methods) > 1:
+                            logger.warning(f"⚠️ Múltiples coincidencias encontradas ({len(matching_methods)}). Usando la primera.")
+                            for i, m in enumerate(matching_methods):
+                                logger.warning(f"  {i+1}. {m['class_name']}.{m['method'].Name} en {m['method'].Namespace}")
+                    else:
+                        # Fallback: buscar la clase y luego sus métodos
+                        logger.warning(f"⚠️ No se encontró método '{request.methodName}' en clase '{request.className}'. Buscando clase...")
+                        class_search_req = SearchNodesRequest(
+                            query=request.className,
+                            nodeType="Class",
+                            project=request.projectName,
+                            namespace=request.namespace,
+                            version=request.version,
+                            limit=5
                         )
-                        related_result = await self.get_related_nodes(related_req)
-                        
-                        # Filtrar por nombre de método
-                        for node_dict in related_result.get("relatedNodes", []):
-                            node = GraphNode(**node_dict)
-                            if request.methodName.lower() in node.Name.lower() and node.Type == "Method":
-                                main_element = node
-                                break
+                        class_nodes = await self.search_nodes(class_search_req)
+
+                        if class_nodes:
+                            if len(class_nodes) > 1:
+                                logger.warning(f"⚠️ Múltiples clases '{request.className}' encontradas ({len(class_nodes)}). Usando la primera.")
+                            main_element = class_nodes[0]
+                            suggestions.append(f"⚠️ No se encontró el método '{request.methodName}' en la clase '{request.className}'. Retornando la clase.")
+
+                else:
+                    # Solo busca clase (sin método)
+                    search_req = SearchNodesRequest(
+                        query=request.className,
+                        nodeType="Class",
+                        project=request.projectName,
+                        namespace=request.namespace,
+                        version=request.version,
+                        limit=5
+                    )
+                    nodes = await self.search_nodes(search_req)
+
+                    if nodes:
+                        if len(nodes) > 1:
+                            logger.warning(f"⚠️ Múltiples clases '{request.className}' encontradas ({len(nodes)}). Usando la primera.")
+                            for i, n in enumerate(nodes):
+                                logger.warning(f"  {i+1}. {n.FullName} en {n.Namespace}")
+                        main_element = nodes[0]
             
             # Estrategia 2: Búsqueda por relativePath o absolutePath
             elif request.relativePath or request.absolutePath:

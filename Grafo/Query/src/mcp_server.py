@@ -6,6 +6,7 @@ que pueden ser consumidas por IDEs como Cursor o VSCode.
 """
 import asyncio
 import logging
+import os
 from mcp.server import Server
 from mcp.types import TextContent, Tool
 
@@ -13,12 +14,21 @@ from .config import validate_config, display_config
 from .services import MongoDBService, GraphQueryService, get_mongodb_service
 from .mcp_tools import GraphMCPTools
 
-# Configurar logging
+# Configurar logging desde variable de entorno
+LOG_LEVEL = os.getenv('LOG_LEVEL', 'INFO').upper()
+log_level_map = {
+    'DEBUG': logging.DEBUG,
+    'INFO': logging.INFO,
+    'WARNING': logging.WARNING,
+    'ERROR': logging.ERROR,
+    'CRITICAL': logging.CRITICAL
+}
 logging.basicConfig(
-    level=logging.INFO,
+    level=log_level_map.get(LOG_LEVEL, logging.INFO),
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+logger.info(f"📊 Log level configurado: {LOG_LEVEL}")
 
 # Servicios globales
 mongodb_service: MongoDBService = None

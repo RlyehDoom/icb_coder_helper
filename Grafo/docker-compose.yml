@@ -51,8 +51,7 @@ services:
     ports:
       - "${QUERY_SERVER_PORT:-8081}:${QUERY_SERVER_PORT:-8081}"
 
-    env_file:
-      - ./Query/.env
+    # Docker Compose carga automáticamente .env de la misma carpeta
 
     environment:
       # MongoDB Configuration (usa nombre del servicio en la red Docker)
@@ -95,8 +94,7 @@ services:
     ports:
       - "${MCP_SERVER_PORT:-8082}:${MCP_SERVER_PORT:-8082}"
 
-    env_file:
-      - ./Query/.env
+    # Docker Compose carga automáticamente .env de la misma carpeta
 
     environment:
       # MongoDB Configuration (usa nombre del servicio en la red Docker)

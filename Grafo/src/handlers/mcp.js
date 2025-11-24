@@ -406,28 +406,46 @@ export class MCPHandler {
 
     const spinner = ora('Removiendo contenedor e imagen...').start();
 
-    // Detener el servicio
-    await this.systemUtils.execute(
-      'docker-compose',
-      ['-f', this.composeFile, '-p', this.projectName, 'stop', this.serviceName],
-      { silent: true }
-    );
+    try {
+      // Detener el servicio (ignorar error si no existe)
+      try {
+        await this.systemUtils.execute(
+          'docker-compose',
+          ['-f', this.composeFile, '-p', this.projectName, 'stop', this.serviceName],
+          { silent: true }
+        );
+      } catch (e) {
+        // Ignorar si el servicio no está corriendo
+      }
 
-    // Remover el contenedor
-    await this.systemUtils.execute(
-      'docker-compose',
-      ['-f', this.composeFile, '-p', this.projectName, 'rm', '-f', this.serviceName],
-      { silent: true }
-    );
+      // Remover el contenedor (ignorar error si no existe)
+      try {
+        await this.systemUtils.execute(
+          'docker-compose',
+          ['-f', this.composeFile, '-p', this.projectName, 'rm', '-f', this.serviceName],
+          { silent: true }
+        );
+      } catch (e) {
+        // Ignorar si el contenedor no existe
+      }
 
-    // Remover la imagen
-    await this.systemUtils.execute(
-      'docker',
-      ['rmi', 'query-mcp-server'],
-      { silent: true }
-    );
+      // Remover la imagen (ignorar error si no existe)
+      try {
+        await this.systemUtils.execute(
+          'docker',
+          ['rmi', 'query-mcp-server'],
+          { silent: true }
+        );
+      } catch (e) {
+        // Ignorar si la imagen no existe
+      }
 
-    spinner.succeed('MCP Server limpiado');
-    console.log(chalk.gray('\n  Para volver a usar: grafo mcp build && grafo mcp start\n'));
+      spinner.succeed('MCP Server limpiado');
+      console.log(chalk.gray('\n  Para volver a usar: grafo mcp build && grafo mcp start\n'));
+    } catch (error) {
+      spinner.fail('Error al limpiar MCP Server');
+      console.error(chalk.red(`\n❌ Error: ${error.message}\n`));
+      throw error;
+    }
   }
 }

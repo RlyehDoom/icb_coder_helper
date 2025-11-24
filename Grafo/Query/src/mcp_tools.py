@@ -50,11 +50,18 @@ class GraphMCPTools:
                     "Busca UN SOLO elemento en el grafo de código BASE de ICBanking (NO incluye Tailored). "
                     "El grafo contiene SOLO el código base de ICBanking: métodos, clases, interfaces, propiedades y sus conexiones. "
                     "IMPORTANTE: El grafo NO contiene clases Extended de Tailored. Solo busca clases base de ICBanking. "
-                    "Usa esta herramienta para localizar componentes BASE que quieras extender en Tailored. "
-                    "Busca por nombre en todos los tipos de elementos (métodos, clases, interfaces, propiedades, campos). "
-                    "Para buscar 'el método X de la clase Y', primero busca el método X, "
-                    "luego usa get_code_context para ver su clase contenedora. "
-                    "NO combines múltiples nombres en una sola búsqueda. "
+                    "\n\n"
+                    "⚠️ IMPORTANTE: Para 'extender el método X de la clase Y', NO uses esta tool primero. "
+                    "Usa get_code_context con className='Y' y methodName='X' directamente. "
+                    "\n\n"
+                    "USA ESTA TOOL solo cuando:\n"
+                    "- Buscas múltiples elementos que coincidan con un nombre (exploración)\n"
+                    "- Quieres ver TODAS las clases/métodos con cierto nombre\n"
+                    "- Necesitas explorar el grafo sin conocer el contexto exacto\n"
+                    "\n"
+                    "Esta herramienta busca por nombre en todos los tipos de elementos (métodos, clases, interfaces, propiedades, campos). "
+                    "NO combines múltiples nombres en una sola búsqueda (ej: NO uses 'Communication ProcessMessage'). "
+                    "Si necesitas un componente específico, usa get_code_context en su lugar. "
                     "Retorna información detallada de cada elemento encontrado incluyendo ubicación, tipo y atributos."
                 ),
                 inputSchema={
@@ -95,31 +102,52 @@ class GraphMCPTools:
             Tool(
                 name="get_code_context",
                 description=(
+                    "✅ HERRAMIENTA PRINCIPAL para identificar componentes exactos antes de extender en Tailored. "
                     "Obtiene el contexto completo de un elemento del grafo de código BASE de ICBanking (NO incluye Tailored). "
                     "El grafo almacena SOLO el código base de ICBanking: herencias, implementaciones, "
                     "llamadas a métodos, usos de clases, y dependencias. "
                     "IMPORTANTE: El grafo NO contiene clases Extended de Tailored. Solo consulta clases base de ICBanking. "
+                    "\n\n"
+                    "🎯 FLUJO RECOMENDADO para 'Extender el método X de la clase Y':\n"
+                    "1. USA ESTA TOOL con className='Y' y methodName='X'\n"
+                    "2. La tool VALIDA que el método X pertenezca a la clase Y correcta\n"
+                    "3. Si hay múltiples clases 'Y', la tool encuentra la correcta automáticamente\n"
+                    "4. Retorna el método exacto + su contexto completo\n"
+                    "5. Usa este contexto para ejecutar tailored_guidance\n"
+                    "\n"
                     "Esta herramienta retorna: "
-                    "(1) Información completa del elemento BASE de ICBanking (clase, método, interfaz, etc.) "
+                    "(1) Información completa del elemento BASE identificado (método/clase validado) "
                     "(2) Todos los elementos relacionados BASE con sus conexiones en el grafo "
                     "(3) Relaciones de dependencia BASE - qué código base depende de este elemento "
                     "(4) Análisis de impacto BASE - el alcance de cambios en el código base. "
-                    "Usa esta herramienta para consultar información BASE de ICBanking necesaria para crear extensiones Tailored."
+                    "\n"
+                    "Usa esta herramienta ANTES de ejecutar tailored_guidance para garantizar que trabajas con el componente correcto."
                 ),
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "className": {
                             "type": "string",
-                            "description": "Nombre de la clase a consultar"
+                            "description": (
+                                "Nombre de la clase BASE de ICBanking a consultar. "
+                                "CRÍTICO: Si buscas 'extender método X de clase Y', especifica Y aquí. "
+                                "La tool validará automáticamente que el método pertenezca a esta clase."
+                            )
                         },
                         "methodName": {
                             "type": "string",
-                            "description": "Nombre del método (opcional)"
+                            "description": (
+                                "Nombre del método específico dentro de la clase. "
+                                "RECOMENDADO: Siempre especifica este parámetro cuando busques 'método X de clase Y'. "
+                                "La tool garantiza que retorna el método correcto dentro de la clase correcta."
+                            )
                         },
                         "namespace": {
                             "type": "string",
-                            "description": "Namespace completo (opcional)"
+                            "description": (
+                                "Namespace completo (opcional). "
+                                "Útil para desambiguar cuando hay múltiples clases con el mismo nombre."
+                            )
                         },
                         "project": {
                             "type": "string",
@@ -270,17 +298,32 @@ class GraphMCPTools:
             Tool(
                 name="get_tailored_guidance",
                 description=(
-                    "Obtiene guía especializada para trabajar en el proyecto Tailored de ICBanking. "
-                    "Tailored es un proyecto que hereda de ICBanking y usa Unity IoC para hacer overrides. "
-                    "Esta herramienta proporciona: "
-                    "(1) Patrones de extensibilidad - cómo extender clases/métodos de ICBanking en Tailored "
-                    "(2) Referencias necesarias - qué proyectos y assemblies agregar según la capa "
-                    "(3) Convenciones de nombres - patrones de nombres, namespaces y ubicación de archivos "
-                    "(4) Configuración de Unity - cómo registrar componentes en UnityConfiguration.config "
-                    "(5) Ejemplos de código - patrones reales de extensión según la tarea "
-                    "(6) Estructura de capas - organización de BusinessComponents, DataAccess, ServiceAgents, APIs. "
-                    "Usa esta tool cuando necesites guía sobre: crear componentes Tailored, extender clases ICBanking, "
-                    "configurar inyección de dependencias, entender la arquitectura en capas, o seguir convenciones del proyecto."
+                    "Obtiene guía especializada PASO POR PASO para trabajar en el proyecto Tailored de ICBanking. "
+                    "IMPORTANTE: Esta herramienta funciona por PASOS para evitar sobrecargar la AI con demasiado texto. "
+                    "\n\n"
+                    "⚠️ FLUJO CRÍTICO - Antes de usar esta tool:\n"
+                    "1. USA get_code_context PRIMERO para identificar el componente BASE exacto\n"
+                    "2. Valida que tienes el componente correcto (ej: método X de clase Y)\n"
+                    "3. LUEGO usa esta tool con los datos validados\n"
+                    "4. Esta tool genera código basándose en el componente identificado\n"
+                    "\n"
+                    "**Sistema de Pasos:**\n"
+                    "- step='overview' o step=0 → Muestra plan general y lista de pasos\n"
+                    "- step=1 → Ejecuta paso 1 de la tarea\n"
+                    "- step=2 → Ejecuta paso 2 de la tarea\n"
+                    "- etc.\n\n"
+                    "**Flujo recomendado:**\n"
+                    "1. Primero llama con step='overview' para ver el plan completo\n"
+                    "2. Luego llama con step=1 para empezar\n"
+                    "3. Completa cada paso antes de avanzar al siguiente\n"
+                    "4. Cada paso te indicará cómo llamar al siguiente\n\n"
+                    "**Contenido por tarea:**\n"
+                    "- Patrones de extensibilidad para ICBanking\n"
+                    "- Referencias necesarias por capa\n"
+                    "- Convenciones de nombres y ubicaciones\n"
+                    "- Configuración de Unity IoC\n"
+                    "- Ejemplos de código reales\n\n"
+                    "NO intentes hacer todo de una vez. Usa el sistema de pasos."
                 ),
                 inputSchema={
                     "type": "object",
@@ -319,6 +362,13 @@ class GraphMCPTools:
                         "details": {
                             "type": "string",
                             "description": "Detalles adicionales sobre la tarea (opcional)"
+                        },
+                        "step": {
+                            "description": "Paso a ejecutar: 'overview' para ver plan, 1 para paso 1, 2 para paso 2, etc. Default: 'overview'",
+                            "oneOf": [
+                                {"type": "string", "enum": ["overview"]},
+                                {"type": "integer", "minimum": 0, "maximum": 10}
+                            ]
                         }
                     },
                     "required": ["task_type"]
@@ -362,8 +412,18 @@ class GraphMCPTools:
 
     async def _search_code(self, args: Dict[str, Any]) -> str:
         """Busca código en el grafo."""
+        original_query = args["query"]
+
+        # Validar: si el query tiene múltiples términos, usar solo el primero
+        # Esto previene búsquedas como "Communication ProcessMessage"
+        query_parts = original_query.strip().split()
+        actual_query = query_parts[0] if query_parts else original_query
+
+        # Nota si se modificó la query
+        query_modified = len(query_parts) > 1
+
         request = SearchNodesRequest(
-            query=args["query"],
+            query=actual_query,
             nodeType=args.get("node_type"),
             project=args.get("project"),
             namespace=args.get("namespace"),
@@ -374,17 +434,28 @@ class GraphMCPTools:
         results = await self.graph_service.search_nodes(request)
 
         if not results:
-            return (
-                f"# Búsqueda en Grafo de Código BASE de ICBanking\n\n"
-                f"❌ No se encontraron resultados para: **{args['query']}**\n\n"
-                f"**Nota:** El grafo contiene SOLO el código base de ICBanking. "
-                f"Si buscas una clase Extended de Tailored, estas NO están en el grafo. "
-                f"Busca la clase base sin el sufijo 'Extended'."
-            )
+            msg = f"# Búsqueda en Grafo de Código BASE de ICBanking\n\n"
+            if query_modified:
+                msg += f"⚠️ **Query modificada:** Recibí `{original_query}` pero busqué solo `{actual_query}`\n\n"
+                msg += f"**Razón:** Esta herramienta busca UN SOLO elemento a la vez. Para buscar múltiples elementos (como clase + método), primero busca la clase, luego usa `get_code_context`.\n\n"
+            msg += f"❌ No se encontraron resultados para: **{actual_query}**\n\n"
+            msg += f"**Nota:** El grafo contiene SOLO el código base de ICBanking. "
+            msg += f"Si buscas una clase Extended de Tailored, estas NO están en el grafo. "
+            msg += f"Busca la clase base sin el sufijo 'Extended'."
+            return msg
 
         # Formatear resultados en Markdown
         md = f"# Búsqueda en Grafo de Código BASE de ICBanking\n\n"
-        md += f"**Búsqueda:** `{args['query']}`  \n"
+
+        # Advertencia si se modificó la query
+        if query_modified:
+            md += f"⚠️ **Query modificada:** Recibí `{original_query}` pero busqué solo `{actual_query}`\n\n"
+            md += f"**Razón:** Esta herramienta busca UN SOLO elemento a la vez. Para buscar múltiples elementos:\n"
+            md += f"1. Busca `{actual_query}` primero (esta búsqueda)\n"
+            md += f"2. Luego usa `get_code_context` para ver sus métodos/relaciones\n\n"
+            md += "---\n\n"
+
+        md += f"**Búsqueda:** `{actual_query}`  \n"
         md += f"**Resultados encontrados:** {len(results)}\n\n"
         md += "---\n\n"
 
