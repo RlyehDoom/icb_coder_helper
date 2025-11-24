@@ -19,12 +19,12 @@ Tailored.ICBanking.sln/
 └── 3_BusinessLayer/
     └── BusinessComponents/
         └── Tailored.ICBanking.BusinessComponents/
-{component_file_location}```
+{component_file_location}
+```
 
 ### 2. Patrón de Código
 
-```csharp
-{code_pattern}```
+{code_pattern}
 
 ### 3. Referencias Necesarias
 

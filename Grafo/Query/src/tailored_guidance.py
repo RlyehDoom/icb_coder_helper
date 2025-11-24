@@ -29,6 +29,49 @@ class TailoredGuidanceService:
             graph_service: Servicio de consultas del grafo para obtener información contextual
         """
         self.graph_service = graph_service
+        self.version = None  # Se establece en get_tailored_guidance
+
+    def _get_templates_dir(self) -> Path:
+        """
+        Obtiene el directorio de templates según la versión.
+
+        Mapeo de versiones a templates:
+        - 5.X, 6.X → v6 (NET Framework 4.5.2)
+        - 7.X, 8.X+ → v7 (NET 8)
+        - Sin versión → v7 (default)
+
+        Returns:
+            Path del directorio de templates
+        """
+        if self.version:
+            # Extraer major version
+            try:
+                major_version = int(self.version.split('.')[0])
+
+                # Versiones 5 y 6 usan templates v6 (NET Framework 4.5.2)
+                if major_version <= 6:
+                    target_dir = TEMPLATES_DIR / "v6"
+                    if target_dir.exists():
+                        return target_dir
+                    # Fallback a v7 si v6 no existe
+                    logger.warning(f"Templates v6 no encontrados, usando v7 como fallback")
+                    return TEMPLATES_DIR / "v7"
+
+                # Versiones 7 y 8+ usan templates v7 (NET 8)
+                else:
+                    target_dir = TEMPLATES_DIR / "v7"
+                    if target_dir.exists():
+                        return target_dir
+                    # Fallback a v6 si v7 no existe
+                    logger.warning(f"Templates v7 no encontrados, usando v6 como fallback")
+                    return TEMPLATES_DIR / "v6"
+
+            except (ValueError, IndexError):
+                logger.warning(f"No se pudo parsear versión '{self.version}', usando v7 default")
+                return TEMPLATES_DIR / "v7"
+
+        # Default: v7 (NET 8)
+        return TEMPLATES_DIR / "v7"
 
     def _load_template(self, template_name: str) -> str:
         """
@@ -43,16 +86,17 @@ class TailoredGuidanceService:
         Raises:
             FileNotFoundError: Si el template no existe
         """
-        template_path = TEMPLATES_DIR / f"{template_name}.md"
+        templates_dir = self._get_templates_dir()
+        template_path = templates_dir / f"{template_name}.md"
 
         if not template_path.exists():
             logger.error(f"Template no encontrado: {template_path}")
-            raise FileNotFoundError(f"Template '{template_name}' no encontrado en {TEMPLATES_DIR}")
+            raise FileNotFoundError(f"Template '{template_name}' no encontrado en {templates_dir}")
 
         try:
             with open(template_path, 'r', encoding='utf-8') as f:
                 content = f.read()
-            logger.debug(f"Template cargado exitosamente: {template_name}")
+            logger.debug(f"Template cargado exitosamente: {template_name} (versión: {self.version or 'default'})")
             return content
         except Exception as e:
             logger.error(f"Error al cargar template {template_name}: {e}")
@@ -60,7 +104,7 @@ class TailoredGuidanceService:
 
     def _load_code_snippet(self, snippet_name: str) -> str:
         """
-        Carga un code snippet desde templates/tailored_guidance/code_snippets/.
+        Carga un code snippet desde templates/tailored_guidance/<version>/code_snippets/.
 
         Args:
             snippet_name: Nombre del snippet (sin extensión .md)
@@ -71,7 +115,8 @@ class TailoredGuidanceService:
         Raises:
             FileNotFoundError: Si el snippet no existe
         """
-        snippet_path = TEMPLATES_DIR / "code_snippets" / f"{snippet_name}.md"
+        templates_dir = self._get_templates_dir()
+        snippet_path = templates_dir / "code_snippets" / f"{snippet_name}.md"
 
         if not snippet_path.exists():
             logger.error(f"Code snippet no encontrado: {snippet_path}")
@@ -80,7 +125,7 @@ class TailoredGuidanceService:
         try:
             with open(snippet_path, 'r', encoding='utf-8') as f:
                 content = f.read()
-            logger.debug(f"Code snippet cargado exitosamente: {snippet_name}")
+            logger.debug(f"Code snippet cargado exitosamente: {snippet_name} (versión: {self.version or 'default'})")
             return content
         except Exception as e:
             logger.error(f"Error al cargar code snippet {snippet_name}: {e}")
@@ -91,7 +136,7 @@ class TailoredGuidanceService:
         Genera guía especializada para trabajar en Tailored.
 
         Args:
-            args: Diccionario con task_type, component_name, layer, details
+            args: Diccionario con task_type, component_name, layer, details, version
 
         Returns:
             Guía completa en formato Markdown
@@ -100,14 +145,21 @@ class TailoredGuidanceService:
         component_name = args.get("component_name", "")
         layer = args.get("layer", "")
         details = args.get("details", "")
+        self.version = args.get("version", "")  # Establecer versión para este request
+
+        # Determinar framework version para mostrar en header
+        framework_version = ".NET Framework 4.5.2" if self.version and self.version.startswith("6.") else ".NET 8"
 
         # Header común
         md = "# 🎯 Guía Tailored - ICBanking\n\n"
         md += f"**Tarea:** `{task_type}`  \n"
+        md += f"**Framework:** `{framework_version}`  \n"
         if component_name:
             md += f"**Componente:** `{component_name}`  \n"
         if layer:
             md += f"**Capa:** `{layer}`  \n"
+        if self.version:
+            md += f"**Versión del Proyecto:** `{self.version}`  \n"
         md += "\n---\n\n"
 
         # Generar contenido específico según el tipo de tarea
@@ -315,30 +367,59 @@ class TailoredGuidanceService:
     async def _build_inheritance_verification(self, component_name: str) -> str:
         """Construye información de verificación de herencia consultando el grafo."""
         try:
-            # Consultar el grafo para obtener contexto de la clase
+            # Las clases Extended solo existen en Tailored, no en el grafo base de ICBanking
+            # Si el nombre termina en "Extended", buscar la clase base sin ese sufijo
+            search_name = component_name
+            is_extended_class = component_name.endswith("Extended")
+
+            if is_extended_class:
+                search_name = component_name[:-8]  # Remover "Extended"
+                logger.info(f"Buscando clase base '{search_name}' para Extended class '{component_name}'")
+
+            # Consultar el grafo para obtener contexto de la clase base
             from .models import CodeContextRequest
 
             request = CodeContextRequest(
-                className=component_name,
+                className=search_name,
                 includeRelated=True,
-                maxDepth=2
+                maxDepth=2,
+                version=self.version
             )
 
             context = await self.graph_service.get_code_context(request)
 
             if not context.found or not context.mainElement:
                 # No se encontró en el grafo - instrucciones manuales
+                not_found_message = "**❌ Clase no encontrada en el grafo.**"
+
+                if is_extended_class:
+                    not_found_message += (
+                        f"\n\n**ℹ️ Nota:** Las clases Extended (como `{component_name}`) **solo existen en Tailored**, "
+                        f"no en el grafo de ICBanking. El grafo solo contiene la clase base `{search_name}` de ICBanking.\n\n"
+                        f"Para crear `{component_name}`, debes extender la clase `{search_name}` de ICBanking. "
+                        f"Busca manualmente en el código de ICBanking para verificar la herencia."
+                    )
+                else:
+                    not_found_message += " Debes verificar manualmente en ICBanking."
+
                 template = self._load_code_snippet("inheritance_verification")
                 return template.format(
                     component_name=component_name,
-                    actual_inheritance_info="**❌ Clase no encontrada en el grafo.** Debes verificar manualmente en ICBanking."
+                    actual_inheritance_info=not_found_message
                 )
 
             # Construir información de herencia desde el grafo
             elem = context.mainElement
             info_lines = []
 
-            info_lines.append(f"**✅ Clase encontrada en el grafo:**\n")
+            if is_extended_class:
+                info_lines.append(
+                    f"**ℹ️ Información de la clase base `{search_name}` de ICBanking:**\n\n"
+                    f"_(Las clases Extended solo existen en Tailored. El grafo muestra la clase base de ICBanking que debes extender.)_\n"
+                )
+            else:
+                info_lines.append(f"**✅ Clase encontrada en el grafo:**\n")
+
             info_lines.append(f"- **Proyecto:** `{elem.Project}`")
             info_lines.append(f"- **Namespace:** `{elem.Namespace}`")
             info_lines.append(f"- **Tipo:** `{elem.Type}`")
@@ -390,13 +471,19 @@ class TailoredGuidanceService:
     async def _build_csproj_verification(self, component_name: str) -> str:
         """Construye información para verificar referencias del .csproj."""
         try:
-            # Consultar el grafo para obtener el proyecto que contiene la clase
+            # Las clases Extended solo existen en Tailored, buscar la clase base
+            search_name = component_name
+            if component_name.endswith("Extended"):
+                search_name = component_name[:-8]  # Remover "Extended"
+
+            # Consultar el grafo para obtener el proyecto que contiene la clase base
             from .models import CodeContextRequest
 
             request = CodeContextRequest(
-                className=component_name,
+                className=search_name,
                 includeRelated=True,
-                maxDepth=1
+                maxDepth=1,
+                version=self.version
             )
 
             context = await self.graph_service.get_code_context(request)
@@ -454,7 +541,8 @@ class TailoredGuidanceService:
 
         if validation_file:
             try:
-                snippet_path = TEMPLATES_DIR / "validation_snippets" / f"{validation_file}.md"
+                templates_dir = self._get_templates_dir()
+                snippet_path = templates_dir / "validation_snippets" / f"{validation_file}.md"
                 if snippet_path.exists():
                     with open(snippet_path, 'r', encoding='utf-8') as f:
                         task_specific = f.read()

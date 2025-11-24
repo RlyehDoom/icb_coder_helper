@@ -23,14 +23,14 @@ export class MCPHandler {
    */
   displayMCPConfig() {
     console.log(chalk.cyan('\n📝 Configuración para Cursor/VSCode:\n'));
-    console.log(chalk.gray('  El servidor MCP está ejecutándose en HTTP/SSE en el puerto 8083.'));
+    console.log(chalk.gray('  El servidor MCP está ejecutándose en HTTP/SSE en el puerto 8082.'));
     console.log(chalk.gray('  Múltiples clientes pueden conectarse simultáneamente.\n'));
     console.log(chalk.gray('  Copia este JSON en ~/.cursor/mcp.json (o %APPDATA%\\Cursor\\User\\mcp.json en Windows):\n'));
 
     const config = {
       mcpServers: {
         "grafo-query-http": {
-          url: "http://localhost:8083/sse",
+          url: "http://localhost:8082/sse",
           transport: "sse"
         }
       }
@@ -39,9 +39,9 @@ export class MCPHandler {
     console.log(chalk.white(JSON.stringify(config, null, 2)));
     console.log();
     console.log(chalk.cyan('  📡 Endpoints disponibles:'));
-    console.log(chalk.gray('    SSE:    http://localhost:8083/sse'));
-    console.log(chalk.gray('    Health: http://localhost:8083/health'));
-    console.log(chalk.gray('    Info:   http://localhost:8083/'));
+    console.log(chalk.gray('    SSE:    http://localhost:8082/sse'));
+    console.log(chalk.gray('    Health: http://localhost:8082/health'));
+    console.log(chalk.gray('    Info:   http://localhost:8082/'));
     console.log();
     console.log(chalk.gray('  💡 Nota: Múltiples clientes Cursor pueden usar el mismo servidor simultáneamente.'));
     console.log();

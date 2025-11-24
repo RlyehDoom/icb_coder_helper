@@ -10,7 +10,7 @@ namespace IndexerDb.Services
         Task<ProjectInfo?> GetProjectByIdAsync(string projectId);
         Task<IEnumerable<ProjectInfo>> GetProjectsBySourceFileAsync(string sourceFile);
         Task<IEnumerable<ProjectInfo>> GetAllProjectsAsync();
-        Task<ProcessingState?> GetProcessingStateAsync(string sourceFile);
+        Task<ProcessingState?> GetProcessingStateAsync(string sourceFile, string? version = null);
         Task<bool> SaveProcessingStateAsync(ProcessingState state);
         Task<IEnumerable<ProjectInfo>> SearchProjectsByNameAsync(string name);
         Task<IEnumerable<GraphNode>> SearchNodesByProjectAsync(string projectId);

@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(while read f)",
+      "Bash(do cp \"$f\" ../v6/\"$f\")",
+      "Bash(done)",
+      "Bash(for f in add_method_override configure_unity create_data_access create_new_component create_service_agent extend_api understand_architecture)",
+      "Bash(python:*)",
+      "Bash(iconv:*)",
+      "Bash(grafo mcp stop:*)",
+      "Bash(grafo mcp build:*)",
+      "Bash(grafo mcp start:*)",
+      "Bash(grafo mcp status:*)",
+      "Bash(curl:*)",
+      "Bash(grafo mcp logs:*)",
+      "Bash(docker ps:*)",
+      "Bash(docker logs:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

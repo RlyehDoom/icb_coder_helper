@@ -317,11 +317,30 @@ namespace IndexerDb.Services
             }
         }
 
-        public async Task<ProcessingState?> GetProcessingStateAsync(string sourceFile)
+        public async Task<ProcessingState?> GetProcessingStateAsync(string sourceFile, string? version = null)
         {
             try
             {
-                var filter = Builders<ProcessingState>.Filter.Eq(x => x.SourceFile, sourceFile);
+                // Build filter: SourceFile + Version (if specified)
+                // This allows multiple versions of the same file to coexist
+                FilterDefinition<ProcessingState> filter;
+
+                if (!string.IsNullOrEmpty(version))
+                {
+                    // Filter by both SourceFile AND Version
+                    var sourceFileFilter = Builders<ProcessingState>.Filter.Eq(x => x.SourceFile, sourceFile);
+                    var versionFilter = Builders<ProcessingState>.Filter.Eq(x => x.Version, version);
+                    filter = Builders<ProcessingState>.Filter.And(sourceFileFilter, versionFilter);
+
+                    _logger.LogDebug("Retrieving processing state for: {SourceFile} (version: {Version})", sourceFile, version);
+                }
+                else
+                {
+                    // Filter by SourceFile only (backward compatibility)
+                    filter = Builders<ProcessingState>.Filter.Eq(x => x.SourceFile, sourceFile);
+                    _logger.LogDebug("Retrieving processing state for: {SourceFile} (no version specified)", sourceFile);
+                }
+
                 return await _processingStateCollection.Find(filter).FirstOrDefaultAsync();
             }
             catch (Exception ex)
@@ -335,19 +354,46 @@ namespace IndexerDb.Services
         {
             try
             {
-                var filter = Builders<ProcessingState>.Filter.Eq(x => x.SourceFile, state.SourceFile);
+                // Build filter: SourceFile + Version (if specified)
+                // This allows multiple versions of the same file to coexist
+                FilterDefinition<ProcessingState> filter;
+
+                if (!string.IsNullOrEmpty(state.Version))
+                {
+                    // Filter by both SourceFile AND Version
+                    var sourceFileFilter = Builders<ProcessingState>.Filter.Eq(x => x.SourceFile, state.SourceFile);
+                    var versionFilter = Builders<ProcessingState>.Filter.Eq(x => x.Version, state.Version);
+                    filter = Builders<ProcessingState>.Filter.And(sourceFileFilter, versionFilter);
+
+                    _logger.LogDebug("Saving processing state for: {SourceFile} (version: {Version})", state.SourceFile, state.Version);
+                }
+                else
+                {
+                    // Filter by SourceFile only (backward compatibility)
+                    filter = Builders<ProcessingState>.Filter.Eq(x => x.SourceFile, state.SourceFile);
+                    _logger.LogDebug("Saving processing state for: {SourceFile} (no version specified)", state.SourceFile);
+                }
+
                 var existingState = await _processingStateCollection.Find(filter).FirstOrDefaultAsync();
 
                 if (existingState != null)
                 {
                     state.MongoId = existingState.MongoId;
                     await _processingStateCollection.ReplaceOneAsync(filter, state);
-                    _logger.LogDebug("Updated processing state for: {SourceFile}", state.SourceFile);
+
+                    if (!string.IsNullOrEmpty(state.Version))
+                        _logger.LogDebug("Updated processing state for: {SourceFile} (version: {Version})", state.SourceFile, state.Version);
+                    else
+                        _logger.LogDebug("Updated processing state for: {SourceFile}", state.SourceFile);
                 }
                 else
                 {
                     await _processingStateCollection.InsertOneAsync(state);
-                    _logger.LogDebug("Created new processing state for: {SourceFile}", state.SourceFile);
+
+                    if (!string.IsNullOrEmpty(state.Version))
+                        _logger.LogDebug("Created new processing state for: {SourceFile} (version: {Version})", state.SourceFile, state.Version);
+                    else
+                        _logger.LogDebug("Created new processing state for: {SourceFile}", state.SourceFile);
                 }
 
                 return true;

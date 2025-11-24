@@ -7,16 +7,12 @@ Tailored.ICBanking.sln/
 └── 4_DataLayer/
     └── DataAccess/
         └── Tailored.ICBanking.DataAccess/
-{component_file_location}```
+{component_file_location}
+```
 
 ### 2. Patrón de Código
 
-```csharp
-using Infocorp.Framework.DataAccess;
-using IC.DataAccess;
-using Dapper;
-
-{code_pattern}```
+{code_pattern}
 
 ### 3. Referencias NuGet Necesarias
 

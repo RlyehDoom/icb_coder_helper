@@ -47,11 +47,12 @@ class GraphMCPTools:
             Tool(
                 name="search_code",
                 description=(
-                    "Busca UN SOLO elemento en el grafo de código fuente de ICBanking y Tailored. "
-                    "El grafo contiene métodos, clases, interfaces, propiedades y sus conexiones en los proyectos ICBanking/Tailored. "
-                    "Esta herramienta es la FUENTE DE INFORMACIÓN para localizar cualquier componente del código. "
+                    "Busca UN SOLO elemento en el grafo de código BASE de ICBanking (NO incluye Tailored). "
+                    "El grafo contiene SOLO el código base de ICBanking: métodos, clases, interfaces, propiedades y sus conexiones. "
+                    "IMPORTANTE: El grafo NO contiene clases Extended de Tailored. Solo busca clases base de ICBanking. "
+                    "Usa esta herramienta para localizar componentes BASE que quieras extender en Tailored. "
                     "Busca por nombre en todos los tipos de elementos (métodos, clases, interfaces, propiedades, campos). "
-                    "IMPORTANTE: Para buscar 'el método X de la clase Y', primero busca el método X, "
+                    "Para buscar 'el método X de la clase Y', primero busca el método X, "
                     "luego usa get_code_context para ver su clase contenedora. "
                     "NO combines múltiples nombres en una sola búsqueda. "
                     "Retorna información detallada de cada elemento encontrado incluyendo ubicación, tipo y atributos."
@@ -94,16 +95,16 @@ class GraphMCPTools:
             Tool(
                 name="get_code_context",
                 description=(
-                    "Obtiene el contexto completo de un elemento del grafo de código ICBanking/Tailored. "
-                    "El grafo almacena todas las conexiones entre componentes: herencias, implementaciones, "
+                    "Obtiene el contexto completo de un elemento del grafo de código BASE de ICBanking (NO incluye Tailored). "
+                    "El grafo almacena SOLO el código base de ICBanking: herencias, implementaciones, "
                     "llamadas a métodos, usos de clases, y dependencias. "
+                    "IMPORTANTE: El grafo NO contiene clases Extended de Tailored. Solo consulta clases base de ICBanking. "
                     "Esta herramienta retorna: "
-                    "(1) Información completa del elemento solicitado (clase, método, interfaz, etc.) "
-                    "(2) Todos los elementos relacionados con sus conexiones en el grafo "
-                    "(3) Relaciones de dependencia - qué código depende de este elemento y qué usa este elemento "
-                    "(4) Análisis de impacto - el alcance de cambios si se modifica este componente. "
-                    "Consulta el grafo de ICBanking/Tailored para responder preguntas sobre código, dependencias, "
-                    "relaciones entre componentes, impacto de cambios, arquitectura, y cualquier análisis del código fuente."
+                    "(1) Información completa del elemento BASE de ICBanking (clase, método, interfaz, etc.) "
+                    "(2) Todos los elementos relacionados BASE con sus conexiones en el grafo "
+                    "(3) Relaciones de dependencia BASE - qué código base depende de este elemento "
+                    "(4) Análisis de impacto BASE - el alcance de cambios en el código base. "
+                    "Usa esta herramienta para consultar información BASE de ICBanking necesaria para crear extensiones Tailored."
                 ),
                 inputSchema={
                     "type": "object",
@@ -141,10 +142,11 @@ class GraphMCPTools:
             Tool(
                 name="list_projects",
                 description=(
-                    "Lista todos los proyectos de ICBanking y Tailored indexados en el grafo de código fuente. "
-                    "El grafo contiene la estructura completa de los proyectos ICBanking/Tailored. "
-                    "Retorna información de cada proyecto: nombre, namespace, cantidad de nodos (clases, métodos, etc.) "
-                    "y cantidad de relaciones. Consulta el grafo para conocer qué proyectos están disponibles para análisis."
+                    "Lista todos los proyectos BASE de ICBanking indexados en el grafo (NO incluye Tailored). "
+                    "El grafo contiene SOLO la estructura del código base de ICBanking. "
+                    "IMPORTANTE: El grafo NO contiene proyectos de Tailored. Solo proyectos base de ICBanking. "
+                    "Retorna información de cada proyecto BASE: nombre, namespace, cantidad de nodos (clases, métodos, etc.) "
+                    "y cantidad de relaciones. Consulta el grafo para conocer qué proyectos base están disponibles."
                 ),
                 inputSchema={
                     "type": "object",
@@ -164,12 +166,12 @@ class GraphMCPTools:
             Tool(
                 name="get_project_structure",
                 description=(
-                    "Obtiene la estructura completa de un proyecto del grafo ICBanking/Tailored. "
-                    "El grafo contiene todos los elementos del proyecto organizados por tipo: "
+                    "Obtiene la estructura completa de un proyecto BASE de ICBanking del grafo (NO incluye Tailored). "
+                    "El grafo contiene SOLO proyectos base de ICBanking organizados por tipo: "
                     "clases, interfaces, métodos, propiedades, enums, structs. "
-                    "Retorna la arquitectura del proyecto con todos sus componentes agrupados por tipo, "
-                    "incluyendo namespaces y atributos. Consulta el grafo para entender la organización "
-                    "y composición de cualquier proyecto ICBanking/Tailored."
+                    "IMPORTANTE: El grafo NO contiene proyectos de Tailored. Solo proyectos base de ICBanking. "
+                    "Retorna la arquitectura del proyecto BASE con todos sus componentes agrupados por tipo, "
+                    "incluyendo namespaces y atributos. Usa para entender la estructura base antes de crear extensiones Tailored."
                 ),
                 inputSchema={
                     "type": "object",
@@ -189,12 +191,13 @@ class GraphMCPTools:
             Tool(
                 name="find_implementations",
                 description=(
-                    "Encuentra implementaciones y herencias en el grafo de código ICBanking/Tailored. "
-                    "El grafo contiene todas las relaciones de herencia e implementación entre clases e interfaces. "
-                    "Esta herramienta retorna todas las clases que implementan una interfaz o heredan de una clase base, "
-                    "mostrando la jerarquía completa almacenada en el grafo. "
-                    "Consulta el grafo para analizar impacto en jerarquías, entender polimorfismo, "
-                    "identificar todas las clases afectadas por cambios en interfaces o clases base de ICBanking/Tailored."
+                    "Encuentra implementaciones y herencias en el grafo de código BASE de ICBanking (NO incluye Tailored). "
+                    "El grafo contiene SOLO las relaciones base de ICBanking entre clases e interfaces. "
+                    "IMPORTANTE: El grafo NO contiene clases Extended de Tailored. Solo jerarquías base de ICBanking. "
+                    "Esta herramienta retorna todas las clases BASE que implementan una interfaz o heredan de una clase base, "
+                    "mostrando la jerarquía BASE almacenada en el grafo. "
+                    "Usa para analizar impacto en jerarquías BASE, entender polimorfismo base, "
+                    "identificar clases base afectadas por cambios en interfaces o clases base de ICBanking."
                 ),
                 inputSchema={
                     "type": "object",
@@ -214,17 +217,17 @@ class GraphMCPTools:
             Tool(
                 name="analyze_impact",
                 description=(
-                    "Genera un reporte de ANÁLISIS DE IMPACTO consultando el grafo de código ICBanking/Tailored. "
-                    "El grafo contiene todas las conexiones y dependencias entre componentes del código fuente. "
-                    "Esta herramienta analiza el grafo para generar un reporte completo que incluye: "
-                    "(1) Dependencias entrantes - qué componentes de ICBanking/Tailored dependen del elemento analizado "
-                    "(2) Dependencias salientes - qué otros componentes usa el elemento analizado "
-                    "(3) Impacto en herencias - implementaciones y clases derivadas que se verían afectadas "
-                    "(4) Proyectos impactados - lista de proyectos ICBanking/Tailored afectados por cambios "
-                    "(5) Nivel de impacto - evaluación HIGH/MEDIUM/LOW basada en las conexiones del grafo "
-                    "(6) Recomendaciones - sugerencias basadas en el análisis del grafo. "
-                    "Consulta el grafo para cualquier pregunta sobre impacto de cambios, dependencias, "
-                    "análisis de código, reportes, o alcance de modificaciones en ICBanking/Tailored."
+                    "Genera un reporte de ANÁLISIS DE IMPACTO consultando el grafo de código BASE de ICBanking (NO incluye Tailored). "
+                    "El grafo contiene SOLO las conexiones y dependencias del código base de ICBanking. "
+                    "IMPORTANTE: El grafo NO contiene código Tailored. Solo analiza impacto en código base ICBanking. "
+                    "Esta herramienta analiza el grafo BASE para generar un reporte que incluye: "
+                    "(1) Dependencias entrantes BASE - qué componentes base de ICBanking dependen del elemento "
+                    "(2) Dependencias salientes BASE - qué otros componentes base usa el elemento "
+                    "(3) Impacto en herencias BASE - implementaciones y clases derivadas BASE afectadas "
+                    "(4) Proyectos BASE impactados - lista de proyectos base de ICBanking afectados "
+                    "(5) Nivel de impacto BASE - evaluación HIGH/MEDIUM/LOW basada en conexiones base "
+                    "(6) Recomendaciones - sugerencias para el código base. "
+                    "Usa para analizar impacto de cambios en código BASE de ICBanking antes de crear extensiones Tailored."
                 ),
                 inputSchema={
                     "type": "object",
@@ -252,11 +255,12 @@ class GraphMCPTools:
             Tool(
                 name="get_statistics",
                 description=(
-                    "Obtiene estadísticas generales del grafo de código ICBanking/Tailored. "
-                    "El grafo contiene métricas sobre todos los proyectos indexados. "
-                    "Retorna: número total de proyectos, cantidad de nodos (clases, métodos, etc.), "
-                    "cantidad de relaciones/conexiones, distribución por tipos de elementos. "
-                    "Consulta el grafo para obtener una visión general del código indexado de ICBanking/Tailored."
+                    "Obtiene estadísticas generales del grafo de código BASE de ICBanking (NO incluye Tailored). "
+                    "El grafo contiene métricas SOLO sobre proyectos base de ICBanking indexados. "
+                    "IMPORTANTE: El grafo NO contiene proyectos Tailored. Solo estadísticas del código base ICBanking. "
+                    "Retorna: número total de proyectos BASE, cantidad de nodos base (clases, métodos, etc.), "
+                    "cantidad de relaciones/conexiones base, distribución por tipos de elementos base. "
+                    "Consulta el grafo para obtener una visión general del código base indexado de ICBanking."
                 ),
                 inputSchema={
                     "type": "object",
@@ -370,10 +374,16 @@ class GraphMCPTools:
         results = await self.graph_service.search_nodes(request)
 
         if not results:
-            return f"# Búsqueda en Grafo ICBanking/Tailored\n\n❌ No se encontraron resultados para: **{args['query']}**"
+            return (
+                f"# Búsqueda en Grafo de Código BASE de ICBanking\n\n"
+                f"❌ No se encontraron resultados para: **{args['query']}**\n\n"
+                f"**Nota:** El grafo contiene SOLO el código base de ICBanking. "
+                f"Si buscas una clase Extended de Tailored, estas NO están en el grafo. "
+                f"Busca la clase base sin el sufijo 'Extended'."
+            )
 
         # Formatear resultados en Markdown
-        md = f"# Búsqueda en Grafo ICBanking/Tailored\n\n"
+        md = f"# Búsqueda en Grafo de Código BASE de ICBanking\n\n"
         md += f"**Búsqueda:** `{args['query']}`  \n"
         md += f"**Resultados encontrados:** {len(results)}\n\n"
         md += "---\n\n"
@@ -384,8 +394,10 @@ class GraphMCPTools:
             md += f"- **Proyecto:** `{node.Project}`\n"
             md += f"- **Namespace:** `{node.Namespace}`\n"
 
-            if node.Location:
-                md += f"- **Ubicación:** `{node.Location}`\n"
+            if node.Location and isinstance(node.Location, dict):
+                relative_path = node.Location.get('RelativePath', node.Location.get('AbsolutePath', 'N/A'))
+                if relative_path and relative_path != 'N/A':
+                    md += f"- **Ubicación:** `{relative_path}`\n"
 
             if node.Attributes:
                 md += f"- **Atributos:**\n"
@@ -413,8 +425,13 @@ class GraphMCPTools:
         result = await self.graph_service.get_code_context(request)
 
         if not result.found:
-            md = f"# Contexto de Código - Grafo ICBanking/Tailored\n\n"
+            md = f"# Contexto de Código BASE de ICBanking\n\n"
             md += f"❌ **No se encontró:** `{args['className']}`\n\n"
+            md += (
+                f"**Nota:** El grafo contiene SOLO el código base de ICBanking. "
+                f"Si buscas una clase Extended de Tailored, estas NO están en el grafo. "
+                f"Busca la clase base sin el sufijo 'Extended'.\n\n"
+            )
 
             if result.suggestions:
                 md += "## Sugerencias\n\n"
@@ -424,7 +441,7 @@ class GraphMCPTools:
             return md
 
         # Formatear en Markdown
-        md = f"# Contexto de Código - Grafo ICBanking/Tailored\n\n"
+        md = f"# Contexto de Código BASE de ICBanking\n\n"
 
         # Elemento principal
         if result.mainElement:
@@ -434,8 +451,10 @@ class GraphMCPTools:
             md += f"- **Namespace:** `{elem.Namespace}`\n"
             md += f"- **Proyecto:** `{elem.Project}`\n"
 
-            if elem.Location:
-                md += f"- **Ubicación:** `{elem.Location}`\n"
+            if elem.Location and isinstance(elem.Location, dict):
+                relative_path = elem.Location.get('RelativePath', elem.Location.get('AbsolutePath', 'N/A'))
+                if relative_path and relative_path != 'N/A':
+                    md += f"- **Ubicación:** `{relative_path}`\n"
 
             if elem.Attributes:
                 md += f"- **Atributos:**\n"
@@ -527,10 +546,10 @@ class GraphMCPTools:
         results = await self.graph_service.search_projects(request)
 
         if not results:
-            return "# Proyectos ICBanking/Tailored en el Grafo\n\n❌ No se encontraron proyectos"
+            return "# Proyectos Código BASE de ICBanking en el Grafo\n\n❌ No se encontraron proyectos"
 
         # Formatear en Markdown
-        md = "# Proyectos ICBanking/Tailored en el Grafo\n\n"
+        md = "# Proyectos Código BASE de ICBanking en el Grafo\n\n"
         md += f"**Total de proyectos encontrados:** {len(results)}\n\n"
         md += "---\n\n"
 
@@ -564,7 +583,7 @@ class GraphMCPTools:
         nodes = await self.graph_service.get_nodes_by_project(project_id, node_type)
 
         if not nodes:
-            return f"# Estructura de Proyecto - Grafo ICBanking/Tailored\n\n❌ No se encontraron elementos en el proyecto: **`{project_id}`**"
+            return f"# Estructura de Proyecto - Grafo Código BASE de ICBanking\n\n❌ No se encontraron elementos en el proyecto: **`{project_id}`**"
 
         # Agrupar por tipo
         by_type = {}
@@ -575,7 +594,7 @@ class GraphMCPTools:
             by_type[node_type].append(node)
 
         # Formatear en Markdown
-        md = f"# Estructura de Proyecto - Grafo ICBanking/Tailored\n\n"
+        md = f"# Estructura de Proyecto - Grafo Código BASE de ICBanking\n\n"
         md += f"**Proyecto:** `{project_id}`  \n"
         md += f"**Total de elementos:** {len(nodes)}\n\n"
         md += "---\n\n"
@@ -619,7 +638,7 @@ class GraphMCPTools:
         all_results = await self.graph_service.search_nodes(search_request)
 
         if not all_results:
-            return f"# Implementaciones y Herencias - Grafo ICBanking/Tailored\n\n❌ No se encontró: **`{interface_name}`**"
+            return f"# Implementaciones y Herencias - Grafo Código BASE de ICBanking\n\n❌ No se encontró: **`{interface_name}`**"
 
         # Filtrar y priorizar: preferir Interface/Class sobre File
         # Ordenar por prioridad: Interface > Class > otros tipos
@@ -703,7 +722,7 @@ class GraphMCPTools:
                         })
 
         # Formatear en Markdown
-        md = f"# Implementaciones y Herencias - Grafo ICBanking/Tailored\n\n"
+        md = f"# Implementaciones y Herencias - Grafo Código BASE de ICBanking\n\n"
         md += f"## 🎯 Elemento Base\n\n"
         md += f"- **Nombre:** `{target.Name}`\n"
         md += f"- **Tipo:** `{target.Type}`\n"
@@ -763,7 +782,7 @@ class GraphMCPTools:
         md += f"- **Total de implementaciones/herencias:** {len(implementations)}\n"
         md += f"- **Relaciones totales analizadas:** {len(context.edges)}\n"
         md += f"- **Elementos relacionados:** {len(context.relatedElements)}\n\n"
-        md += f"**💡 Análisis de Impacto:** Modificar `{target.Name}` afectará a **{len(implementations)} elementos** en el grafo de ICBanking/Tailored."
+        md += f"**💡 Análisis de Impacto:** Modificar `{target.Name}` afectará a **{len(implementations)} elementos** en el grafo de Código BASE de ICBanking."
 
         return md
 
@@ -783,7 +802,7 @@ class GraphMCPTools:
         context = await self.graph_service.get_code_context(request)
 
         if not context.found:
-            md = f"# 📊 Análisis de Impacto - Grafo ICBanking/Tailored\n\n"
+            md = f"# 📊 Análisis de Impacto - Grafo Código BASE de ICBanking\n\n"
             md += f"❌ **No se encontró el elemento:** `{args['className']}`\n\n"
 
             if context.suggestions:
@@ -865,7 +884,7 @@ class GraphMCPTools:
             impact_level = "🟡 MEDIUM"
 
         # Formatear en Markdown
-        md = f"# 📊 Análisis de Impacto - Grafo ICBanking/Tailored\n\n"
+        md = f"# 📊 Análisis de Impacto - Grafo Código BASE de ICBanking\n\n"
 
         # Elemento analizado
         md += f"## 🎯 Elemento Analizado\n\n"
@@ -929,7 +948,7 @@ class GraphMCPTools:
 
         # Proyectos afectados
         if affected_projects:
-            md += f"## 📦 Proyectos ICBanking/Tailored Afectados ({len(affected_projects)})\n\n"
+            md += f"## 📦 Proyectos Código BASE de ICBanking Afectados ({len(affected_projects)})\n\n"
 
             for project in affected_projects:
                 md += f"- `{project}`\n"
@@ -965,7 +984,7 @@ class GraphMCPTools:
         stats = await self.graph_service.get_statistics()
 
         # Formatear en Markdown
-        md = "# 📊 Estadísticas del Grafo ICBanking/Tailored\n\n"
+        md = "# 📊 Estadísticas del Grafo Código BASE de ICBanking\n\n"
 
         if isinstance(stats, dict):
             # Información general
@@ -1007,5 +1026,8 @@ class GraphMCPTools:
         Genera guía especializada para trabajar en Tailored.
 
         Delega al servicio TailoredGuidanceService para toda la lógica.
+        Pasa la versión del grafo al servicio para generar guías apropiadas.
         """
-        return await self.tailored_guidance.get_tailored_guidance(args)
+        # Agregar versión del grafo a los argumentos
+        args_with_version = {**args, "version": self.default_version}
+        return await self.tailored_guidance.get_tailored_guidance(args_with_version)

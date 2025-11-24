@@ -49,7 +49,10 @@ services:
       dockerfile: Dockerfile
     container_name: grafo-query-service
     ports:
-      - "8081:8081"
+      - "${QUERY_SERVER_PORT:-8081}:${QUERY_SERVER_PORT:-8081}"
+
+    env_file:
+      - ./Query/.env
 
     environment:
       # MongoDB Configuration (usa nombre del servicio en la red Docker)
@@ -59,10 +62,10 @@ services:
 
       # Server Configuration
       - SERVER_HOST=0.0.0.0
-      - SERVER_PORT=8081
+      - SERVER_PORT=${QUERY_SERVER_PORT:-8081}
 
       # Logging
-      - LOG_LEVEL=INFO
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
 
       # CORS
       - CORS_ORIGINS=*
@@ -90,13 +93,19 @@ services:
       dockerfile: Dockerfile.mcp
     container_name: grafo-mcp-server
     ports:
-      - "8083:8082"
+      - "${MCP_SERVER_PORT:-8082}:${MCP_SERVER_PORT:-8082}"
+
+    env_file:
+      - ./Query/.env
 
     environment:
       # MongoDB Configuration (usa nombre del servicio en la red Docker)
       - MONGODB_CONNECTION_STRING=mongodb://mongodb:27019/
       - MONGODB_DATABASE=GraphDB
       - MONGODB_PROJECTS_COLLECTION=projects
+
+      # Server Configuration
+      - SERVER_PORT=${MCP_SERVER_PORT:-8082}
 
       # Logging
       - LOG_LEVEL=${LOG_LEVEL:-INFO}

@@ -55,7 +55,7 @@ namespace IndexerDb.Services
 
                 // Step 2: Check if file has changed
                 _logger.LogInformation("📋 Step 2/6: Checking for previous processing state...");
-                var previousState = await GetProcessingStateAsync(fileName);
+                var previousState = await GetProcessingStateAsync(fileName, version);
                 var hasFileChanged = previousState == null || previousState.FileHash != processingState.FileHash;
                 
                 if (!hasFileChanged)
@@ -106,7 +106,7 @@ namespace IndexerDb.Services
 
                 // Step 4: Extract projects
                 _logger.LogInformation("📋 Step 4/6: Extracting individual projects...");
-                var projects = await ExtractProjectsFromGraphAsync(graphDocument);
+                var projects = await ExtractProjectsFromGraphAsync(graphDocument, graphVersion);
                 processingState.TotalProjects = projects.Count;
 
                 _logger.LogInformation("✅ Extracted {ProjectCount} projects", projects.Count);
@@ -281,9 +281,9 @@ namespace IndexerDb.Services
             }
         }
 
-        public async Task<ProcessingState> GetProcessingStateAsync(string sourceFile)
+        public async Task<ProcessingState> GetProcessingStateAsync(string sourceFile, string? version = null)
         {
-            return await _projectDatabaseService.GetProcessingStateAsync(sourceFile) ?? new ProcessingState();
+            return await _projectDatabaseService.GetProcessingStateAsync(sourceFile, version) ?? new ProcessingState();
         }
 
         public async Task<bool> HasFileChangedAsync(string filePath)
@@ -295,16 +295,14 @@ namespace IndexerDb.Services
             return previousState == null || previousState.FileHash != currentHash;
         }
 
-        public async Task<List<ProjectInfo>> ExtractProjectsFromGraphAsync(GraphDocument graphDocument)
+        public async Task<List<ProjectInfo>> ExtractProjectsFromGraphAsync(GraphDocument graphDocument, string? version = null)
         {
             return await Task.Run(() =>
             {
                 var projects = new Dictionary<string, ProjectInfo>();
 
-                // Extract repository/version identifier from SourceDirectory
-                // Example: /Indexer/output/ICB7C_GraphFiles -> ICB7C
-                // Example: /Indexer/output/6_5_main_GraphFiles -> 6_5_main
-                var repoIdentifier = ExtractRepositoryIdentifier(graphDocument.SourceDirectory, graphDocument.SourceFile);
+                // Use explicit version parameter or fall back to graph document version
+                var effectiveVersion = version ?? graphDocument.Version;
 
                 // Group nodes by project
                 var projectNodes = graphDocument.Nodes
@@ -325,11 +323,10 @@ namespace IndexerDb.Services
                         .Where(e => nodeIds.Contains(e.Source) || nodeIds.Contains(e.Target))
                         .ToList();
 
-                    // IMPORTANT: Include repository identifier in ProjectId to support multiple versions
+                    // IMPORTANT: Include version in ProjectId to support multiple versions
                     // This prevents different versions of the same project from overwriting each other
-                    var projectId = string.IsNullOrEmpty(repoIdentifier)
-                        ? $"project:{projectName}"
-                        : $"project:{projectName}::{repoIdentifier}";
+                    // Format: project:{ProjectName}::{Version}
+                    var projectId = BuildProjectId(projectName, null, effectiveVersion);
 
                     var project = new ProjectInfo
                     {
@@ -343,7 +340,7 @@ namespace IndexerDb.Services
                         SourceFile = graphDocument.SourceFile,
                         SourceDirectory = graphDocument.SourceDirectory,
                         LastModified = graphDocument.ImportedAt,
-                        Version = graphDocument.Version // Preserve version if available
+                        Version = effectiveVersion // Use the effective version (explicit or from graph)
                     };
 
                     projects[project.ProjectId] = project;
@@ -354,49 +351,25 @@ namespace IndexerDb.Services
         }
 
         /// <summary>
-        /// Extracts a repository/version identifier from the source directory path.
+        /// Builds a unique ProjectId that includes version.
+        /// This ensures different versions of the same project don't overwrite each other.
+        ///
         /// Examples:
-        ///   /Indexer/output/ICB7C_GraphFiles -> ICB7C
-        ///   /Indexer/output/6_5_main_GraphFiles -> 6_5_main
-        ///   /Indexer/output/MyProject_GraphFiles -> MyProject
+        ///   BuildProjectId("Banking", null, "7.9.2") -> "project:Banking::7.9.2"
+        ///   BuildProjectId("Banking", null, null) -> "project:Banking"
         /// </summary>
-        private static string ExtractRepositoryIdentifier(string sourceDirectory, string sourceFile)
+        private static string BuildProjectId(string projectName, string? _unused, string? version)
         {
-            // Try to extract from directory name first
-            if (!string.IsNullOrEmpty(sourceDirectory))
-            {
-                var dirParts = sourceDirectory.Split('/', '\\');
-                var graphFilesDir = dirParts.LastOrDefault(p => p.EndsWith("_GraphFiles", StringComparison.OrdinalIgnoreCase));
+            var parts = new List<string> { "project", projectName };
 
-                if (!string.IsNullOrEmpty(graphFilesDir))
-                {
-                    // Remove _GraphFiles suffix
-                    return graphFilesDir.Substring(0, graphFilesDir.Length - "_GraphFiles".Length);
-                }
+            if (!string.IsNullOrEmpty(version))
+            {
+                parts.Add(version);
             }
 
-            // Fallback: try to extract from source file name
-            // Example: Infocorp.Banking-graph.json -> Infocorp.Banking
-            if (!string.IsNullOrEmpty(sourceFile))
-            {
-                var fileNameWithoutExtension = Path.GetFileNameWithoutExtension(sourceFile);
-                // Remove -graph, -symbols, or other suffixes
-                var baseName = fileNameWithoutExtension
-                    .Replace("-graph-structural", "")
-                    .Replace("-graph", "")
-                    .Replace("-symbols", "")
-                    .Replace("-stats", "");
-
-                if (!string.IsNullOrEmpty(baseName))
-                {
-                    return baseName;
-                }
-            }
-
-            // If we can't determine the identifier, return empty string
-            // This will fallback to the old behavior (project name only)
-            return string.Empty;
+            return string.Join("::", parts);
         }
+
 
         public async Task<string> CalculateProjectHashAsync(ProjectInfo project)
         {

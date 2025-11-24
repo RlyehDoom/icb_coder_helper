@@ -14,9 +14,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 if __name__ == "__main__":
-    # Leer puerto de variable de entorno, default a 9083 para producción
-    # (8082 está tomado en el servidor de producción)
-    port = int(os.getenv("SERVER_PORT", "9083"))
+    # Leer puerto de variable de entorno, default a 8082 (MCP Server)
+    port = int(os.getenv("SERVER_PORT", "8082"))
 
     print("🌐 Iniciando Grafo MCP Server HTTP...")
     print(f"📡 Puerto: {port}")

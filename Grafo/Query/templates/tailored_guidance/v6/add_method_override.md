@@ -6,7 +6,6 @@
 
 Primero, verifica en ICBanking que el método esté marcado como `virtual`:
 
-```csharp
 // En Infocorp.Accounts.BusinessComponents.Accounts
 public virtual GetAccountsOut GetAccounts(GetAccountsIn input)
 {{
@@ -19,14 +18,13 @@ public virtual GetAccountsOut GetAccounts(GetAccountsIn input)
 ### 2. Crear/Editar Clase Tailored
 
 {file_location}
-```csharp
-{code_pattern}```
+
+{code_pattern}
 
 ### 3. Patrones Comunes de Override
 
 #### 3.1 Agregar Validación Adicional
 
-```csharp
 public override void CreateAccount(CreateAccountIn input)
 {{
     // Validación específica de Tailored
@@ -42,7 +40,6 @@ public override void CreateAccount(CreateAccountIn input)
 
 #### 3.2 Modificar Resultado
 
-```csharp
 public override GetAccountsOut GetAccounts(GetAccountsIn input)
 {{
     // Llamar a ICBanking
@@ -60,7 +57,6 @@ public override GetAccountsOut GetAccounts(GetAccountsIn input)
 
 #### 3.3 Auditoría Personalizada
 
-```csharp
 public override void UpdateClient(UpdateClientIn input)
 {{
     // Auditoría pre-ejecución

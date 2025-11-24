@@ -7,15 +7,12 @@ Tailored.ICBanking.sln/
 └── 4_DataLayer/
     └── ServiceAgents/
         └── Tailored.ICBanking.ServiceAgents/
-{component_file_location}```
+{component_file_location}
+```
 
 ### 2. Patrón de Código
 
-```csharp
-using Infocorp.Backend.ServiceAgents.Framework;
-using Infocorp.Framework.Common.Interfaces;
-
-{code_pattern}```
+{code_pattern}
 
 ### 3. Referencias Necesarias
 
