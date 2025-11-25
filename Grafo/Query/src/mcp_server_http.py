@@ -37,6 +37,9 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 logger.info(f"📊 Log level configurado: {LOG_LEVEL}")
 
+# Variable global para rastrear el nivel de log actual
+current_log_level = LOG_LEVEL
+
 # Almacenamiento de sesiones activas
 # Mapea session_id -> {"tools": GraphMCPTools, "version": str, "initialized": bool}
 active_sessions: Dict[str, Dict[str, Any]] = {}
@@ -409,6 +412,58 @@ async def handle_messages(request: Request):
                         "hasMore": False
                     }
                 }
+            }
+
+        # === LOGGING/SETLEVEL ===
+        elif method == "logging/setLevel":
+            global current_log_level
+
+            # Obtener el nivel solicitado del parámetro 'level'
+            requested_level = params.get("level", "").upper()
+
+            # Validar que el nivel sea válido
+            if requested_level not in log_level_map:
+                valid_levels = list(log_level_map.keys())
+                logger.warning(f"⚠️ [{session_id}] Nivel de log inválido: {requested_level}")
+                return {
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "error": {
+                        "code": -32602,
+                        "message": f"Invalid log level: {requested_level}. Valid levels: {valid_levels}"
+                    }
+                }
+
+            # Obtener el valor numérico del nivel
+            new_level = log_level_map[requested_level]
+            old_level = current_log_level
+
+            # Actualizar el nivel de logging en todos los loggers relevantes
+            # 1. Root logger (afecta a todos los loggers que no tienen nivel propio)
+            logging.getLogger().setLevel(new_level)
+
+            # 2. Loggers específicos de nuestros módulos
+            for logger_name in [
+                __name__,                    # mcp_server_http
+                "src.mcp_server",            # mcp_server
+                "src.mcp_tools",             # mcp_tools
+                "src.services.mongodb_service",
+                "src.services.graph_query_service",
+                "uvicorn",                   # Servidor HTTP
+                "uvicorn.access",
+                "uvicorn.error",
+            ]:
+                logging.getLogger(logger_name).setLevel(new_level)
+
+            # Actualizar variable global
+            current_log_level = requested_level
+
+            logger.info(f"📊 [{session_id}] Nivel de log cambiado: {old_level} → {requested_level}")
+
+            return {
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {}
             }
 
         # === MÉTODO NO SOPORTADO ===
