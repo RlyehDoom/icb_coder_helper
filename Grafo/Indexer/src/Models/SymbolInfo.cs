@@ -19,6 +19,12 @@ namespace RoslynIndexer.Models
         public string Documentation { get; set; } = "";
         public string Signature { get; set; } = "";
         public string Namespace { get; set; } = "";
+
+        /// <summary>
+        /// For Method symbols: the full name of the containing class/interface.
+        /// Example: "Namespace.ClassName" for method "Namespace.ClassName.MethodName"
+        /// </summary>
+        public string? ContainingType { get; set; }
     }
 
     public class ParameterInfo

@@ -184,80 +184,161 @@ class GraphQueryService:
     # ============================================================================
     
     async def search_nodes(self, request: SearchNodesRequest) -> List[GraphNode]:
-        """Busca nodos en el grafo por criterios."""
+        """
+        Busca nodos en el grafo por criterios.
+
+        COMPORTAMIENTO MEJORADO:
+        - Primero busca matches EXACTOS (nombre exacto, case-insensitive)
+        - Si hay matches exactos, retorna SOLO esos (evita retornar ProcessMessageIn cuando busca ProcessMessage)
+        - Si NO hay matches exactos, usa búsqueda parcial (tipo LIKE)
+        """
         try:
             projects_col = self.mongodb.projects_collection
 
-            # Construir query para búsqueda dentro de arrays
-            match_conditions = []
-
-            # Filtro de texto en nombre (búsqueda amplia de UN SOLO término)
-            match_conditions.append({
-                "$or": [
-                    {"Nodes.Name": {"$regex": request.query, "$options": "i"}},
-                    {"Nodes.FullName": {"$regex": request.query, "$options": "i"}},
-                    {"Nodes.Id": {"$regex": request.query, "$options": "i"}}
-                ]
-            })
-
-            # Filtros adicionales
-            if request.nodeType:
-                match_conditions.append({"Nodes.Type": request.nodeType})
+            # Construir condiciones a nivel de documento (no del array Nodes)
+            doc_conditions = []
 
             if request.project:
-                match_conditions.append({"ProjectId": request.project})
-
-            if request.namespace:
-                match_conditions.append({"Nodes.Namespace": {"$regex": request.namespace, "$options": "i"}})
+                doc_conditions.append({"ProjectId": request.project})
 
             # Filter by version using ProcessingState relationship
+            processing_state_id = None
             if request.version:
                 states_col = self.mongodb.states_collection
                 state = await states_col.find_one({"Version": request.version})
                 if state:
-                    # Mantener como ObjectId para coincidir con el tipo en MongoDB
                     processing_state_id = state["_id"]
-                    match_conditions.append({"ProcessingStateId": processing_state_id})
+                    doc_conditions.append({"ProcessingStateId": processing_state_id})
                 else:
-                    # No processing state found for this version, return empty
                     logger.warning(f"No processing state found for version: {request.version}")
                     return []
 
-            # Pipeline de agregación para buscar dentro de arrays
-            pipeline = [
-                {"$match": {"$and": match_conditions} if len(match_conditions) > 1 else match_conditions[0]},
+            # Construir condiciones para el array Nodes (deben aplicar al MISMO elemento)
+            def build_node_conditions(name_condition: dict) -> dict:
+                """Construye condiciones $elemMatch para que apliquen al mismo nodo."""
+                node_conds = [name_condition]
+                if request.nodeType:
+                    node_conds.append({"Type": request.nodeType})
+                if request.namespace:
+                    node_conds.append({"Namespace": {"$regex": request.namespace, "$options": "i"}})
+
+                if len(node_conds) == 1:
+                    return {"Nodes": {"$elemMatch": node_conds[0]}}
+                return {"Nodes": {"$elemMatch": {"$and": node_conds}}}
+
+            # PASO 1: Intentar búsqueda EXACTA primero (solo por Name, case-insensitive)
+            exact_query = f"^{request.query}$"  # Regex para match exacto
+            exact_name_cond = {"Name": {"$regex": exact_query, "$options": "i"}}
+            exact_elem_match = build_node_conditions(exact_name_cond)
+
+            # Pipeline para búsqueda exacta
+            exact_doc_match = [exact_elem_match] + doc_conditions
+            exact_node_match = {"Name": {"$regex": exact_query, "$options": "i"}}
+            if request.nodeType:
+                exact_node_match["Type"] = request.nodeType
+            if request.namespace:
+                exact_node_match["Namespace"] = {"$regex": request.namespace, "$options": "i"}
+
+            exact_pipeline = [
+                {"$match": {"$and": exact_doc_match} if len(exact_doc_match) > 1 else exact_doc_match[0]},
                 {"$unwind": "$Nodes"},
-                {"$match": {
-                    "$and": [
-                        {
-                            "$or": [
-                                {"Nodes.Name": {"$regex": request.query, "$options": "i"}},
-                                {"Nodes.FullName": {"$regex": request.query, "$options": "i"}},
-                                {"Nodes.Id": {"$regex": request.query, "$options": "i"}}
-                            ]
-                        }
-                    ] + (
-                        [{"Nodes.Type": request.nodeType}] if request.nodeType else []
-                    ) + (
-                        [{"Nodes.Namespace": {"$regex": request.namespace, "$options": "i"}}] if request.namespace else []
-                    )
-                }},
+                {"$match": {"Nodes": {"$elemMatch": exact_node_match} if len(exact_node_match) > 1 else {f"Nodes.{k}": v for k, v in exact_node_match.items()}}},
                 {"$limit": request.limit},
                 {"$replaceRoot": {"newRoot": "$Nodes"}}
             ]
-            
+
+            # Corregir: después del $unwind, Nodes ya no es array, usar match directo
+            post_unwind_exact = {f"Nodes.{k}": v for k, v in exact_node_match.items()}
+            exact_pipeline = [
+                {"$match": {"$and": exact_doc_match} if len(exact_doc_match) > 1 else exact_doc_match[0]},
+                {"$unwind": "$Nodes"},
+                {"$match": post_unwind_exact},
+                {"$limit": request.limit},
+                {"$replaceRoot": {"newRoot": "$Nodes"}}
+            ]
+
+            exact_results = []
+            async for doc in projects_col.aggregate(exact_pipeline):
+                try:
+                    node = GraphNode(**doc)
+                    exact_results.append(node)
+                except Exception as e:
+                    logger.warning(f"Error parsing node (exact): {e}")
+                    continue
+
+            # Si encontramos matches exactos, retornamos SOLO esos
+            if exact_results:
+                logger.info(f"Found {len(exact_results)} EXACT matches for '{request.query}'")
+                return exact_results
+
+            # PASO 2: Si no hay matches exactos, hacer búsqueda parcial (tipo LIKE)
+            logger.info(f"No exact matches for '{request.query}', falling back to partial search")
+
+            # Para búsqueda parcial, buscar en Name, FullName, o Id
+            partial_name_cond = {
+                "$or": [
+                    {"Name": {"$regex": request.query, "$options": "i"}},
+                    {"FullName": {"$regex": request.query, "$options": "i"}},
+                    {"Id": {"$regex": request.query, "$options": "i"}}
+                ]
+            }
+
+            # Construir condiciones para partial search
+            partial_node_conds = [partial_name_cond]
+            if request.nodeType:
+                partial_node_conds.append({"Type": request.nodeType})
+            if request.namespace:
+                partial_node_conds.append({"Namespace": {"$regex": request.namespace, "$options": "i"}})
+
+            partial_elem_match = {"Nodes": {"$elemMatch": {"$and": partial_node_conds} if len(partial_node_conds) > 1 else partial_node_conds[0]}}
+            partial_doc_match = [partial_elem_match] + doc_conditions
+
+            # Post-unwind match para partial
+            post_unwind_partial = {}
+            post_unwind_partial["$or"] = [
+                {"Nodes.Name": {"$regex": request.query, "$options": "i"}},
+                {"Nodes.FullName": {"$regex": request.query, "$options": "i"}},
+                {"Nodes.Id": {"$regex": request.query, "$options": "i"}}
+            ]
+            if request.nodeType:
+                post_unwind_partial["Nodes.Type"] = request.nodeType
+            if request.namespace:
+                post_unwind_partial["Nodes.Namespace"] = {"$regex": request.namespace, "$options": "i"}
+
+            # Wrap conditions properly
+            if request.nodeType or request.namespace:
+                post_unwind_partial = {"$and": [
+                    {"$or": [
+                        {"Nodes.Name": {"$regex": request.query, "$options": "i"}},
+                        {"Nodes.FullName": {"$regex": request.query, "$options": "i"}},
+                        {"Nodes.Id": {"$regex": request.query, "$options": "i"}}
+                    ]}
+                ] + (
+                    [{"Nodes.Type": request.nodeType}] if request.nodeType else []
+                ) + (
+                    [{"Nodes.Namespace": {"$regex": request.namespace, "$options": "i"}}] if request.namespace else []
+                )}
+
+            partial_pipeline = [
+                {"$match": {"$and": partial_doc_match} if len(partial_doc_match) > 1 else partial_doc_match[0]},
+                {"$unwind": "$Nodes"},
+                {"$match": post_unwind_partial},
+                {"$limit": request.limit},
+                {"$replaceRoot": {"newRoot": "$Nodes"}}
+            ]
+
             results = []
-            async for doc in projects_col.aggregate(pipeline):
+            async for doc in projects_col.aggregate(partial_pipeline):
                 try:
                     node = GraphNode(**doc)
                     results.append(node)
                 except Exception as e:
-                    logger.warning(f"Error parsing node: {e}")
+                    logger.warning(f"Error parsing node (partial): {e}")
                     continue
-            
-            logger.info(f"Found {len(results)} nodes matching query")
+
+            logger.info(f"Found {len(results)} partial matches for '{request.query}'")
             return results
-            
+
         except Exception as e:
             logger.error(f"Error searching nodes: {e}")
             return []
@@ -431,8 +512,8 @@ class GraphQueryService:
         Obtiene contexto de código para asistir al MCP en generación/modificación de código.
         Esta es una consulta de alto nivel que combina múltiples búsquedas.
 
-        MEJORADO: Cuando se especifica className + methodName, busca primero el método
-        y valida que pertenezca a la clase correcta, evitando ambigüedades.
+        OPTIMIZADO v2: Usa el campo ContainingType para búsqueda directa de métodos por clase,
+        eliminando las heurísticas de namespace y reduciendo consultas.
         """
         try:
             main_element = None
@@ -443,82 +524,34 @@ class GraphQueryService:
 
             # Estrategia 1: Búsqueda por className
             if request.className:
-                # MEJORADO: Si busca método + clase, buscar el método primero
+                # Si busca método + clase, usar ContainingType para búsqueda directa
                 if request.methodName:
-                    logger.info(f"🔍 Buscando método '{request.methodName}' en clase '{request.className}'")
+                    logger.info(f"🔍 Buscando método '{request.methodName}' en clase '{request.className}' usando ContainingType")
 
-                    # Buscar todos los métodos con ese nombre
-                    method_search_req = SearchNodesRequest(
-                        query=request.methodName,
-                        nodeType="Method",
+                    # Búsqueda directa usando ContainingType (una sola consulta optimizada)
+                    method_result = await self._search_method_by_containing_type(
+                        method_name=request.methodName,
+                        class_name=request.className,
                         project=request.projectName,
                         namespace=request.namespace,
-                        version=request.version,
-                        limit=20  # Aumentar límite para encontrar el correcto
+                        version=request.version
                     )
-                    method_nodes = await self.search_nodes(method_search_req)
 
-                    # Filtrar: encontrar el método que pertenece a la clase buscada
-                    # Estrategia: Extraer el nombre de la clase desde Id o FullName del método
-                    matching_methods = []
-                    for method in method_nodes:
-                        # Extraer nombre de clase del Id o FullName
-                        # Ejemplos de Id: "method:Infocorp.Banking.Communication.ProcessMessage"
-                        # Ejemplos de FullName: "Infocorp.Banking.Communication.ProcessMessage"
+                    if method_result:
+                        main_element = method_result["class"]
+                        found_method = method_result["method"]
+                        logger.info(f"✅ Encontrado método '{found_method.Name}' en clase '{main_element.Name}' (ContainingType: {found_method.ContainingType})")
 
-                        containing_class_name = None
-
-                        # Opción 1: Extraer de FullName (más confiable)
-                        if method.FullName and "." in method.FullName:
-                            parts = method.FullName.split(".")
-                            # El penúltimo elemento suele ser la clase
-                            # FullName: "Infocorp.Banking.Communication.ProcessMessage"
-                            # Parts: ["Infocorp", "Banking", "Communication", "ProcessMessage"]
-                            # Clase: "Communication" (parts[-2])
-                            if len(parts) >= 2:
-                                containing_class_name = parts[-2]
-
-                        # Opción 2: Extraer de Id si FullName no funcionó
-                        if not containing_class_name and method.Id and "." in method.Id:
-                            # Remover prefijo "method:" si existe
-                            id_without_prefix = method.Id.split(":", 1)[-1]
-                            parts = id_without_prefix.split(".")
-                            if len(parts) >= 2:
-                                containing_class_name = parts[-2]
-
-                        # Verificar si el nombre de clase extraído coincide con el buscado
-                        if containing_class_name:
-                            is_match = request.className.lower() in containing_class_name.lower()
-                            is_exact = containing_class_name.lower() == request.className.lower()
-
-                            if is_match:
-                                matching_methods.append({
-                                    "method": method,
-                                    "class_name": containing_class_name,
-                                    "exact_match": is_exact
-                                })
-                                logger.info(f"✅ Encontrado: {containing_class_name}.{method.Name}")
-                        else:
-                            logger.debug(f"No se pudo extraer clase de método: {method.Name} (Id: {method.Id}, FullName: {method.FullName})")
-
-                    # Seleccionar el mejor match
-                    if matching_methods:
-                        # Priorizar exact match
-                        exact_matches = [m for m in matching_methods if m["exact_match"]]
-                        if exact_matches:
-                            main_element = exact_matches[0]["method"]
-                            logger.info(f"✅ Método exacto: {exact_matches[0]['class_name']}.{main_element.Name}")
-                        else:
-                            main_element = matching_methods[0]["method"]
-                            logger.warning(f"⚠️ Match parcial: {matching_methods[0]['class_name']}.{main_element.Name}")
-
-                        if len(matching_methods) > 1:
-                            logger.warning(f"⚠️ Múltiples coincidencias encontradas ({len(matching_methods)}). Usando la primera.")
-                            for i, m in enumerate(matching_methods):
-                                logger.warning(f"  {i+1}. {m['class_name']}.{m['method'].Name} en {m['method'].Namespace}")
+                        if method_result.get("alternatives"):
+                            suggestions.append(f"ℹ️ Se encontraron {len(method_result['alternatives'])} coincidencias adicionales")
+                            for alt in method_result["alternatives"][:3]:
+                                alt_method = alt.get("method")
+                                if alt_method:
+                                    suggestions.append(f"  - {alt_method.Name} en {alt_method.ContainingType or 'N/A'} (proyecto: {alt.get('projectName', 'N/A')})")
                     else:
-                        # Fallback: buscar la clase y luego sus métodos
-                        logger.warning(f"⚠️ No se encontró método '{request.methodName}' en clase '{request.className}'. Buscando clase...")
+                        # Fallback: buscar solo la clase si no se encontró el método
+                        logger.warning(f"⚠️ No se encontró método '{request.methodName}' con ContainingType que coincida con '{request.className}'")
+
                         class_search_req = SearchNodesRequest(
                             query=request.className,
                             nodeType="Class",
@@ -527,13 +560,19 @@ class GraphQueryService:
                             version=request.version,
                             limit=5
                         )
-                        class_nodes = await self.search_nodes(class_search_req)
+                        class_candidates = await self.search_nodes(class_search_req)
 
-                        if class_nodes:
-                            if len(class_nodes) > 1:
-                                logger.warning(f"⚠️ Múltiples clases '{request.className}' encontradas ({len(class_nodes)}). Usando la primera.")
-                            main_element = class_nodes[0]
-                            suggestions.append(f"⚠️ No se encontró el método '{request.methodName}' en la clase '{request.className}'. Retornando la clase.")
+                        if class_candidates:
+                            main_element = class_candidates[0]
+                            suggestions.append(f"⚠️ Método '{request.methodName}' no encontrado en clase '{request.className}'")
+                            suggestions.append(f"Retornando clase: {main_element.FullName} (proyecto: {main_element.Project})")
+
+                            if len(class_candidates) > 1:
+                                suggestions.append(f"\nℹ️ Otras clases '{request.className}' encontradas:")
+                                for i, cls in enumerate(class_candidates[1:5], 2):
+                                    suggestions.append(f"  {i}. {cls.Namespace} (proyecto: {cls.Project})")
+                        else:
+                            suggestions.append(f"❌ No se encontró clase '{request.className}'")
 
                 else:
                     # Solo busca clase (sin método)
@@ -631,6 +670,17 @@ class GraphQueryService:
                 if project_id:
                     project = await self.get_project_by_id(project_id, include_graph=False)
                     if project:
+                        # Obtener Version desde ProcessingState si existe
+                        version = None
+                        if project.ProcessingStateId:
+                            try:
+                                states_col = self.mongodb.states_collection
+                                state = await states_col.find_one({"_id": project.ProcessingStateId})
+                                if state:
+                                    version = state.get("Version")
+                            except Exception as e:
+                                logger.debug(f"No se pudo obtener Version desde ProcessingState: {e}")
+
                         project_info = ProjectSummary(
                             MongoId=project.MongoId,
                             ProjectId=project.ProjectId,
@@ -640,7 +690,7 @@ class GraphQueryService:
                             EdgeCount=project.EdgeCount,
                             LastProcessed=project.LastProcessed,
                             SourceFile=project.SourceFile,
-                            Version=project.Version
+                            Version=version
                         )
                 
                 # Generar sugerencias basadas en el contexto
@@ -658,7 +708,144 @@ class GraphQueryService:
         except Exception as e:
             logger.error(f"Error getting code context: {e}")
             return CodeContextResponse(found=False, suggestions=[f"Error: {str(e)}"])
-    
+
+    async def _search_method_by_containing_type(
+        self,
+        method_name: str,
+        class_name: str,
+        project: Optional[str] = None,
+        namespace: Optional[str] = None,
+        version: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Busca un método usando el campo ContainingType para asociación directa con su clase.
+
+        Esta búsqueda es mucho más eficiente que la heurística anterior basada en namespaces
+        porque usa un campo indexado directamente en MongoDB.
+
+        Returns:
+            Dict con keys: 'method', 'class', 'alternatives' (si hay múltiples coincidencias)
+            None si no se encuentra el método
+        """
+        try:
+            projects_col = self.mongodb.projects_collection
+
+            # Construir condiciones de búsqueda
+            match_conditions = [
+                {"Nodes.Name": {"$regex": f"^{method_name}$", "$options": "i"}},
+                {"Nodes.Type": "Method"},
+                # ContainingType debe contener el nombre de la clase
+                {"Nodes.ContainingType": {"$regex": class_name, "$options": "i"}}
+            ]
+
+            # Filtro por proyecto si se especifica
+            if project:
+                match_conditions.append({"ProjectId": project})
+
+            # Filtro por versión usando ProcessingState
+            if version:
+                states_col = self.mongodb.states_collection
+                state = await states_col.find_one({"Version": version})
+                if state:
+                    match_conditions.append({"ProcessingStateId": state["_id"]})
+                else:
+                    logger.warning(f"No processing state found for version: {version}")
+                    return None
+
+            # Pipeline optimizado: busca métodos con ContainingType que coincida
+            pipeline = [
+                {"$match": {"$and": match_conditions}},
+                {"$unwind": "$Nodes"},
+                {"$match": {
+                    "$and": [
+                        {"Nodes.Name": {"$regex": f"^{method_name}$", "$options": "i"}},
+                        {"Nodes.Type": "Method"},
+                        {"Nodes.ContainingType": {"$regex": class_name, "$options": "i"}}
+                    ]
+                }},
+                {"$limit": 10},
+                {"$project": {
+                    "method": "$Nodes",
+                    "projectId": "$ProjectId",
+                    "projectName": "$ProjectName"
+                }}
+            ]
+
+            results = []
+            async for doc in projects_col.aggregate(pipeline):
+                try:
+                    method_node = GraphNode(**doc["method"])
+                    results.append({
+                        "method": method_node,
+                        "projectId": doc.get("projectId", ""),
+                        "projectName": doc.get("projectName", "")
+                    })
+                except Exception as e:
+                    logger.warning(f"Error parsing method node: {e}")
+                    continue
+
+            if not results:
+                logger.info(f"No se encontró método '{method_name}' con ContainingType que contenga '{class_name}'")
+                return None
+
+            logger.info(f"Encontrados {len(results)} método(s) '{method_name}' en clases que coinciden con '{class_name}'")
+
+            # Buscar la clase correspondiente al primer método encontrado
+            best_match = results[0]
+            containing_type = best_match["method"].ContainingType
+
+            if containing_type:
+                # Buscar la clase usando el ContainingType exacto
+                class_pipeline = [
+                    {"$unwind": "$Nodes"},
+                    {"$match": {
+                        "Nodes.FullName": containing_type,
+                        "Nodes.Type": {"$in": ["Class", "Interface"]}
+                    }},
+                    {"$limit": 1},
+                    {"$replaceRoot": {"newRoot": "$Nodes"}}
+                ]
+
+                class_node = None
+                async for doc in projects_col.aggregate(class_pipeline):
+                    try:
+                        class_node = GraphNode(**doc)
+                        break
+                    except Exception as e:
+                        logger.warning(f"Error parsing class node: {e}")
+
+                if class_node:
+                    return {
+                        "method": best_match["method"],
+                        "class": class_node,
+                        "alternatives": results[1:] if len(results) > 1 else None
+                    }
+                else:
+                    logger.warning(f"No se encontró clase con FullName='{containing_type}'")
+
+            # Fallback: retornar método sin clase asociada
+            # Crear un GraphNode sintético para la clase basándose en ContainingType
+            if containing_type:
+                synthetic_class = GraphNode(
+                    Id=f"component:{containing_type}",
+                    Name=containing_type.split(".")[-1] if "." in containing_type else containing_type,
+                    FullName=containing_type,
+                    Type="Class",
+                    Project=best_match.get("projectName", ""),
+                    Namespace=".".join(containing_type.split(".")[:-1]) if "." in containing_type else ""
+                )
+                return {
+                    "method": best_match["method"],
+                    "class": synthetic_class,
+                    "alternatives": results[1:] if len(results) > 1 else None
+                }
+
+            return None
+
+        except Exception as e:
+            logger.error(f"Error searching method by ContainingType: {e}")
+            return None
+
     def _generate_suggestions(
         self, 
         main_element: GraphNode, 

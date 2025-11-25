@@ -44,6 +44,13 @@ namespace RoslynIndexer.Models
         public bool IsSealed { get; set; }
         public GraphLocation? Location { get; set; }
         public GraphNodeAttributes Attributes { get; set; } = new();
+
+        /// <summary>
+        /// For Method nodes: the full name of the containing class/interface.
+        /// Enables direct lookup of methods by their parent type.
+        /// Example: "Namespace.ClassName" for method "Namespace.ClassName.MethodName"
+        /// </summary>
+        public string? ContainingType { get; set; }
     }
 
     public class GraphLocation

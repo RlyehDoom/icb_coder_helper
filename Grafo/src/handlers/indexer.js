@@ -46,7 +46,8 @@ export class IndexerHandler {
           if (trimmed && !trimmed.startsWith('#')) {
             const [key, ...valueParts] = trimmed.split('=');
             if (key && valueParts.length > 0) {
-              const value = valueParts.join('=').replace(/^["']|["']$/g, '');
+              // Trim value to remove \r from Windows line endings and whitespace
+              const value = valueParts.join('=').replace(/^["']|["']$/g, '').trim();
               process.env[key.trim()] = value;
             }
           }
@@ -510,34 +511,10 @@ export class IndexerHandler {
       let outputDir;
       const solutionName = path.basename(solutionPath, '.sln');
       
-      // Obtener directorio base de salida desde variables de entorno o usar default
-      const baseOutputDir = process.env.DEFAULT_OUTPUT_DIR || './analysis-output';
-      const resolvedBaseDir = path.isAbsolute(baseOutputDir) ? baseOutputDir : path.join(this.indexerDir, baseOutputDir);
-      
-      if (solutionPath.includes('/Repo/') || solutionPath.includes('\\Repo\\')) {
-        // Extraer el nombre del repositorio de la ruta
-        // La estructura es: .../Repo/Cloned/RepoName/...
-        const pathParts = solutionPath.split(path.sep);
-        const clonedIndex = pathParts.findIndex(part => part === 'Cloned');
-        
-        if (clonedIndex !== -1 && clonedIndex + 1 < pathParts.length) {
-          const repoName = pathParts[clonedIndex + 1];
-          // Usar directorio dinámico si está habilitado en .env
-          const useRepoName = process.env.USE_REPO_NAME_IN_OUTPUT !== 'false';
-          
-          if (useRepoName) {
-            // Usar el directorio base configurado + nombre del repo
-            outputDir = path.join(resolvedBaseDir, `${repoName}_GraphFiles`);
-            displayInfo(`Usando directorio de salida específico del repositorio: ${outputDir}`);
-          } else {
-            outputDir = resolvedBaseDir;
-          }
-        } else {
-          outputDir = path.resolve(options.output || resolvedBaseDir);
-        }
-      } else {
-        outputDir = path.resolve(options.output || resolvedBaseDir);
-      }
+      // Directorio de salida: siempre en Indexer/output (o el especificado por el usuario)
+      // El Indexer C# se encarga de agregar {repoName}_GraphFiles si USE_REPO_NAME_IN_OUTPUT está habilitado
+      const defaultOutputDir = path.join(this.indexerDir, 'output');
+      outputDir = path.resolve(options.output || defaultOutputDir);
       
       await this.systemUtils.ensureDir(outputDir);
 
@@ -599,7 +576,7 @@ export class IndexerHandler {
       if (result.success) {
         displayProgressEnd('Análisis completado exitosamente');
         displaySuccess(`Resultados guardados en: ${outputDir}`);
-        
+
         // Mostrar archivos generados
         const outputInfo = await this.systemUtils.getDirectoryInfo(outputDir);
         if (outputInfo.exists && outputInfo.fileCount > 0) {

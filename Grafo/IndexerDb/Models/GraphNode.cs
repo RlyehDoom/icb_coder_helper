@@ -39,5 +39,13 @@ namespace IndexerDb.Models
 
         [JsonProperty("Attributes")]
         public NodeAttributes Attributes { get; set; } = new NodeAttributes();
+
+        /// <summary>
+        /// For Method/Property/Field nodes: the full name of the containing class/interface.
+        /// Enables direct lookup of methods by their parent type.
+        /// Example: "Namespace.ClassName" for method "Namespace.ClassName.MethodName"
+        /// </summary>
+        [JsonProperty("ContainingType")]
+        public string? ContainingType { get; set; }
     }
 }

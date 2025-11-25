@@ -540,9 +540,16 @@ namespace RoslynIndexer.Services
                                 FullName = symbol.FullName,
                                 Type = symbol.Type,  // Preserve original type (Class, Interface, etc.)
                                 Project = symbol.Project,
-                                Namespace = GetNamespaceFromFullName(symbol.FullName),
+                                // Use symbol.Namespace directly (from SymbolInfo), fallback to extracting from FullName
+                                Namespace = !string.IsNullOrEmpty(symbol.Namespace)
+                                    ? symbol.Namespace
+                                    : GetNamespaceFromFullName(symbol.FullName),
                                 Accessibility = symbol.Accessibility,
                                 Location = CreateLocation(symbol.File, repositoryRoot, symbol.Line, symbol.Column),
+                                // Copy ContainingType for methods/properties/fields to enable direct class->method lookup
+                                ContainingType = !string.IsNullOrEmpty(symbol.ContainingType)
+                                    ? symbol.ContainingType
+                                    : InferContainingTypeFromSignature(symbol),
                                 Attributes = new GraphNodeAttributes
                                 {
                                     Group = "component",
@@ -851,6 +858,57 @@ namespace RoslynIndexer.Services
         {
             var lastDot = fullName.LastIndexOf('.');
             return lastDot > 0 ? fullName.Substring(0, lastDot) : "";
+        }
+
+        /// <summary>
+        /// Infers ContainingType from the Signature when semantic info is incomplete.
+        /// Example: Signature "ReturnType ClassName.MethodName(params)" -> ContainingType = "Namespace.ClassName"
+        /// </summary>
+        private string? InferContainingTypeFromSignature(SymbolInfo symbol)
+        {
+            // Only for methods, properties, fields
+            if (symbol.Type != "Method" && symbol.Type != "Property" && symbol.Type != "Field")
+                return null;
+
+            if (string.IsNullOrEmpty(symbol.Signature))
+                return null;
+
+            // Parse signature to extract class name
+            // Format: "ReturnType ClassName.MethodName(params)" or "Type ClassName.PropertyName"
+            var signature = symbol.Signature;
+
+            // Find the method/property name pattern: "ClassName.MemberName"
+            var methodNameWithClass = signature;
+
+            // Remove return type (everything before the first space that's followed by an identifier)
+            var spaceIndex = signature.IndexOf(' ');
+            if (spaceIndex > 0 && spaceIndex < signature.Length - 1)
+            {
+                methodNameWithClass = signature.Substring(spaceIndex + 1);
+            }
+
+            // Remove parameters (everything from '(' onwards)
+            var parenIndex = methodNameWithClass.IndexOf('(');
+            if (parenIndex > 0)
+            {
+                methodNameWithClass = methodNameWithClass.Substring(0, parenIndex);
+            }
+
+            // Now we should have "ClassName.MethodName" or just "MethodName"
+            var dotIndex = methodNameWithClass.LastIndexOf('.');
+            if (dotIndex > 0)
+            {
+                var className = methodNameWithClass.Substring(0, dotIndex);
+
+                // Combine with namespace if available
+                if (!string.IsNullOrEmpty(symbol.Namespace))
+                {
+                    return $"{symbol.Namespace}.{className}";
+                }
+                return className;
+            }
+
+            return null;
         }
 
         private List<GraphEdge> CreateUsageRelationships(

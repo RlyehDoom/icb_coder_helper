@@ -137,14 +137,14 @@ namespace RoslynIndexer.Walkers
         public override void VisitMethodDeclaration(MethodDeclarationSyntax node)
         {
             var previousMethod = _currentMethodFullName;
-            
+
             var symbol = _semanticModel.GetDeclaredSymbol(node);
             if (symbol != null)
             {
                 _currentMethodFullName = GetFullyQualifiedName(symbol);
-                
+
                 var symbolInfo = CreateSymbolInfo(node, symbol, "Method");
-                
+
                 // Add parameters with semantic information
                 symbolInfo.Parameters = symbol.Parameters
                     .Select(p => new ParameterInfo
@@ -397,13 +397,28 @@ namespace RoslynIndexer.Walkers
                 Namespace = symbol.ContainingNamespace?.ToDisplayString() ?? "Global"
             };
 
+            // For methods, properties, and fields: capture the containing type
+            // This enables direct lookup of methods by their parent class
+            if (symbolType == "Method" || symbolType == "Property" || symbolType == "Field")
+            {
+                if (symbol.ContainingType != null)
+                {
+                    symbolInfo.ContainingType = GetFullyQualifiedName(symbol.ContainingType);
+                }
+                else if (!string.IsNullOrEmpty(_currentTypeFullName))
+                {
+                    // Fallback to tracked current type
+                    symbolInfo.ContainingType = _currentTypeFullName;
+                }
+            }
+
             // Extract modifiers
             symbolInfo.Modifiers = new List<string>();
             if (symbol.IsStatic) symbolInfo.Modifiers.Add("static");
             if (symbol.IsAbstract) symbolInfo.Modifiers.Add("abstract");
             if (symbol.IsSealed) symbolInfo.Modifiers.Add("sealed");
             if (symbol.IsVirtual) symbolInfo.Modifiers.Add("virtual");
-            
+
             if (symbol is IMethodSymbol methodSymbol)
             {
                 if (methodSymbol.IsOverride) symbolInfo.Modifiers.Add("override");

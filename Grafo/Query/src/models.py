@@ -47,7 +47,11 @@ class GraphNode(BaseModel):
     IsSealed: bool = Field(default=False)
     Location: Optional[Dict[str, Any]] = None
     Attributes: Optional[Dict[str, Any]] = None
-    
+    ContainingType: Optional[str] = Field(
+        default=None,
+        description="Para Method/Property/Field: nombre completo del tipo contenedor (ej: 'Namespace.ClassName')"
+    )
+
     class Config:
         populate_by_name = True
         extra = "allow"  # Permitir campos adicionales

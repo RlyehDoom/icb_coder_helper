@@ -84,7 +84,7 @@ program
   .description('Gestionar el RoslynIndexer (C# Code Analysis Tool)')
   .argument('[action]', 'Acción a realizar: build, clean, test, analyze, run', 'help')
   .option('-s, --solution <path>', 'Ruta al archivo de solución (.sln)')
-  .option('-o, --output <path>', 'Directorio de salida', './analysis-output')
+  .option('-o, --output <path>', 'Directorio de salida (default: Indexer/output)')
   .option('-v, --verbose', 'Salida detallada')
   .option('--no-graph', 'Omitir generación de grafos')
   .option('--no-stats', 'Omitir generación de estadísticas')

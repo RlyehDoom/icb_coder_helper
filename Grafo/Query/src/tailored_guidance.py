@@ -530,10 +530,9 @@ class TailoredGuidanceService:
             md += "</unity>\n"
             md += "```\n\n"
 
-            md += "### Compilar y Validar\n\n"
-            md += "1. **Compilar el proyecto:** `dotnet build`\n"
-            md += "2. **Verificar errores de compilación**\n"
-            md += "3. **Probar que Unity resuelva correctamente** la inyección de dependencias\n\n"
+            # Agregar guía de compilación arquitectónica
+            md += self._build_compilation_guidance()
+            md += "\n"
 
             return md
 
@@ -547,8 +546,11 @@ class TailoredGuidanceService:
             return md
         elif step == 2:
             md = "## Paso 2: Compilar y Validar\n\n"
-            md += "1. **Compilar:** `dotnet build`\n"
-            md += "2. **Verificar que no haya errores**\n"
+
+            # Agregar guía de compilación arquitectónica
+            md += self._build_compilation_guidance()
+            md += "\n"
+
             return md
         return ""
 
@@ -560,8 +562,11 @@ class TailoredGuidanceService:
             return md
         elif step == 2:
             md = "## Paso 2: Compilar y Validar\n\n"
-            md += "1. **Compilar:** `dotnet build`\n"
-            md += "2. **Verificar que no haya errores**\n"
+
+            # Agregar guía de compilación arquitectónica
+            md += self._build_compilation_guidance()
+            md += "\n"
+
             return md
         return ""
 
@@ -573,15 +578,28 @@ class TailoredGuidanceService:
             return md
         elif step == 2:
             md = "## Paso 2: Compilar y Probar\n\n"
-            md += "1. **Compilar:** `dotnet build`\n"
-            md += "2. **Probar endpoint** con Postman o similar\n"
+
+            # Agregar guía de compilación arquitectónica
+            md += self._build_compilation_guidance()
+            md += "\n\n"
+
+            md += "### Probar Endpoint\n\n"
+            md += "Después de compilar exitosamente, **probar el endpoint** con Postman o similar.\n"
+
             return md
         return ""
 
     def _guidance_configure_unity_step(self, component_name: str, layer: str, details: str, step: int) -> str:
         """Guía para configurar Unity."""
         if step == 1:
-            return self._guidance_configure_unity(component_name, layer, details)
+            md = self._guidance_configure_unity(component_name, layer, details)
+            md += "\n\n"
+
+            # Agregar guía de compilación arquitectónica
+            md += self._build_compilation_guidance()
+            md += "\n"
+
+            return md
         return ""
 
     def _guidance_add_method_override_step(self, component_name: str, details: str, step: int) -> str:
@@ -614,14 +632,11 @@ class TailoredGuidanceService:
             md += "  </container>\n"
             md += "</unity>\n"
             md += "```\n\n"
-            md += "### Compilación Final\n\n"
-            md += "```bash\n"
-            md += "dotnet build\n"
-            md += "```\n\n"
-            md += "### Verificación Final\n\n"
-            md += "1. ✅ **Compilación exitosa**\n"
-            md += "2. ✅ **Unity está configurado para usar tu clase Extended**\n"
-            md += "3. ✅ **El override se ejecutará en runtime**\n\n"
+
+            # Agregar guía de compilación arquitectónica
+            md += self._build_compilation_guidance()
+            md += "\n"
+
             return md
         return ""
 
@@ -637,12 +652,70 @@ class TailoredGuidanceService:
             return md
         elif step == 3:
             md = "## Paso 3: Registrar en Unity y Compilar\n\n"
-            md += "1. Configurar en `UnityConfiguration.config`\n"
-            md += "2. Compilar: `dotnet build`\n"
+            md += "### Registrar en Unity\n\n"
+            md += "Configurar en `Tailored.ICBanking.AppServer.Api/UnityConfiguration.config`:\n\n"
+            md += "```xml\n"
+            md += "<unity xmlns=\"http://schemas.microsoft.com/practices/2010/unity\">\n"
+            md += "  <container>\n"
+            md += self._build_unity_registration(component_name)
+            md += "  </container>\n"
+            md += "</unity>\n"
+            md += "```\n\n"
+
+            # Agregar guía de compilación arquitectónica
+            md += self._build_compilation_guidance()
+            md += "\n"
+
             return md
         return ""
 
     # ==================== MÉTODOS HELPER PARA CONSTRUIR CÓDIGO ====================
+
+    def _build_compilation_guidance(self) -> str:
+        """
+        Carga la guía de compilación arquitectónica desde el template.
+
+        Esta guía es CRÍTICA porque ICBanking tiene dependencias en cascada:
+        - Modificar BusinessComponents → DEBE compilar ServiceHost y WebApi
+        - Modificar DataAccess → DEBE compilar BusinessComponents, ServiceHost, WebApi
+        - Modificar Cross-Cutting → DEBE compilar TODO
+
+        Returns:
+            Guía de compilación en formato Markdown
+        """
+        try:
+            compilation_template = self._load_template("compilation_steps")
+            return compilation_template
+        except FileNotFoundError:
+            # Fallback si no existe el template
+            logger.warning("Template compilation_steps.md no encontrado, usando fallback")
+            return """
+### ⚠️ IMPORTANTE: Compilación por Capas
+
+ICBanking/Tailored tiene **dependencias en cascada**. Cuando modificas un proyecto:
+
+**SIEMPRE compila ServiceHost y WebApi:**
+
+```bash
+# Compilar toda la solución
+cd /Tailored
+dotnet build Tailored.ICBanking.sln --configuration Debug
+
+# Compilar ServiceHost
+cd Tailored.ICBanking.AppServer.Api
+dotnet build --configuration Debug
+
+# Compilar WebApi
+cd Tailored.ICBanking.WebServer.Api
+dotnet build --configuration Debug
+```
+
+**Checklist:**
+- [ ] Tu proyecto compila sin errores
+- [ ] ServiceHost compila sin errores
+- [ ] WebApi compila sin errores
+- [ ] No hay warnings críticos
+"""
 
     def _build_business_component_code_pattern(self, component_name: str) -> str:
         """Construye el patrón de código para Business Component."""
