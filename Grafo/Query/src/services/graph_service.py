@@ -214,22 +214,29 @@ class GraphQueryService:
                     return []
 
             # Construir condiciones para el array Nodes (deben aplicar al MISMO elemento)
-            def build_node_conditions(name_condition: dict) -> dict:
+            def build_node_conditions(name_condition: dict, exact_namespace: bool = True) -> dict:
                 """Construye condiciones $elemMatch para que apliquen al mismo nodo."""
                 node_conds = [name_condition]
                 if request.nodeType:
                     node_conds.append({"Type": request.nodeType})
                 if request.namespace:
-                    node_conds.append({"Namespace": {"$regex": request.namespace, "$options": "i"}})
+                    if exact_namespace:
+                        # Búsqueda exacta: namespace termina con el valor o es exacto
+                        # Ej: "Geolocation" matchea "Infocorp.Banking.Geolocation" pero NO "GeolocationService"
+                        ns_exact = f"(^|\\.){request.namespace}$"
+                        node_conds.append({"Namespace": {"$regex": ns_exact, "$options": "i"}})
+                    else:
+                        # Búsqueda parcial
+                        node_conds.append({"Namespace": {"$regex": request.namespace, "$options": "i"}})
 
                 if len(node_conds) == 1:
                     return {"Nodes": {"$elemMatch": node_conds[0]}}
                 return {"Nodes": {"$elemMatch": {"$and": node_conds}}}
 
-            # PASO 1: Intentar búsqueda EXACTA primero (solo por Name, case-insensitive)
-            exact_query = f"^{request.query}$"  # Regex para match exacto
+            # PASO 1: Intentar búsqueda EXACTA primero (nombre exacto + namespace exacto)
+            exact_query = f"^{request.query}$"  # Regex para match exacto del nombre
             exact_name_cond = {"Name": {"$regex": exact_query, "$options": "i"}}
-            exact_elem_match = build_node_conditions(exact_name_cond)
+            exact_elem_match = build_node_conditions(exact_name_cond, exact_namespace=True)
 
             # Pipeline para búsqueda exacta
             exact_doc_match = [exact_elem_match] + doc_conditions
@@ -237,17 +244,11 @@ class GraphQueryService:
             if request.nodeType:
                 exact_node_match["Type"] = request.nodeType
             if request.namespace:
-                exact_node_match["Namespace"] = {"$regex": request.namespace, "$options": "i"}
+                # Namespace exacto: debe terminar con el valor (ej: ".Geolocation" o ser exacto)
+                ns_exact = f"(^|\\.){request.namespace}$"
+                exact_node_match["Namespace"] = {"$regex": ns_exact, "$options": "i"}
 
-            exact_pipeline = [
-                {"$match": {"$and": exact_doc_match} if len(exact_doc_match) > 1 else exact_doc_match[0]},
-                {"$unwind": "$Nodes"},
-                {"$match": {"Nodes": {"$elemMatch": exact_node_match} if len(exact_node_match) > 1 else {f"Nodes.{k}": v for k, v in exact_node_match.items()}}},
-                {"$limit": request.limit},
-                {"$replaceRoot": {"newRoot": "$Nodes"}}
-            ]
-
-            # Corregir: después del $unwind, Nodes ya no es array, usar match directo
+            # Después del $unwind, Nodes ya no es array, usar match directo
             post_unwind_exact = {f"Nodes.{k}": v for k, v in exact_node_match.items()}
             exact_pipeline = [
                 {"$match": {"$and": exact_doc_match} if len(exact_doc_match) > 1 else exact_doc_match[0]},

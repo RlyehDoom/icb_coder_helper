@@ -47,81 +47,74 @@ class GraphMCPTools:
             Tool(
                 name="search_code",
                 description=(
-                    "Busca UN SOLO elemento en el grafo de código BASE de ICBanking (NO incluye Tailored). "
-                    "El grafo contiene SOLO el código base de ICBanking: métodos, clases, interfaces, propiedades y sus conexiones. "
-                    "IMPORTANTE: El grafo NO contiene clases Extended de Tailored. Solo busca clases base de ICBanking. "
-                    "\n\n"
-                    "⚠️ IMPORTANTE: Para 'extender el método X de la clase Y', NO uses esta tool primero. "
-                    "Usa get_code_context con className='Y' y methodName='X' directamente. "
-                    "\n\n"
-                    "USA ESTA TOOL solo cuando:\n"
-                    "- Buscas múltiples elementos que coincidan con un nombre (exploración)\n"
-                    "- Quieres ver TODAS las clases/métodos con cierto nombre\n"
-                    "- Necesitas explorar el grafo sin conocer el contexto exacto\n"
-                    "\n"
-                    "Esta herramienta busca por nombre en todos los tipos de elementos (métodos, clases, interfaces, propiedades, campos). "
-                    "NO combines múltiples nombres en una sola búsqueda (ej: NO uses 'Communication ProcessMessage'). "
-                    "Si necesitas un componente específico, usa get_code_context en su lugar. "
-                    "Retorna información detallada de cada elemento encontrado incluyendo ubicación, tipo y atributos."
+                    "🔍 PRIMERA HERRAMIENTA A USAR - Ubica componentes en el grafo de código BASE de ICBanking.\n\n"
+                    "⚠️ REGLA OBLIGATORIA: Cuando trabajes en proyectos /ICBanking/* o /Tailored/*, "
+                    "SIEMPRE debes usar este MCP para consultar el grafo de código.\n\n"
+                    "USA ESTA TOOL PRIMERO para localizar el componente exacto que el usuario menciona. "
+                    "Retorna información precisa (Namespace, Proyecto) que necesitas para llamar a get_code_context.\n\n"
+                    "🎯 EJEMPLOS DE USO:\n"
+                    "- 'método UpdateState de clase Geolocation' → query='UpdateState', node_type='Method', class_name='Geolocation'\n"
+                    "- 'buscar clase Account en BusinessComponents' → query='Account', node_type='Class', namespace='BusinessComponents'\n"
+                    "- 'interfaz IAccountService' → query='IAccountService', node_type='Interface'\n\n"
+                    "IMPORTANTE: El grafo contiene SOLO código BASE de ICBanking, NO incluye clases Extended de Tailored."
                 ),
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": (
-                                "UN SOLO término de búsqueda (nombre de método, clase, interfaz, etc.). "
-                                "Para elementos relacionados (ej: 'método X de clase Y'), busca el método primero, "
-                                "luego usa get_code_context para obtener detalles de la clase contenedora. "
-                                "Ejemplos: 'ProcessUserPendingApproval', 'ApprovalScheme', 'GetCustomer'"
-                            )
+                            "description": "Nombre EXACTO del elemento a buscar. Ejemplos: 'UpdateState', 'Geolocation', 'IAccountService'"
                         },
                         "node_type": {
                             "type": "string",
-                            "description": (
-                                "OPCIONAL: Filtrar por tipo específico de nodo. "
-                                "SOLO usa este parámetro si necesitas filtrar resultados por tipo. "
-                                "Si buscas cualquier elemento (método, clase, etc.), NO especifiques este parámetro. "
-                                "Valores: Method (métodos/funciones), Class (clases), Interface, Property, Field, Enum, Struct"
-                            ),
+                            "description": "Tipo de elemento: Method (métodos), Class (clases), Interface (interfaces)",
                             "enum": ["Method", "Class", "Interface", "Property", "Field", "Enum", "Struct"]
+                        },
+                        "class_name": {
+                            "type": "string",
+                            "description": (
+                                "Nombre de la CLASE que contiene el método. "
+                                "SOLO usar cuando node_type='Method'. "
+                                "Ejemplo: Si buscan 'método X de clase Y', usar class_name='Y'"
+                            )
+                        },
+                        "namespace": {
+                            "type": "string",
+                            "description": (
+                                "Filtrar por NAMESPACE (ruta de paquetes). "
+                                "Usar para filtrar por capa o módulo. "
+                                "Ejemplos: 'BusinessComponents', 'DataAccess', 'Infocorp.Banking.BusinessComponents'"
+                            )
                         },
                         "project": {
                             "type": "string",
-                            "description": "Filtrar por proyecto específico"
+                            "description": "Nombre del proyecto específico si se conoce"
                         },
                         "limit": {
                             "type": "integer",
-                            "description": "Número máximo de resultados (default: 20)",
-                            "default": 20
+                            "description": "Máximo de resultados (default: 10)",
+                            "default": 10
                         }
                     },
-                    "required": ["query"]
+                    "required": ["query", "node_type"]
                 }
             ),
             Tool(
                 name="get_code_context",
                 description=(
-                    "✅ HERRAMIENTA PRINCIPAL para identificar componentes exactos antes de extender en Tailored. "
-                    "Obtiene el contexto completo de un elemento del grafo de código BASE de ICBanking (NO incluye Tailored). "
-                    "El grafo almacena SOLO el código base de ICBanking: herencias, implementaciones, "
-                    "llamadas a métodos, usos de clases, y dependencias. "
-                    "IMPORTANTE: El grafo NO contiene clases Extended de Tailored. Solo consulta clases base de ICBanking. "
-                    "\n\n"
-                    "🎯 FLUJO RECOMENDADO para 'Extender el método X de la clase Y':\n"
-                    "1. USA ESTA TOOL con className='Y' y methodName='X'\n"
-                    "2. La tool VALIDA que el método X pertenezca a la clase Y correcta\n"
-                    "3. Si hay múltiples clases 'Y', la tool encuentra la correcta automáticamente\n"
-                    "4. Retorna el método exacto + su contexto completo\n"
-                    "5. Usa este contexto para ejecutar tailored_guidance\n"
-                    "\n"
-                    "Esta herramienta retorna: "
-                    "(1) Información completa del elemento BASE identificado (método/clase validado) "
-                    "(2) Todos los elementos relacionados BASE con sus conexiones en el grafo "
-                    "(3) Relaciones de dependencia BASE - qué código base depende de este elemento "
-                    "(4) Análisis de impacto BASE - el alcance de cambios en el código base. "
-                    "\n"
-                    "Usa esta herramienta ANTES de ejecutar tailored_guidance para garantizar que trabajas con el componente correcto."
+                    "📋 SEGUNDA HERRAMIENTA - Obtiene contexto completo DESPUÉS de ubicar el componente con search_code.\n\n"
+                    "⚠️ REGLA OBLIGATORIA: Cuando trabajes en proyectos /ICBanking/* o /Tailored/*, "
+                    "SIEMPRE debes usar este MCP para consultar el grafo de código.\n\n"
+                    "USA ESTA TOOL DESPUÉS de search_code para obtener:\n"
+                    "- Información completa del elemento (herencias, implementaciones)\n"
+                    "- Elementos relacionados y sus conexiones\n"
+                    "- Dependencias (qué depende de este elemento)\n"
+                    "- Datos necesarios para tailored_guidance\n\n"
+                    "🎯 USA LOS DATOS DE search_code:\n"
+                    "- className: Usa el nombre de la clase del resultado de search_code\n"
+                    "- methodName: Si buscaste un método, usa su nombre aquí\n"
+                    "- namespace: Usa el Namespace exacto del resultado de search_code\n"
+                    "- project: Usa el Proyecto del resultado de search_code"
                 ),
                 inputSchema={
                     "type": "object",
@@ -129,29 +122,31 @@ class GraphMCPTools:
                         "className": {
                             "type": "string",
                             "description": (
-                                "Nombre de la clase BASE de ICBanking a consultar. "
-                                "CRÍTICO: Si buscas 'extender método X de clase Y', especifica Y aquí. "
-                                "La tool validará automáticamente que el método pertenezca a esta clase."
+                                "Nombre de la clase. "
+                                "Usa el valor del campo 'Name' si buscaste una Class, "
+                                "o extrae la clase del Namespace si buscaste un Method."
                             )
                         },
                         "methodName": {
                             "type": "string",
                             "description": (
-                                "Nombre del método específico dentro de la clase. "
-                                "RECOMENDADO: Siempre especifica este parámetro cuando busques 'método X de clase Y'. "
-                                "La tool garantiza que retorna el método correcto dentro de la clase correcta."
+                                "Nombre del método (si aplica). "
+                                "Usa el valor del campo 'Name' del resultado de search_code si buscaste un Method."
                             )
                         },
                         "namespace": {
                             "type": "string",
                             "description": (
-                                "Namespace completo (opcional). "
-                                "Útil para desambiguar cuando hay múltiples clases con el mismo nombre."
+                                "Namespace completo del resultado de search_code. "
+                                "IMPORTANTE: Usa el valor exacto para evitar ambigüedades."
                             )
                         },
                         "project": {
                             "type": "string",
-                            "description": "Proyecto específico (opcional)"
+                            "description": (
+                                "Proyecto del resultado de search_code. "
+                                "Usa el valor exacto del campo 'Proyecto' para precisión."
+                            )
                         },
                         "includeRelated": {
                             "type": "boolean",
@@ -170,22 +165,24 @@ class GraphMCPTools:
             Tool(
                 name="list_projects",
                 description=(
-                    "Lista todos los proyectos BASE de ICBanking indexados en el grafo (NO incluye Tailored). "
-                    "El grafo contiene SOLO la estructura del código base de ICBanking. "
-                    "IMPORTANTE: El grafo NO contiene proyectos de Tailored. Solo proyectos base de ICBanking. "
-                    "Retorna información de cada proyecto BASE: nombre, namespace, cantidad de nodos (clases, métodos, etc.) "
-                    "y cantidad de relaciones. Consulta el grafo para conocer qué proyectos base están disponibles."
+                    "📂 Lista proyectos BASE de ICBanking disponibles en el grafo.\n\n"
+                    "🎯 USAR CUANDO EL USUARIO PREGUNTE:\n"
+                    "- '¿Qué proyectos hay?', '¿Qué proyectos existen?'\n"
+                    "- 'Muéstrame los proyectos de BusinessComponents'\n"
+                    "- 'Lista de proyectos disponibles'\n"
+                    "- '¿Cuántos proyectos hay en el grafo?'\n\n"
+                    "Retorna: nombre, namespace, cantidad de clases/métodos por proyecto."
                 ),
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "Filtro opcional por nombre de proyecto"
+                            "description": "Filtro por nombre. Ejemplos: 'Account', 'BusinessComponents', 'Geolocation'"
                         },
                         "limit": {
                             "type": "integer",
-                            "description": "Número máximo de proyectos (default: 50)",
+                            "description": "Máximo de resultados (default: 50)",
                             "default": 50
                         }
                     }
@@ -194,23 +191,26 @@ class GraphMCPTools:
             Tool(
                 name="get_project_structure",
                 description=(
-                    "Obtiene la estructura completa de un proyecto BASE de ICBanking del grafo (NO incluye Tailored). "
-                    "El grafo contiene SOLO proyectos base de ICBanking organizados por tipo: "
-                    "clases, interfaces, métodos, propiedades, enums, structs. "
-                    "IMPORTANTE: El grafo NO contiene proyectos de Tailored. Solo proyectos base de ICBanking. "
-                    "Retorna la arquitectura del proyecto BASE con todos sus componentes agrupados por tipo, "
-                    "incluyendo namespaces y atributos. Usa para entender la estructura base antes de crear extensiones Tailored."
+                    "🏗️ Obtiene la estructura completa de un proyecto BASE (clases, interfaces, métodos).\n\n"
+                    "🎯 USAR CUANDO EL USUARIO PREGUNTE:\n"
+                    "- '¿Qué clases tiene el proyecto X?'\n"
+                    "- 'Estructura del proyecto Geolocation'\n"
+                    "- '¿Qué métodos hay en el proyecto Account?'\n"
+                    "- 'Muéstrame las interfaces del proyecto Communication'\n\n"
+                    "Retorna componentes agrupados por tipo (Class, Interface, Method, etc.).\n"
+                    "Útil para explorar un proyecto antes de extenderlo en Tailored."
                 ),
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "project_id": {
                             "type": "string",
-                            "description": "ID o nombre del proyecto"
+                            "description": "Nombre del proyecto. Ejemplos: 'BackOffice.BusinessComponents.Geolocation'"
                         },
                         "node_type": {
                             "type": "string",
-                            "description": "Filtrar por tipo de nodo (opcional)"
+                            "description": "Filtrar por tipo: Class, Interface, Method, Property",
+                            "enum": ["Class", "Interface", "Method", "Property", "Field", "Enum"]
                         }
                     },
                     "required": ["project_id"]
@@ -219,24 +219,26 @@ class GraphMCPTools:
             Tool(
                 name="find_implementations",
                 description=(
-                    "Encuentra implementaciones y herencias en el grafo de código BASE de ICBanking (NO incluye Tailored). "
-                    "El grafo contiene SOLO las relaciones base de ICBanking entre clases e interfaces. "
-                    "IMPORTANTE: El grafo NO contiene clases Extended de Tailored. Solo jerarquías base de ICBanking. "
-                    "Esta herramienta retorna todas las clases BASE que implementan una interfaz o heredan de una clase base, "
-                    "mostrando la jerarquía BASE almacenada en el grafo. "
-                    "Usa para analizar impacto en jerarquías BASE, entender polimorfismo base, "
-                    "identificar clases base afectadas por cambios en interfaces o clases base de ICBanking."
+                    "🔎 Encuentra TODAS las clases que implementan una interfaz o heredan de una clase.\n\n"
+                    "🎯 USAR CUANDO EL USUARIO PREGUNTE:\n"
+                    "- '¿Qué clases implementan IAccountService?'\n"
+                    "- '¿Quién hereda de BaseAccount?'\n"
+                    "- 'Implementaciones de la interfaz IGeolocation'\n"
+                    "- '¿Qué clases extienden CommunicationBase?'\n"
+                    "- 'Buscar todas las implementaciones de X'\n\n"
+                    "⚠️ MUY ÚTIL para entender jerarquías antes de extender en Tailored.\n"
+                    "Retorna lista de clases con su namespace y proyecto."
                 ),
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "interface_or_class": {
                             "type": "string",
-                            "description": "Nombre de la interfaz o clase base"
+                            "description": "Nombre de la interfaz (ej: 'IAccountService') o clase base (ej: 'BaseAccount')"
                         },
                         "namespace": {
                             "type": "string",
-                            "description": "Namespace (opcional)"
+                            "description": "Namespace para filtrar (opcional)"
                         }
                     },
                     "required": ["interface_or_class"]
@@ -245,17 +247,20 @@ class GraphMCPTools:
             Tool(
                 name="analyze_impact",
                 description=(
-                    "Genera un reporte de ANÁLISIS DE IMPACTO consultando el grafo de código BASE de ICBanking (NO incluye Tailored). "
-                    "El grafo contiene SOLO las conexiones y dependencias del código base de ICBanking. "
-                    "IMPORTANTE: El grafo NO contiene código Tailored. Solo analiza impacto en código base ICBanking. "
-                    "Esta herramienta analiza el grafo BASE para generar un reporte que incluye: "
-                    "(1) Dependencias entrantes BASE - qué componentes base de ICBanking dependen del elemento "
-                    "(2) Dependencias salientes BASE - qué otros componentes base usa el elemento "
-                    "(3) Impacto en herencias BASE - implementaciones y clases derivadas BASE afectadas "
-                    "(4) Proyectos BASE impactados - lista de proyectos base de ICBanking afectados "
-                    "(5) Nivel de impacto BASE - evaluación HIGH/MEDIUM/LOW basada en conexiones base "
-                    "(6) Recomendaciones - sugerencias para el código base. "
-                    "Usa para analizar impacto de cambios en código BASE de ICBanking antes de crear extensiones Tailored."
+                    "📊 Genera reporte de ANÁLISIS DE IMPACTO de cambios en el código BASE.\n\n"
+                    "🎯 USAR CUANDO EL USUARIO PREGUNTE:\n"
+                    "- '¿Qué impacto tiene modificar la clase X?'\n"
+                    "- 'Análisis de dependencias de Account'\n"
+                    "- '¿Qué se afecta si cambio este método?'\n"
+                    "- '¿Quién usa esta clase?'\n"
+                    "- 'Antes de modificar X, ¿qué debo considerar?'\n\n"
+                    "Retorna:\n"
+                    "- Dependencias entrantes (quién usa este componente)\n"
+                    "- Dependencias salientes (qué usa este componente)\n"
+                    "- Clases derivadas afectadas\n"
+                    "- Nivel de impacto: HIGH/MEDIUM/LOW\n"
+                    "- Recomendaciones\n\n"
+                    "⚠️ USAR ANTES de hacer cambios significativos en Tailored."
                 ),
                 inputSchema={
                     "type": "object",
@@ -266,15 +271,15 @@ class GraphMCPTools:
                         },
                         "methodName": {
                             "type": "string",
-                            "description": "Nombre del método (opcional, para análisis más específico)"
+                            "description": "Método específico (opcional, para análisis más detallado)"
                         },
                         "namespace": {
                             "type": "string",
-                            "description": "Namespace completo (opcional)"
+                            "description": "Namespace del resultado de search_code"
                         },
                         "project": {
                             "type": "string",
-                            "description": "Proyecto específico (opcional)"
+                            "description": "Proyecto del resultado de search_code"
                         }
                     },
                     "required": ["className"]
@@ -283,12 +288,14 @@ class GraphMCPTools:
             Tool(
                 name="get_statistics",
                 description=(
-                    "Obtiene estadísticas generales del grafo de código BASE de ICBanking (NO incluye Tailored). "
-                    "El grafo contiene métricas SOLO sobre proyectos base de ICBanking indexados. "
-                    "IMPORTANTE: El grafo NO contiene proyectos Tailored. Solo estadísticas del código base ICBanking. "
-                    "Retorna: número total de proyectos BASE, cantidad de nodos base (clases, métodos, etc.), "
-                    "cantidad de relaciones/conexiones base, distribución por tipos de elementos base. "
-                    "Consulta el grafo para obtener una visión general del código base indexado de ICBanking."
+                    "📈 Estadísticas generales del grafo de código BASE indexado.\n\n"
+                    "🎯 USAR CUANDO EL USUARIO PREGUNTE:\n"
+                    "- '¿Cuántas clases hay en total?'\n"
+                    "- 'Estadísticas del grafo'\n"
+                    "- '¿Cuántos proyectos están indexados?'\n"
+                    "- 'Resumen general del código base'\n"
+                    "- '¿Qué tan grande es el grafo?'\n\n"
+                    "Retorna: total de proyectos, clases, métodos, interfaces, relaciones."
                 ),
                 inputSchema={
                     "type": "object",
@@ -298,15 +305,15 @@ class GraphMCPTools:
             Tool(
                 name="get_tailored_guidance",
                 description=(
-                    "Obtiene guía especializada PASO POR PASO para trabajar en el proyecto Tailored de ICBanking. "
-                    "IMPORTANTE: Esta herramienta funciona por PASOS para evitar sobrecargar la AI con demasiado texto. "
-                    "\n\n"
-                    "⚠️ FLUJO CRÍTICO - Antes de usar esta tool:\n"
-                    "1. USA get_code_context PRIMERO para identificar el componente BASE exacto\n"
-                    "2. Valida que tienes el componente correcto (ej: método X de clase Y)\n"
-                    "3. LUEGO usa esta tool con los datos validados\n"
-                    "4. Esta tool genera código basándose en el componente identificado\n"
-                    "\n"
+                    "🎯 EXCLUSIVA PARA /Tailored/* - Guía para EXTENDER/CREAR/MODIFICAR código en el proyecto Tailored.\n\n"
+                    "⚠️ CUÁNDO USAR ESTA TOOL:\n"
+                    "- SOLO cuando el usuario pida extender, crear o modificar código en /Tailored/*\n"
+                    "- NO usar para consultas de código BASE en /ICBanking/*\n"
+                    "- NO usar solo para buscar o explorar código\n\n"
+                    "⚠️ FLUJO OBLIGATORIO antes de usar esta tool:\n"
+                    "1. USA search_code PRIMERO para ubicar el componente\n"
+                    "2. USA get_code_context para obtener contexto completo del componente BASE\n"
+                    "3. LUEGO usa esta tool con los datos validados para generar código Tailored\n\n"
                     "**Sistema de Pasos:**\n"
                     "- step='overview' o step=0 → Muestra plan general y lista de pasos\n"
                     "- step=1 → Ejecuta paso 1 de la tarea\n"
@@ -413,6 +420,30 @@ class GraphMCPTools:
     async def _search_code(self, args: Dict[str, Any]) -> str:
         """Busca código en el grafo."""
         original_query = args["query"]
+        node_type = args.get("node_type")
+
+        # Validar que node_type esté presente (es requerido)
+        if not node_type:
+            return (
+                "# Error en Búsqueda\n\n"
+                "❌ **Parámetro requerido faltante:** `node_type`\n\n"
+                "Esta herramienta requiere especificar el tipo de elemento a buscar.\n\n"
+                "**Tipos válidos:**\n"
+                "- `Method` - Métodos/funciones\n"
+                "- `Class` - Clases\n"
+                "- `Interface` - Interfaces\n"
+                "- `Property` - Propiedades\n"
+                "- `Field` - Campos\n"
+                "- `Enum` - Enumeraciones\n"
+                "- `Struct` - Estructuras\n\n"
+                "**Ejemplo de uso correcto:**\n"
+                "```json\n"
+                "{\n"
+                '  "query": "ProcessMessage",\n'
+                '  "node_type": "Method"\n'
+                "}\n"
+                "```"
+            )
 
         # Validar: si el query tiene múltiples términos, usar solo el primero
         # Esto previene búsquedas como "Communication ProcessMessage"
@@ -422,62 +453,222 @@ class GraphMCPTools:
         # Nota si se modificó la query
         query_modified = len(query_parts) > 1
 
+        # Obtener filtros
+        class_name_filter = args.get("class_name")
+        namespace_filter = args.get("namespace")
+
+        # Combinar class_name y namespace en un filtro de namespace compuesto
+        # class_name: busca donde el namespace TERMINA con el nombre de clase
+        # namespace: busca donde el namespace CONTIENE el valor
+        combined_namespace_filter = None
+        if class_name_filter and namespace_filter:
+            # Ambos: namespace debe contener namespace_filter Y terminar en class_name
+            combined_namespace_filter = f"{namespace_filter}.*{class_name_filter}"
+        elif class_name_filter:
+            # Solo class_name: namespace debe terminar en class_name
+            combined_namespace_filter = class_name_filter
+        elif namespace_filter:
+            # Solo namespace: namespace debe contener el valor
+            combined_namespace_filter = namespace_filter
+
         request = SearchNodesRequest(
             query=actual_query,
-            nodeType=args.get("node_type"),
+            nodeType=node_type,
             project=args.get("project"),
-            namespace=args.get("namespace"),
+            namespace=combined_namespace_filter,
             version=self.default_version,
-            limit=args.get("limit", 20)
+            limit=args.get("limit", 10)
         )
 
         results = await self.graph_service.search_nodes(request)
+
+        # Construir string de filtros aplicados
+        filters_applied = [f"Tipo: `{node_type}`"]
+        if class_name_filter:
+            filters_applied.append(f"Clase: `{class_name_filter}`")
+        if namespace_filter:
+            filters_applied.append(f"Namespace: `{namespace_filter}`")
+        if args.get("project"):
+            filters_applied.append(f"Proyecto: `{args.get('project')}`")
+        filters_str = " | ".join(filters_applied)
 
         if not results:
             msg = f"# Búsqueda en Grafo de Código BASE de ICBanking\n\n"
             if query_modified:
                 msg += f"⚠️ **Query modificada:** Recibí `{original_query}` pero busqué solo `{actual_query}`\n\n"
-                msg += f"**Razón:** Esta herramienta busca UN SOLO elemento a la vez. Para buscar múltiples elementos (como clase + método), primero busca la clase, luego usa `get_code_context`.\n\n"
             msg += f"❌ No se encontraron resultados para: **{actual_query}**\n\n"
+            msg += f"**Filtros aplicados:** {filters_str}\n\n"
             msg += f"**Nota:** El grafo contiene SOLO el código base de ICBanking. "
-            msg += f"Si buscas una clase Extended de Tailored, estas NO están en el grafo. "
-            msg += f"Busca la clase base sin el sufijo 'Extended'."
+            msg += f"Si buscas una clase Extended de Tailored, estas NO están en el grafo."
             return msg
 
-        # Formatear resultados en Markdown
-        md = f"# Búsqueda en Grafo de Código BASE de ICBanking\n\n"
+        # Consolidar resultados: agrupar clase + interfaz relacionadas
+        consolidated = self._consolidate_search_results(results, node_type)
 
-        # Advertencia si se modificó la query
+        # Detectar si los resultados son exactos o parciales
+        exact_matches = []
+        partial_matches = []
+        for item in consolidated:
+            node = item['primary']
+            # Verificar si el nombre es exacto (case-insensitive)
+            if node.Name.lower() == actual_query.lower():
+                exact_matches.append(item)
+            else:
+                partial_matches.append(item)
+
+        # Si hay matches exactos, mostrar solo esos
+        if exact_matches:
+            consolidated = exact_matches
+            is_partial = False
+        else:
+            is_partial = True
+
+        # Formatear resultados en Markdown
+        md = f"# 🔍 Resultados de Búsqueda\n\n"
+
         if query_modified:
             md += f"⚠️ **Query modificada:** Recibí `{original_query}` pero busqué solo `{actual_query}`\n\n"
-            md += f"**Razón:** Esta herramienta busca UN SOLO elemento a la vez. Para buscar múltiples elementos:\n"
-            md += f"1. Busca `{actual_query}` primero (esta búsqueda)\n"
-            md += f"2. Luego usa `get_code_context` para ver sus métodos/relaciones\n\n"
             md += "---\n\n"
 
-        md += f"**Búsqueda:** `{actual_query}`  \n"
-        md += f"**Resultados encontrados:** {len(results)}\n\n"
+        md += f"**Búsqueda:** `{actual_query}` | **Tipo:** `{node_type}`  \n"
+        if class_name_filter:
+            md += f"**Clase:** `{class_name_filter}`  \n"
+        if namespace_filter:
+            md += f"**Namespace:** `{namespace_filter}`  \n"
+
+        if is_partial:
+            md += f"⚠️ **Sin coincidencias exactas** - mostrando resultados parciales\n"
+
+        md += f"**Resultados:** {len(consolidated)}\n\n"
         md += "---\n\n"
 
-        for i, node in enumerate(results, 1):
+        for i, item in enumerate(consolidated, 1):
+            node = item['primary']
+            interface_info = item.get('interface')
+
+            # Extraer className del namespace para métodos
+            class_name = None
+            if node.Type == "Method" and node.Namespace:
+                parts = node.Namespace.rsplit('.', 1)
+                if len(parts) > 1:
+                    class_name = parts[-1]
+
             md += f"## {i}. {node.Name}\n\n"
-            md += f"- **Tipo:** `{node.Type}`\n"
-            md += f"- **Proyecto:** `{node.Project}`\n"
-            md += f"- **Namespace:** `{node.Namespace}`\n"
+            md += f"| Campo | Valor |\n"
+            md += f"|-------|-------|\n"
+
+            if node.Type == "Method" and class_name:
+                # Para métodos, mostrar la clase contenedora
+                is_interface = class_name.startswith('I') and len(class_name) > 1 and class_name[1].isupper()
+                if is_interface:
+                    md += f"| **Clase/Interfaz** | `{class_name}` (Interface) |\n"
+                else:
+                    md += f"| **Clase** | `{class_name}` |\n"
+                    if interface_info:
+                        iface_class = interface_info.Namespace.rsplit('.', 1)[-1] if interface_info.Namespace else 'I' + class_name
+                        md += f"| **Implementa** | `{iface_class}` |\n"
+            else:
+                md += f"| **Tipo** | `{node.Type}` |\n"
+
+            md += f"| **Proyecto** | `{node.Project}` |\n"
+            md += f"| **Namespace** | `{node.Namespace}` |\n"
 
             if node.Location and isinstance(node.Location, dict):
-                relative_path = node.Location.get('RelativePath', node.Location.get('AbsolutePath', 'N/A'))
-                if relative_path and relative_path != 'N/A':
-                    md += f"- **Ubicación:** `{relative_path}`\n"
-
-            if node.Attributes:
-                md += f"- **Atributos:**\n"
-                for key, value in node.Attributes.items():
-                    md += f"  - {key}: `{value}`\n"
+                relative_path = node.Location.get('RelativePath', node.Location.get('AbsolutePath', ''))
+                if relative_path:
+                    md += f"| **Ubicación** | `{relative_path}` |\n"
 
             md += "\n"
 
+            # Guía para siguiente paso
+            md += f"**➡️ Siguiente paso - `get_code_context`:**\n"
+            md += f"```json\n"
+            md += f"{{\n"
+            if node.Type == "Method" and class_name:
+                # Para métodos, usar la clase (no interfaz) si está disponible
+                target_class = class_name
+                if class_name.startswith('I') and len(class_name) > 1 and class_name[1].isupper():
+                    # Es interfaz, buscar si hay clase correspondiente
+                    target_class = class_name[1:]  # Quitar la I
+                md += f'  "className": "{target_class}",\n'
+                md += f'  "methodName": "{node.Name}",\n'
+            elif node.Type == "Class" or node.Type == "Interface":
+                md += f'  "className": "{node.Name}",\n'
+            else:
+                md += f'  "className": "{node.Name}",\n'
+            md += f'  "namespace": "{node.Namespace}",\n'
+            md += f'  "project": "{node.Project}"\n'
+            md += f"}}\n"
+            md += f"```\n\n"
+
         return md
+
+    def _consolidate_search_results(self, results, node_type: str) -> list:
+        """
+        Consolida resultados de búsqueda agrupando clase + interfaz relacionadas.
+
+        Para métodos: agrupa UpdateState de Clase X con UpdateState de IClase X
+        Para clases: agrupa Clase X con IClase X
+        """
+        if not results:
+            return []
+
+        # Agrupar por "identidad lógica"
+        groups = {}
+
+        for node in results:
+            # Extraer el nombre base (sin I para interfaces)
+            if node.Type == "Method":
+                # Para métodos, usar namespace + nombre del método como key
+                parts = node.Namespace.rsplit('.', 1) if node.Namespace else ['', node.Name]
+                containing_name = parts[-1] if len(parts) > 1 else ''
+
+                # Normalizar: quitar I del inicio si es interfaz
+                base_name = containing_name
+                if containing_name.startswith('I') and len(containing_name) > 1 and containing_name[1].isupper():
+                    base_name = containing_name[1:]
+
+                # Key: namespace base + nombre método
+                ns_base = parts[0] if len(parts) > 1 else ''
+                key = f"{ns_base}.{base_name}.{node.Name}"
+            else:
+                # Para clases/interfaces
+                base_name = node.Name
+                if node.Name.startswith('I') and len(node.Name) > 1 and node.Name[1].isupper():
+                    base_name = node.Name[1:]
+                key = f"{node.Namespace}.{base_name}" if node.Namespace else base_name
+
+            if key not in groups:
+                groups[key] = {'primary': None, 'interface': None, 'all': []}
+
+            groups[key]['all'].append(node)
+
+            # Determinar si es clase o interfaz
+            is_interface = False
+            if node.Type == "Interface":
+                is_interface = True
+            elif node.Type == "Method" and node.Namespace:
+                containing = node.Namespace.rsplit('.', 1)[-1]
+                is_interface = containing.startswith('I') and len(containing) > 1 and containing[1].isupper()
+
+            if is_interface:
+                if groups[key]['interface'] is None:
+                    groups[key]['interface'] = node
+            else:
+                if groups[key]['primary'] is None:
+                    groups[key]['primary'] = node
+
+        # Construir lista consolidada
+        consolidated = []
+        for key, group in groups.items():
+            # Preferir clase sobre interfaz como primario
+            primary = group['primary'] or group['interface'] or group['all'][0]
+            consolidated.append({
+                'primary': primary,
+                'interface': group['interface'] if group['primary'] else None
+            })
+
+        return consolidated
 
     async def _get_code_context(self, args: Dict[str, Any]) -> str:
         """Obtiene contexto de código."""
@@ -543,66 +734,112 @@ class GraphMCPTools:
                 md += f"- **Layer:** `{proj.Layer}`\n"
             md += "\n"
 
-        # Elementos relacionados
-        if result.relatedElements:
-            md += f"## 🔗 Elementos Relacionados ({len(result.relatedElements)})\n\n"
+        # Elementos relacionados - Agrupar por tipo de relación
+        if result.edges and result.mainElement:
+            md += f"## 🔗 Relaciones en el Grafo\n\n"
 
-            # Agrupar por tipo de relación usando edges
-            dependencies = []
-            usages = []
-            inheritance = []
+            # Agrupar edges por tipo de relación
+            relations_by_type = {}
+            main_id = result.mainElement.Id
 
             for edge in result.edges:
-                related = next((r for r in result.relatedElements if r.Id == edge.Target or r.Id == edge.Source), None)
+                rel_type = edge.Relationship
+
+                # Determinar si es entrante o saliente
+                if edge.Source == main_id:
+                    # Saliente: este elemento -> otro
+                    direction = "outgoing"
+                    other_id = edge.Target
+                else:
+                    # Entrante: otro -> este elemento
+                    direction = "incoming"
+                    other_id = edge.Source
+
+                # Buscar el elemento relacionado
+                related = next((r for r in result.relatedElements if r.Id == other_id), None)
                 if not related:
                     continue
 
-                rel_info = {
+                # Crear key única para agrupar
+                key = f"{rel_type}_{direction}"
+                if key not in relations_by_type:
+                    relations_by_type[key] = {
+                        'type': rel_type,
+                        'direction': direction,
+                        'elements': []
+                    }
+
+                relations_by_type[key]['elements'].append({
                     'name': related.Name,
-                    'type': related.Type,
+                    'node_type': related.Type,
                     'namespace': related.Namespace,
-                    'project': related.Project,
-                    'relationship': edge.Relationship
-                }
+                    'project': related.Project
+                })
 
-                if edge.Relationship in ['Inherits', 'Implements']:
-                    inheritance.append(rel_info)
-                elif edge.Relationship in ['Calls', 'Uses']:
-                    if edge.Source == result.mainElement.Id:
-                        usages.append(rel_info)
+            # Ordenar por prioridad: herencia/implementación primero
+            priority_order = ['Inherits', 'Implements', 'Contains', 'Calls', 'Uses', 'References']
+
+            def sort_key(key):
+                rel_type = key.split('_')[0]
+                try:
+                    return priority_order.index(rel_type)
+                except ValueError:
+                    return len(priority_order)
+
+            # Formatear cada grupo ordenado
+            for key in sorted(relations_by_type.keys(), key=sort_key):
+                group = relations_by_type[key]
+                rel_type = group['type']
+                direction = group['direction']
+                elements = group['elements']
+
+                # Determinar emoji e título según tipo y dirección
+                if rel_type == 'Inherits':
+                    if direction == 'outgoing':
+                        title = f"🔼 Hereda de ({len(elements)})"
                     else:
-                        dependencies.append(rel_info)
+                        title = f"🔽 Clases que heredan de {result.mainElement.Name} ({len(elements)})"
+                elif rel_type == 'Implements':
+                    if direction == 'outgoing':
+                        title = f"✅ Implementa ({len(elements)})"
+                    else:
+                        title = f"📋 Clases que implementan {result.mainElement.Name} ({len(elements)})"
+                elif rel_type == 'Calls':
+                    if direction == 'outgoing':
+                        title = f"➡️ Llama a ({len(elements)})"
+                    else:
+                        title = f"⬅️ Es llamado por ({len(elements)})"
+                elif rel_type == 'Uses':
+                    if direction == 'outgoing':
+                        title = f"📦 Usa ({len(elements)})"
+                    else:
+                        title = f"📥 Es usado por ({len(elements)})"
+                elif rel_type == 'Contains':
+                    if direction == 'outgoing':
+                        title = f"📁 Contiene ({len(elements)})"
+                    else:
+                        title = f"📂 Contenido en ({len(elements)})"
+                else:
+                    title = f"🔗 {rel_type} {'→' if direction == 'outgoing' else '←'} ({len(elements)})"
 
-            if inheritance:
-                md += f"### 🏗️ Herencia e Implementaciones ({len(inheritance)})\n\n"
-                for rel in inheritance:
-                    md += f"- **{rel['name']}** (`{rel['type']}`)\n"
-                    md += f"  - Relación: {rel['relationship']}\n"
-                    md += f"  - Proyecto: `{rel['project']}`\n"
-                    md += f"  - Namespace: `{rel['namespace']}`\n\n"
+                md += f"### {title}\n\n"
+                md += f"| Nombre | Tipo | Namespace |\n"
+                md += f"|--------|------|----------|\n"
+                for elem in elements[:15]:  # Limitar a 15 para no saturar
+                    md += f"| `{elem['name']}` | {elem['node_type']} | {elem['namespace'][:50]}{'...' if len(elem['namespace']) > 50 else ''} |\n"
 
-            if dependencies:
-                md += f"### ⬅️ Dependencias - Quién depende de este elemento ({len(dependencies)})\n\n"
-                for rel in dependencies:
-                    md += f"- **{rel['name']}** (`{rel['type']}`)\n"
-                    md += f"  - Relación: {rel['relationship']}\n"
-                    md += f"  - Proyecto: `{rel['project']}`\n"
-                    md += f"  - Namespace: `{rel['namespace']}`\n\n"
+                if len(elements) > 15:
+                    md += f"\n_... y {len(elements) - 15} elementos más_\n"
+                md += "\n"
 
-            if usages:
-                md += f"### ➡️ Usos - Qué usa este elemento ({len(usages)})\n\n"
-                for rel in usages:
-                    md += f"- **{rel['name']}** (`{rel['type']}`)\n"
-                    md += f"  - Relación: {rel['relationship']}\n"
-                    md += f"  - Proyecto: `{rel['project']}`\n"
-                    md += f"  - Namespace: `{rel['namespace']}`\n\n"
+            # Resumen
+            md += f"---\n\n"
+            md += f"**📊 Resumen:** {len(result.relatedElements)} elementos relacionados, {len(result.edges)} conexiones\n"
 
-        # Resumen de relaciones
-        if result.edges:
-            md += f"\n---\n\n"
-            md += f"## 📊 Resumen de Conexiones\n\n"
-            md += f"- Total de elementos relacionados: **{len(result.relatedElements)}**\n"
-            md += f"- Total de relaciones en el grafo: **{len(result.edges)}**\n"
+        elif result.relatedElements:
+            # Hay elementos pero no edges (caso raro)
+            md += f"## 🔗 Elementos Relacionados ({len(result.relatedElements)})\n\n"
+            md += "_No se encontraron conexiones directas en el grafo._\n"
 
         return md
 

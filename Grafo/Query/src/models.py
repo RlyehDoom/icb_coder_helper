@@ -114,7 +114,7 @@ class ProjectSummary(BaseModel):
 class SearchNodesRequest(BaseModel):
     """Request para búsqueda de nodos."""
     query: str = Field(..., description="Texto a buscar en nombre o fullName")
-    nodeType: Optional[str] = Field(None, description="Filtrar por tipo de nodo")
+    nodeType: Optional[str] = Field(None, description="Filtrar por tipo de nodo (Method, Class, Interface, etc.)")
     project: Optional[str] = Field(None, description="Filtrar por proyecto")
     namespace: Optional[str] = Field(None, description="Filtrar por namespace")
     version: Optional[str] = Field(None, description="Filtrar por versión del grafo (e.g., '1.0.0')")
