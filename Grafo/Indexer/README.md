@@ -314,7 +314,7 @@ EXCLUDE_PROJECTS_REGEX=.*\.Tests?$,.*Migration.*,.*Legacy.*,.*\.Benchmark$
 
 **Dynamic Output Directory:**
 - When `USE_REPO_NAME_IN_OUTPUT=true`, output goes to `./{REPO_NAME}_GraphFiles/`
-- Example: Selecting repo "ICB7C" creates output in `./ICB7C_GraphFiles/`
+- Example: Selecting repo "MyProject" creates output in `./MyProject_GraphFiles/`
 - When `false`, uses `DEFAULT_OUTPUT_DIR` value
 
 **Auto-Discovery Behavior:**
@@ -489,9 +489,9 @@ With semantic model analysis, the graph now includes precise relationships:
 - **Uses**: Cyan (`#4ECDC4`) - dotted line
 - **project_reference**: Green (`#059669`) - solid line
 
-## Integration with Guru Ecosystem
+## Integration
 
-This tool is part of the Guru project ecosystem and can be integrated with other Guru services:
+This tool can be integrated with various development workflows:
 
 1. **Build Integration**: Use in CI/CD pipelines to analyze code changes
 2. **Documentation**: Generate architecture documentation
@@ -586,7 +586,7 @@ Use verbose mode (`-v`) to get detailed output for troubleshooting:
 
 ## License
 
-This project is part of the Guru ecosystem. See the main project license for details.
+MIT License - See LICENSE for details.
 
 ## Changelog
 

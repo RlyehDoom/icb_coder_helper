@@ -24,18 +24,18 @@ IndexerDB está completamente integrado con el **Roslyn Semantic Model** del Ros
 ### 🔄 **Soporte de Múltiples Versiones**
 - **Identificación Única**: Cada proyecto se identifica por nombre + repositorio/versión
 - **Coexistencia de Versiones**: Permite almacenar múltiples versiones del mismo proyecto simultáneamente
-- **ProjectId Compuesto**: Formato `project:{nombre}::{repo-identifier}` (ej: `project:Infocorp.Banking::ICB7C`)
+- **ProjectId Compuesto**: Formato `project:{nombre}::{repo-identifier}` (ej: `project:MyApp.Core::v7`)
 - **No Sobrescritura**: Las diferentes versiones no se sobrescriben entre sí
-- **Ejemplo**: Puedes tener `ICB7C` (v7.10.2) e `ICB6` (v6.5.0) en la misma base de datos
+- **Ejemplo**: Puedes tener `v7` y `v6` del mismo proyecto en la misma base de datos
 
 **Formato de Directorio Requerido:**
 ```
 Indexer/
   output/
-    ICB7C_GraphFiles/         # Versión 7.10.2
-      Infocorp.Banking-graph.json
-    6_5_main_GraphFiles/      # Versión 6.5.0
-      Infocorp.Banking-graph.json
+    MyProject_v7_GraphFiles/   # Versión 7.x
+      MyProject-graph.json
+    MyProject_v6_GraphFiles/   # Versión 6.x
+      MyProject-graph.json
 ```
 
 ### 📊 **Logging Detallado**
@@ -315,7 +315,7 @@ Comportamiento:
 ```bash
 dotnet run -- --file "ruta/completa/al/archivo-graph.json"
 # o
-dotnet run -- -f "../Indexer/output/ICB7C_GraphFiles/Infocorp.Banking-graph.json"
+dotnet run -- -f "../Indexer/output/MyProject_GraphFiles/MyProject-graph.json"
 ```
 
 Comportamiento:
@@ -371,10 +371,10 @@ dotnet run -- -h
 IndexerDb
 
 # Procesar archivo específico con ruta relativa
-IndexerDb --file "../Indexer/output/ICB7C_GraphFiles/Banking-graph.json"
+IndexerDb --file "../Indexer/output/MyProject_GraphFiles/MyProject-graph.json"
 
 # Procesar archivo específico con ruta absoluta
-IndexerDb --file "C:\GIT\Guru\Grafo\Indexer\output\ICB7C_GraphFiles\Infocorp.Banking-graph.json"
+IndexerDb --file "C:\Projects\Grafo\Indexer\output\MyProject_GraphFiles\MyProject-graph.json"
 
 # Procesar todos los archivos automáticamente
 IndexerDb --no-interactive
@@ -390,7 +390,7 @@ Cuando se ejecuta en modo por defecto, la aplicación muestra:
 ```
 Found 3 graph files:
 ==================================================
- 1. Infocorp.Banking-graph.json (in ICB7C_GraphFiles)
+ 1. MyProject-graph.json (in MyProject_GraphFiles)
  2. OtherProject-graph.json (in PROJ2_GraphFiles)  
  3. TestProject-graph.json (in TEST_GraphFiles)
 ==================================================
@@ -469,8 +469,8 @@ IndexerDB> calls 30
 
 ```
 === Starting Incremental Processing ===
-File: Infocorp.Banking-graph.json
-Path: C:\GIT\Guru\Grafo\Indexer\output\ICB7C_GraphFiles\Infocorp.Banking-graph.json
+File: MyProject-graph.json
+Path: C:\Projects\Grafo\Indexer\output\MyProject_GraphFiles\MyProject-graph.json
 
 📋 Step 1/6: Calculating file hash...
 ✅ File hash: abc123def456...
@@ -548,7 +548,7 @@ GraphDB> list
 
 3. **Actualizar un Archivo Específico**:
    ```bash
-   dotnet run --file "../Indexer/output/ICB7C_GraphFiles/Updated-graph.json"
+   dotnet run --file "../Indexer/output/MyProject_GraphFiles/Updated-graph.json"
    ```
 
 4. **Procesamiento en Lote para CI/CD**:
@@ -593,7 +593,7 @@ dotnet run -- --file $latestFile.FullName
 
 ```json
 {
-  "sourceFile": "Infocorp.Banking-graph.json",
+  "sourceFile": "MyProject-graph.json",
   "fileHash": "abc123...",
   "lastProcessed": "2025-10-14T19:30:00Z",
   "totalProjects": 85,

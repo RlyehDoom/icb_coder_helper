@@ -627,43 +627,7 @@ El Query Service expone **8 herramientas MCP** que pueden ser utilizadas desde I
 5. **`find_implementations`** - Encuentra implementaciones y herencias
 6. **`analyze_impact`** - Genera análisis de impacto de cambios
 7. **`get_statistics`** - Obtiene estadísticas generales del grafo
-8. **`get_tailored_guidance`** ⭐ **NUEVA** - Guía especializada para trabajar en proyecto Tailored
-
-### get_tailored_guidance - Guía para Proyecto Tailored
-
-Esta herramienta proporciona guía especializada para trabajar en el proyecto Tailored de ICBanking, que hereda de ICBanking y usa Unity IoC para hacer overrides.
-
-**Parámetros:**
-- `task_type` (requerido): Tipo de tarea
-  - `extend_business_component` - Extender componente de negocio
-  - `create_data_access` - Crear capa de acceso a datos
-  - `create_service_agent` - Crear service agent
-  - `extend_api` - Extender AppServer/WebServer API
-  - `configure_unity` - Configurar Unity IoC
-  - `understand_architecture` - Entender arquitectura
-  - `add_method_override` - Agregar override de método
-  - `create_new_component` - Crear componente nuevo
-- `component_name` (opcional): Nombre del componente (ej: "Accounts", "Clients")
-- `layer` (opcional): Capa de arquitectura (ej: "BusinessComponents", "DataAccess")
-- `details` (opcional): Detalles adicionales
-
-**Ejemplo de uso:**
-```json
-{
-  "task_type": "extend_business_component",
-  "component_name": "Accounts",
-  "layer": "BusinessComponents"
-}
-```
-
-**Respuesta:** Guía completa en Markdown con:
-- Ubicación de archivos
-- Patrones de código (C# y XML)
-- Referencias necesarias (.csproj)
-- Configuración de Unity
-- Convenciones y buenas prácticas
-
-**Documentación completa:** [TAILORED_GUIDANCE_TOOL.md](./docs/TAILORED_GUIDANCE_TOOL.md)
+8. **`get_tailored_guidance`** - Specialized guidance for extending base code with custom implementations
 
 ### Configuración MCP en Cursor/VSCode
 
@@ -710,7 +674,7 @@ Reinicia Cursor después de agregar la configuración.
 
 ## 📝 Licencia
 
-Este proyecto es parte del sistema Grafo de ICGuru.
+MIT License - See LICENSE for details.
 
 ---
 

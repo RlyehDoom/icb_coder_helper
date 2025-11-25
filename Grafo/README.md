@@ -1,343 +1,257 @@
-# Grafo - C# Code Graph Analysis System
+# Grafo
 
-**Grafo** es un sistema completo para indexar, almacenar y consultar grafos de código C# usando MongoDB y un servidor MCP (Model Context Protocol) para integración con IDEs como Cursor y VSCode.
+A comprehensive C# code analysis system that creates knowledge graphs from codebases using Roslyn semantic analysis. Enables contextual code assistance through the Model Context Protocol (MCP) for integration with AI-powered IDEs like Cursor and VS Code.
 
-## 🚀 Quick Start (5 minutos)
+## Features
 
-### Requisitos Previos
-- **Docker Desktop** instalado y corriendo
-- **Node.js** 18+ (para CLI)
-- **.NET 8.0** SDK (para indexar código C#)
+- **Roslyn Semantic Analysis** - Deep code analysis using Microsoft Roslyn compiler platform
+- **Knowledge Graph** - Extracts classes, methods, interfaces, inheritance, and call relationships
+- **MCP Server** - HTTP/SSE server for IDE integration (supports multiple concurrent clients)
+- **Incremental Processing** - Only processes changed code using SHA-256 hashing
+- **Docker Ready** - All services run in containers with zero configuration
 
----
+## Quick Start
 
-## 📦 Instalación
+### Prerequisites
 
-### 1. Clonar el repositorio
+- **Docker Desktop** - Running
+- **Node.js 18+** - For CLI
+- **.NET 8.0 SDK** - For indexing C# code
+
+### Installation
+
 ```bash
-git clone <tu-repo-url>
+git clone https://github.com/your-username/grafo.git
 cd Grafo
-```
-
-### 2. Instalar CLI Global
-```bash
 npm install
-npm link
+npm link  # Makes 'grafo' command available globally
 ```
 
-Esto hace disponible el comando `grafo` globalmente en tu sistema.
-
----
-
-## 🎯 Uso del Sistema
-
-Grafo funciona en 3 pasos simples:
-
-### Paso 1: Iniciar MongoDB
+### Start Services
 
 ```bash
+# Start MongoDB
 grafo mongodb start
+
+# Build and start MCP Server
+grafo mcp build
+grafo mcp start
 ```
 
-Esto:
-- ✅ Descarga e inicia MongoDB 8.0 en Docker
-- ✅ Puerto: **27019**
-- ✅ Base de datos: **GraphDB**
-- ✅ Sin autenticación (modo desarrollo)
-
-Verificar:
-```bash
-grafo mongodb status
-```
-
-### Paso 2: Indexar tu Código C#
+### Index Your Code
 
 ```bash
+# Analyze a C# solution
 cd Indexer
-dotnet run -- --solution "C:/ruta/a/tu/solution.sln"
-```
+dotnet run -- --solution "path/to/your/solution.sln"
 
-Esto genera archivos JSON con el grafo de código en `Indexer/output/`.
-
-### Paso 3: Almacenar en MongoDB
-
-```bash
-cd IndexerDb
+# Store in MongoDB
+cd ../IndexerDb
 dotnet run --all
 ```
 
-Esto carga todos los grafos indexados en MongoDB.
+### Configure IDE
 
----
-
-## 🔍 Consultar el Grafo
-
-Tienes 2 opciones para consultar el grafo:
-
-### Opción A: Query Service (REST API)
-
-```bash
-grafo query build
-grafo query start
-```
-
-Accede a:
-- **API**: http://localhost:8081
-- **Docs**: http://localhost:8081/docs
-- **Health**: http://localhost:8081/health
-
-### Opción B: MCP Server (para Cursor/VSCode)
-
-```bash
-grafo mcp build
-grafo mcp start
-```
-
-Esto inicia el servidor MCP en **http://localhost:8083** usando HTTP/SSE.
-
-#### Configurar Cursor/VSCode
-
-**Agrega esto a `~/.cursor/mcp.json`** (o `%APPDATA%\Cursor\User\mcp.json` en Windows):
-
-**RECOMENDADO - Con versión específica:**
+Add to `~/.cursor/mcp.json` (macOS/Linux) or `%APPDATA%\Cursor\User\mcp.json` (Windows):
 
 ```json
 {
   "mcpServers": {
-    "grafo-7.10.3": {
-      "url": "http://localhost:8083/sse?version=7.10.3",
+    "grafo": {
+      "url": "http://localhost:8082/sse",
       "transport": "sse"
     }
   }
 }
 ```
 
-**Alternativa - Sin versión específica:**
+Restart your IDE. You can now query your codebase from the AI chat.
 
-```json
-{
-  "mcpServers": {
-    "grafo-query-http": {
-      "url": "http://localhost:8083/sse",
-      "transport": "sse"
-    }
-  }
-}
+## Architecture
+
+```
+C# Source Code (.sln)
+        │
+        ▼
+┌───────────────────┐
+│     Indexer       │  Roslyn semantic analysis
+│    (.NET 8)       │  Generates JSON graph
+└─────────┬─────────┘
+          │
+          ▼
+┌───────────────────┐
+│    IndexerDb      │  Processes JSON graphs
+│    (.NET 8)       │  Stores in MongoDB
+└─────────┬─────────┘
+          │
+          ▼
+┌───────────────────┐
+│     MongoDB       │  Graph database
+│    (Docker)       │  Port: 27019
+└─────────┬─────────┘
+          │
+          ▼
+┌───────────────────┐
+│   MCP Server      │  HTTP/SSE API
+│   (Python)        │  Port: 8082
+└─────────┬─────────┘
+          │
+          ▼
+┌───────────────────┐
+│   Cursor/VSCode   │  AI-powered IDE
+└───────────────────┘
 ```
 
-💡 **Tip:** Especificar la versión en la URL (`?version=7.10.3`) te da control explícito sobre qué versión del código consultas. Ver [MCP_CURSOR_SETUP.md](MCP_CURSOR_SETUP.md) para más detalles.
-
-Reinicia Cursor y ya puedes consultar tu código desde el chat.
-
----
-
-## 📋 Comandos Disponibles
+## CLI Commands
 
 ### MongoDB
-```bash
-grafo mongodb start      # Iniciar MongoDB
-grafo mongodb stop       # Detener MongoDB
-grafo mongodb status     # Ver estado
-grafo mongodb logs       # Ver logs
-grafo mongodb shell      # Abrir mongosh
-grafo mongodb clean      # Limpiar todo (⚠️ elimina datos)
-```
 
-### Query Service
 ```bash
-grafo query build        # Construir imagen Docker
-grafo query start        # Iniciar servicio
-grafo query stop         # Detener servicio
-grafo query status       # Ver estado
-grafo query logs         # Ver logs
+grafo mongodb start      # Start MongoDB container
+grafo mongodb stop       # Stop MongoDB
+grafo mongodb status     # Check status
+grafo mongodb logs       # View logs
+grafo mongodb shell      # Open mongo shell
 ```
 
 ### MCP Server
+
 ```bash
-grafo mcp build          # Construir imagen Docker
-grafo mcp start          # Iniciar servidor MCP
-grafo mcp stop           # Detener servidor
-grafo mcp status         # Ver estado (muestra config de Cursor)
-grafo mcp logs           # Ver logs
+grafo mcp build          # Build Docker image
+grafo mcp start          # Start server
+grafo mcp stop           # Stop server
+grafo mcp status         # Check status and show config
+grafo mcp logs           # View logs
 ```
 
----
+## MCP Tools
 
-## 🏗️ Arquitectura del Sistema
+The MCP server exposes these tools to your IDE:
 
-```
-┌─────────────────────────────────────────────────────┐
-│  Código C# (.sln)                                   │
-└────────────┬────────────────────────────────────────┘
-             │
-             ▼
-┌─────────────────────────────────────────────────────┐
-│  Indexer (.NET)                                     │
-│  Analiza código y genera grafos JSON                │
-└────────────┬────────────────────────────────────────┘
-             │
-             ▼
-┌─────────────────────────────────────────────────────┐
-│  IndexerDb (.NET)                                   │
-│  Carga grafos en MongoDB                            │
-└────────────┬────────────────────────────────────────┘
-             │
-             ▼
-┌─────────────────────────────────────────────────────┐
-│  MongoDB (Docker)                                   │
-│  Puerto: 27019                                      │
-│  Base de datos: GraphDB                             │
-└──────────┬──────────────┬───────────────────────────┘
-           │              │
-           ▼              ▼
-  ┌────────────────┐  ┌────────────────┐
-  │ Query Service  │  │  MCP Server    │
-  │ REST API       │  │  HTTP/SSE      │
-  │ :8081          │  │  :8083         │
-  └────────────────┘  └────────┬───────┘
-                               │
-                               ▼
-                      ┌─────────────────┐
-                      │  Cursor/VSCode  │
-                      │  (Múltiples     │
-                      │   clientes)     │
-                      └─────────────────┘
+| Tool | Description |
+|------|-------------|
+| `search_code` | Search for classes, methods, interfaces |
+| `get_code_context` | Get detailed context with relationships |
+| `list_projects` | List all indexed projects |
+| `get_project_structure` | Get project structure |
+| `find_implementations` | Find interface implementations |
+| `analyze_impact` | Analyze change impact |
+| `get_statistics` | Get graph statistics |
+
+## Configuration
+
+### Version Filtering
+
+Specify a graph version in the MCP URL to query specific code versions:
+
+```json
+{
+  "mcpServers": {
+    "grafo-v7": {
+      "url": "http://localhost:8082/sse?version=7.10.2",
+      "transport": "sse"
+    }
+  }
+}
 ```
 
----
+### Environment Variables
 
-## 🌐 Endpoints del Sistema
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `GRAFO_DEFAULT_VERSION` | Default graph version | (none) |
+| `MONGODB_DATABASE` | Database name | `GraphDB` |
+| `LOG_LEVEL` | Logging level | `INFO` |
 
-| Servicio | Puerto | Endpoints |
-|----------|--------|-----------|
-| **MongoDB** | 27019 | `mongodb://localhost:27019/` |
-| **Query Service** | 8081 | http://localhost:8081<br>http://localhost:8081/docs<br>http://localhost:8081/health |
-| **MCP Server** | 8083 | http://localhost:8083/sse<br>http://localhost:8083/health<br>http://localhost:8083/ |
+## Endpoints
 
----
+| Service | Port | URL |
+|---------|------|-----|
+| MongoDB | 27019 | `mongodb://localhost:27019/` |
+| MCP Server | 8082 | `http://localhost:8082/sse` |
+| Health Check | 8082 | `http://localhost:8082/health` |
 
-## 🔧 Stack Tecnológico
+## Tech Stack
 
-- **Backend Indexer**: .NET 8.0, Roslyn
-- **Base de Datos**: MongoDB 8.0
-- **Query Service**: Python 3.11, FastAPI, Motor
-- **MCP Server**: Python 3.11, FastAPI, SSE
+- **Indexer**: .NET 8, Roslyn 4.8
+- **IndexerDb**: .NET 8, MongoDB.Driver
+- **MCP Server**: Python 3.11, FastAPI, Motor
 - **CLI**: Node.js, Commander.js
-- **Contenedores**: Docker & Docker Compose
+- **Database**: MongoDB 8.0
+- **Containers**: Docker & Docker Compose
 
----
+## Development
 
-## 🐛 Troubleshooting
+### Project Structure
 
-### MongoDB no inicia
-```bash
-# Verificar Docker
-docker --version
-docker info
-
-# Ver logs
-grafo mongodb logs
-
-# Reiniciar
-grafo mongodb stop
-grafo mongodb start
+```
+Grafo/
+├── Indexer/          # C# code analyzer (Roslyn)
+├── IndexerDb/        # Graph processor & MongoDB storage
+├── Query/            # MCP Server (Python/FastAPI)
+├── src/              # CLI source code
+├── docker-compose.yml
+└── package.json
 ```
 
-### Puerto 27019 en uso
-Si tienes otra instancia de MongoDB:
+### Building Components
+
 ```bash
-# Ver qué usa el puerto
-netstat -ano | findstr ":27019"
+# Build Indexer
+cd Indexer && dotnet build
 
-# Detener el servicio
-docker ps
-docker stop <container-id>
-```
+# Build IndexerDb
+cd IndexerDb && dotnet build
 
-### MCP Server no conecta desde Cursor
-
-1. Verificar que está corriendo:
-```bash
-grafo mcp status
-```
-
-2. Verificar endpoint:
-```bash
-curl http://localhost:8083/health
-```
-
-3. Verificar configuración en `~/.cursor/mcp.json`
-
-4. Reiniciar Cursor completamente
-
----
-
-## 📚 Documentación Adicional
-
-- **Indexer**: Ver `Indexer/README.md` para detalles de indexación
-- **IndexerDb**: Ver `IndexerDb/README.md` para esquema MongoDB
-- **Query Service**: Ver `Query/README.md` para API REST
-- **Ecosystem**: Ver `ECOSYSTEM_OVERVIEW.md` para arquitectura completa
-
----
-
-## 🤝 Contribuir
-
-1. Fork el repositorio
-2. Crea una rama: `git checkout -b feature/nueva-funcionalidad`
-3. Commit: `git commit -m 'Agregar nueva funcionalidad'`
-4. Push: `git push origin feature/nueva-funcionalidad`
-5. Abre un Pull Request
-
----
-
-## 📝 Licencia
-
-MIT License - Ver LICENSE para más detalles
-
----
-
-## 💡 Tips
-
-### Iniciar todo de una vez
-```bash
-# Terminal 1: MongoDB
-grafo mongodb start
-
-# Terminal 2: MCP Server
-grafo mcp start
-
-# Verificar todo
-grafo mongodb status
-grafo mcp status
-```
-
-### Ver logs en tiempo real
-```bash
-# Terminal 1
-grafo mongodb logs
-
-# Terminal 2
-grafo mcp logs
-```
-
-### Limpiar y empezar de nuevo
-```bash
-# Limpiar servicios (preserva MongoDB)
-grafo mcp stop
-grafo query stop
-
-# Limpiar MongoDB (⚠️ ELIMINA DATOS)
-grafo mongodb clean
-
-# Rebuild todo
-grafo mongodb start
+# Build MCP Server
 grafo mcp build
-grafo mcp start
 ```
 
----
+### Running Tests
 
-**¿Problemas?** Abre un issue en GitHub
+```bash
+# Indexer tests
+cd Indexer && dotnet test
 
-**¿Preguntas?** Consulta la documentación en `ECOSYSTEM_OVERVIEW.md`
+# MCP Server tests
+grafo mcp test
+```
+
+## Troubleshooting
+
+### MongoDB won't start
+
+```bash
+docker --version        # Verify Docker is installed
+docker info             # Verify Docker is running
+grafo mongodb logs      # Check error logs
+```
+
+### MCP Server not connecting
+
+```bash
+grafo mcp status        # Check if running
+curl http://localhost:8082/health  # Test endpoint
+```
+
+### No data returned
+
+```bash
+# Verify data exists
+cd IndexerDb
+dotnet run --interactive
+> count
+> projects list
+```
+
+## License
+
+MIT License - See [LICENSE](LICENSE) for details.
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch: `git checkout -b feature/new-feature`
+3. Commit changes: `git commit -m 'Add new feature'`
+4. Push: `git push origin feature/new-feature`
+5. Open a Pull Request
