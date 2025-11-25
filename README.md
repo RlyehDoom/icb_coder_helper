@@ -470,7 +470,11 @@ Para problemas o preguntas:
 
 ## 📄 Licencia
 
-Este proyecto es parte del sistema ICGuru.
+Aviso de Licencia – Uso Gratuito con Obligación de Reconocimiento
+
+El presente software se otorga bajo una licencia de uso gratuito, permitiéndose su utilización, copia, modificación y distribución, tanto con fines personales como comerciales. No obstante, como condición esencial de esta licencia, el usuario se obliga a mantener y exhibir de forma clara el debido reconocimiento al autor en toda instancia de uso, redistribución o derivación de este software.
+
+Queda estrictamente prohibida la eliminación, alteración u ocultamiento de cualquier mención de autoría, aviso de derechos o declaración de reconocimiento incluida en el software o en su documentación asociada. El uso del software implica la aceptación íntegra de los términos establecidos en este aviso.
 
 ---
 
