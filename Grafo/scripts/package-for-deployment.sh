@@ -51,10 +51,6 @@ chmod +x "$PACKAGE_DIR/diagnose-mongodb.sh"
 chmod +x "$PACKAGE_DIR/verify-mcp-server.sh"
 chmod +x "$PACKAGE_DIR/fix-nginx-sse.sh"
 
-# Copy troubleshooting guide
-echo -e "${BLUE}▶ Copying troubleshooting guide...${NC}"
-cp "$SCRIPT_DIR/MCP_PRODUCTION_TROUBLESHOOTING.md" "$PACKAGE_DIR/"
-
 # Create simple README
 echo -e "${BLUE}▶ Creating README...${NC}"
 cat > "$PACKAGE_DIR/README.txt" <<'EOFREADME'
