@@ -105,6 +105,10 @@ services:
       # Server Configuration
       - SERVER_PORT=${MCP_SERVER_PORT:-8082}
 
+      # Grafo Version - Filtra consultas por esta versión del grafo
+      # Los clientes pueden especificar otra versión en la URL: /sse?version=6.5.0
+      - GRAFO_DEFAULT_VERSION=${GRAFO_DEFAULT_VERSION:-7.10.2}
+
       # Logging
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
 

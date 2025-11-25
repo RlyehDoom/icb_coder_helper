@@ -254,6 +254,10 @@ class GraphMCPTools:
                     "- '¿Qué se afecta si cambio este método?'\n"
                     "- '¿Quién usa esta clase?'\n"
                     "- 'Antes de modificar X, ¿qué debo considerar?'\n\n"
+                    "⚠️ IMPORTANTE - PARÁMETRO className:\n"
+                    "- Para MÉTODOS: usar el nombre de la CLASE que contiene el método (de 'ContainingType' o 'Clase' en search_code)\n"
+                    "- Ejemplo: si search_code retorna Clase='TransferBatch' para el método ProcessTransferBatch, usar className='TransferBatch'\n"
+                    "- NO usar partes del namespace como 'BusinessComponents' o 'DataAccess'\n\n"
                     "Retorna:\n"
                     "- Dependencias entrantes (quién usa este componente)\n"
                     "- Dependencias salientes (qué usa este componente)\n"
@@ -267,7 +271,7 @@ class GraphMCPTools:
                     "properties": {
                         "className": {
                             "type": "string",
-                            "description": "Nombre de la clase a analizar"
+                            "description": "Nombre EXACTO de la CLASE (no namespace). Para métodos, usar el valor de 'Clase' o 'ContainingType' del resultado de search_code. Ej: 'TransferBatch', 'Geolocation', NO 'BusinessComponents'"
                         },
                         "methodName": {
                             "type": "string",
@@ -275,7 +279,7 @@ class GraphMCPTools:
                         },
                         "namespace": {
                             "type": "string",
-                            "description": "Namespace del resultado de search_code"
+                            "description": "Namespace completo del resultado de search_code (ej: 'Infocorp.P2P.BusinessComponents.TransferBatch')"
                         },
                         "project": {
                             "type": "string",
@@ -546,12 +550,21 @@ class GraphMCPTools:
             node = item['primary']
             interface_info = item.get('interface')
 
-            # Extraer className del namespace para métodos
+            # Extraer className para métodos
+            # Prioridad: ContainingType > último segmento del Namespace
             class_name = None
-            if node.Type == "Method" and node.Namespace:
-                parts = node.Namespace.rsplit('.', 1)
-                if len(parts) > 1:
-                    class_name = parts[-1]
+            containing_type_full = None
+            if node.Type == "Method":
+                if hasattr(node, 'ContainingType') and node.ContainingType:
+                    # ContainingType tiene el nombre completo: "Namespace.ClassName"
+                    containing_type_full = node.ContainingType
+                    parts = node.ContainingType.rsplit('.', 1)
+                    class_name = parts[-1] if parts else node.ContainingType
+                elif node.Namespace:
+                    # Fallback: último segmento del namespace
+                    parts = node.Namespace.rsplit('.', 1)
+                    if len(parts) > 1:
+                        class_name = parts[-1]
 
             md += f"## {i}. {node.Name}\n\n"
             md += f"| Campo | Valor |\n"
@@ -564,6 +577,8 @@ class GraphMCPTools:
                     md += f"| **Clase/Interfaz** | `{class_name}` (Interface) |\n"
                 else:
                     md += f"| **Clase** | `{class_name}` |\n"
+                if containing_type_full:
+                    md += f"| **ContainingType** | `{containing_type_full}` |\n"
                     if interface_info:
                         iface_class = interface_info.Namespace.rsplit('.', 1)[-1] if interface_info.Namespace else 'I' + class_name
                         md += f"| **Implementa** | `{iface_class}` |\n"
@@ -619,9 +634,16 @@ class GraphMCPTools:
         for node in results:
             # Extraer el nombre base (sin I para interfaces)
             if node.Type == "Method":
-                # Para métodos, usar namespace + nombre del método como key
-                parts = node.Namespace.rsplit('.', 1) if node.Namespace else ['', node.Name]
-                containing_name = parts[-1] if len(parts) > 1 else ''
+                # Para métodos, usar ContainingType si está disponible, sino fallback a Namespace
+                containing_name = ''
+                if hasattr(node, 'ContainingType') and node.ContainingType:
+                    # ContainingType tiene el nombre completo: "Namespace.ClassName"
+                    parts = node.ContainingType.rsplit('.', 1)
+                    containing_name = parts[-1] if parts else node.ContainingType
+                elif node.Namespace:
+                    # Fallback: último segmento del namespace
+                    parts = node.Namespace.rsplit('.', 1)
+                    containing_name = parts[-1] if len(parts) > 1 else ''
 
                 # Normalizar: quitar I del inicio si es interfaz
                 base_name = containing_name
@@ -629,7 +651,13 @@ class GraphMCPTools:
                     base_name = containing_name[1:]
 
                 # Key: namespace base + nombre método
-                ns_base = parts[0] if len(parts) > 1 else ''
+                ns_base = ''
+                if hasattr(node, 'ContainingType') and node.ContainingType:
+                    parts = node.ContainingType.rsplit('.', 1)
+                    ns_base = parts[0] if len(parts) > 1 else ''
+                elif node.Namespace:
+                    parts = node.Namespace.rsplit('.', 1)
+                    ns_base = parts[0] if len(parts) > 1 else ''
                 key = f"{ns_base}.{base_name}.{node.Name}"
             else:
                 # Para clases/interfaces
@@ -647,8 +675,14 @@ class GraphMCPTools:
             is_interface = False
             if node.Type == "Interface":
                 is_interface = True
-            elif node.Type == "Method" and node.Namespace:
-                containing = node.Namespace.rsplit('.', 1)[-1]
+            elif node.Type == "Method":
+                # Usar ContainingType para determinar si es método de interfaz
+                containing = ''
+                if hasattr(node, 'ContainingType') and node.ContainingType:
+                    parts = node.ContainingType.rsplit('.', 1)
+                    containing = parts[-1] if parts else node.ContainingType
+                elif node.Namespace:
+                    containing = node.Namespace.rsplit('.', 1)[-1]
                 is_interface = containing.startswith('I') and len(containing) > 1 and containing[1].isupper()
 
             if is_interface:
@@ -988,6 +1022,22 @@ class GraphMCPTools:
         # - Herencias: edge.Target == target.Id y edge.Relationship == "Inherits"
         # El SOURCE es quien implementa/hereda
         implementations = []
+
+        def extract_info_from_id(node_id: str) -> dict:
+            """Extrae nombre y namespace de un ID de nodo (ej: component:Namespace.ClassName)"""
+            # IDs tienen formato: "component:Full.Namespace.ClassName" o "file:Project:File.cs"
+            if ":" in node_id:
+                parts = node_id.split(":", 1)
+                if len(parts) > 1:
+                    full_name = parts[1]
+                    name_parts = full_name.rsplit(".", 1)
+                    name = name_parts[-1] if name_parts else full_name
+                    namespace = name_parts[0] if len(name_parts) > 1 else ""
+                    # Determinar tipo basado en convención de nombres
+                    node_type = "Interface" if name.startswith("I") and len(name) > 1 and name[1].isupper() else "Class"
+                    return {"name": name, "namespace": namespace, "type": node_type, "full_name": full_name}
+            return None
+
         if context.edges and context.mainElement:
             target_id = context.mainElement.Id
 
@@ -1012,6 +1062,19 @@ class GraphMCPTools:
                             "relationship": edge.Relationship,
                             "project": implementer.Project
                         })
+                    elif not implementer:
+                        # Nodo no encontrado en relatedElements (puede estar en otro proyecto)
+                        # Extraer info del ID del edge
+                        info = extract_info_from_id(edge.Source)
+                        if info:
+                            implementations.append({
+                                "name": info["name"],
+                                "namespace": info["namespace"],
+                                "type": info["type"],
+                                "relationship": edge.Relationship,
+                                "project": "(otro proyecto)"
+                            })
+
                 # También verificar el caso inverso (si nosotros heredamos/implementamos)
                 elif edge.Source == target_id:
                     parent = next(
@@ -1025,9 +1088,20 @@ class GraphMCPTools:
                             "name": parent.Name,
                             "namespace": parent.Namespace,
                             "type": parent.Type,
-                            "relationship": f"{edge.Relationship} (heredado de)",
+                            "relationship": f"{edge.Relationship} (base)",
                             "project": parent.Project
                         })
+                    elif not parent:
+                        # Nodo padre no encontrado (puede estar en otro proyecto)
+                        info = extract_info_from_id(edge.Target)
+                        if info:
+                            implementations.append({
+                                "name": info["name"],
+                                "namespace": info["namespace"],
+                                "type": info["type"],
+                                "relationship": f"{edge.Relationship} (base)",
+                                "project": "(otro proyecto)"
+                            })
 
         # Formatear en Markdown
         md = f"# Implementaciones y Herencias - Grafo Código BASE de ICBanking\n\n"

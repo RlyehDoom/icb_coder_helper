@@ -199,7 +199,8 @@ class GraphQueryService:
             doc_conditions = []
 
             if request.project:
-                doc_conditions.append({"ProjectId": request.project})
+                # Usar regex para permitir match parcial (ej: "P2P.BusinessComponents" matchea "project::P2P.BusinessComponents::7.10.2")
+                doc_conditions.append({"ProjectId": {"$regex": request.project, "$options": "i"}})
 
             # Filter by version using ProcessingState relationship
             processing_state_id = None
