@@ -5,12 +5,13 @@ Sistema completo para analizar, indexar y consultar código C# como un grafo de 
 ## 📁 Componentes del Sistema
 
 ```
-Grafo/
-├── Indexer/              # 🔍 Analizador de código C# (Roslyn)
-├── IndexerDb/            # 💾 Procesador y almacenamiento (MongoDB)
-├── Query/                # 🌐 API REST para consultas
-├── Repo/                 # 📦 Repositorios clonados para análisis
-└── ECOSYSTEM_OVERVIEW.md # 📚 Documentación completa del ecosistema
+├── Extension/            # 🧩 Extensión VS Code/Cursor
+├── Grafo/
+│   ├── Indexer/          # 🔍 Analizador de código C# (Roslyn)
+│   ├── IndexerDb/        # 💾 Procesador y almacenamiento (MongoDB)
+│   ├── Query/            # 🌐 API REST + MCP Server
+│   └── Repo/             # 📦 Repositorios clonados para análisis
+└── CLAUDE.md             # 📚 Instrucciones para Claude Code
 ```
 
 ## 🎯 Visión General
@@ -213,6 +214,58 @@ cd Repo
 ./clone-repo.sh <repository-url> <directory-name>
 ```
 
+---
+
+### 🧩 Extension (VS Code/Cursor)
+**Propósito:** Extensión para explorar relaciones de código C# directamente en el editor
+
+**Tecnología:** TypeScript, VS Code Extension API, Axios
+**Consume:** Query Service API (puerto 8081)
+
+**Características:**
+- ✅ **Hover Info:** Información de clases/métodos al pasar el cursor
+- ✅ **Relations View:** Panel con relaciones del elemento seleccionado
+- ✅ **Inheritance View:** Jerarquía de herencia de clases
+- ✅ **Statistics View:** Estadísticas del grafo
+- ✅ **CodeLens:** Referencias inline en el código
+- ✅ **Multi-versión:** Soporte para consultar diferentes versiones del grafo
+- ✅ **Tailored Support:** Manejo automático de clases `*Extended`
+
+**Instalación:**
+```bash
+cd Extension
+
+# Instalar dependencias
+npm install
+
+# Compilar y empaquetar
+npm run package
+
+# El VSIX se genera en dist/
+# Instalar: Ctrl+Shift+P → "Extensions: Install from VSIX..."
+# Seleccionar: Extension/dist/grafo-code-explorer-0.1.0.vsix
+```
+
+**Configuración:**
+La extensión solicita configuración en el primer uso:
+- **API URL:** `http://localhost:8081` (Query Service)
+- **Graph Version:** Versión específica o vacío para todas
+
+**Comandos disponibles (Ctrl+Shift+P):**
+| Comando | Descripción |
+|---------|-------------|
+| `Grafo: Configure API Connection` | Configurar URL del API y versión |
+| `Grafo: Select Graph Version` | Cambiar versión del grafo |
+| `Grafo: Show Relations` | Ver relaciones del elemento actual |
+| `Grafo: Find Implementations` | Buscar implementaciones de interface |
+| `Grafo: Show Inheritance Hierarchy` | Ver jerarquía de herencia |
+| `Grafo: Search Code Elements` | Buscar en el grafo |
+| `Grafo: Check API Connection` | Verificar conexión al API |
+| `Grafo: Show Output Console` | Ver logs de la extensión |
+| `Grafo: Reload Window` | Recargar ventana (útil al actualizar) |
+
+**Documentación:** [Extension/README.md](Extension/README.md)
+
 ## 🔗 Flujo de Trabajo Completo
 
 ```
@@ -241,20 +294,22 @@ cd Repo
 │   Puerto 27019  │
 └────────┬────────┘
          │
-         ▼
-┌─────────────────┐
-│  MCP Server     │  (HTTP/SSE - Puerto 8083)
-│  + Query Service│  (REST API - Puerto 8081)
-└────────┬────────┘
-         │
-         ▼
-┌─────────────────┐
-│ Cursor/VSCode   │  (Usuario final)
-│  Múltiples      │  (http://localhost:8083/sse)
-│  clientes       │
-└─────────────────┘
+    ┌────┴────┐
+    ▼         ▼
+┌────────┐ ┌────────────────┐
+│  MCP   │ │ Query Service  │
+│ Server │ │  REST API      │
+│ :8083  │ │  :8081         │
+└───┬────┘ └───────┬────────┘
+    │              │
+    ▼              ▼
+┌────────┐ ┌────────────────┐
+│ Cursor │ │   Extension    │
+│ (MCP)  │ │  VS Code/      │
+│        │ │  Cursor        │
+└────────┘ └────────────────┘
 
-Todos los servicios ejecutan en red Docker: grafo-network
+Red Docker: grafo-network
 ```
 
 ## 🧪 Pruebas
@@ -487,17 +542,20 @@ Este proyecto es parte del sistema ICGuru.
 | MCP Server | `grafo mcp build && grafo mcp start` | 8083 (HTTP/SSE) |
 | Indexer | `cd Grafo/Indexer && dotnet run -- --solution path/to/sln` | output/*.json |
 | IndexerDb | `cd Grafo/IndexerDb && dotnet run --all` | MongoDB |
+| Extension | `cd Extension && npm install && npm run package` | dist/*.vsix |
 
 **Acceso Rápido:**
 - MCP Server SSE: http://localhost:8083/sse
 - MCP Server Health: http://localhost:8083/health
 - Query Service: http://localhost:8081/docs
 - MongoDB: `mongodb://localhost:27019/`
+- Extension VSIX: `Extension/dist/grafo-code-explorer-0.1.0.vsix`
 
 **Documentación:**
 - Guía Completa: [Grafo/README.md](Grafo/README.md)
 - Quick Start: [Grafo/QUICKSTART.md](Grafo/QUICKSTART.md)
 - Arquitectura: [Grafo/ECOSYSTEM_OVERVIEW.md](Grafo/ECOSYSTEM_OVERVIEW.md)
+- Extensión: [Extension/README.md](Extension/README.md)
 
 ---
 

@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#667eea;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#764ba2;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="nodeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#f093fb;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#f5576c;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="128" height="128" rx="20" ry="20" fill="url(#bgGrad)"/>
+
+  <!-- Graph edges (connections) -->
+  <line x1="64" y1="40" x2="35" y2="70" stroke="#ffffff" stroke-width="3" stroke-opacity="0.6"/>
+  <line x1="64" y1="40" x2="93" y2="70" stroke="#ffffff" stroke-width="3" stroke-opacity="0.6"/>
+  <line x1="35" y1="70" x2="50" y2="100" stroke="#ffffff" stroke-width="3" stroke-opacity="0.6"/>
+  <line x1="93" y1="70" x2="78" y2="100" stroke="#ffffff" stroke-width="3" stroke-opacity="0.6"/>
+  <line x1="35" y1="70" x2="93" y2="70" stroke="#ffffff" stroke-width="2" stroke-opacity="0.4"/>
+  <line x1="50" y1="100" x2="78" y2="100" stroke="#ffffff" stroke-width="2" stroke-opacity="0.4"/>
+
+  <!-- Central node (top) -->
+  <circle cx="64" cy="40" r="14" fill="url(#nodeGrad)"/>
+  <circle cx="64" cy="40" r="14" fill="none" stroke="#ffffff" stroke-width="2"/>
+
+  <!-- Left node -->
+  <circle cx="35" cy="70" r="12" fill="#4fd1c5"/>
+  <circle cx="35" cy="70" r="12" fill="none" stroke="#ffffff" stroke-width="2"/>
+
+  <!-- Right node -->
+  <circle cx="93" cy="70" r="12" fill="#63b3ed"/>
+  <circle cx="93" cy="70" r="12" fill="none" stroke="#ffffff" stroke-width="2"/>
+
+  <!-- Bottom left node -->
+  <circle cx="50" cy="100" r="10" fill="#fc8181"/>
+  <circle cx="50" cy="100" r="10" fill="none" stroke="#ffffff" stroke-width="2"/>
+
+  <!-- Bottom right node -->
+  <circle cx="78" cy="100" r="10" fill="#68d391"/>
+  <circle cx="78" cy="100" r="10" fill="none" stroke="#ffffff" stroke-width="2"/>
+
+  <!-- G letter in center node -->
+  <text x="64" y="45" font-family="Arial, sans-serif" font-size="16" font-weight="bold" fill="#ffffff" text-anchor="middle">G</text>
+</svg>

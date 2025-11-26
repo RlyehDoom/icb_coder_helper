@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+  <!-- Graph edges (lines) -->
+  <path d="M12 6.5L6.5 11M12 6.5L17.5 11M6.5 13L9 17M17.5 13L15 17M10 18H14" stroke="currentColor" stroke-width="1.5" fill="none"/>
+
+  <!-- Top node (main) -->
+  <circle cx="12" cy="5" r="3" fill="currentColor"/>
+
+  <!-- Left node -->
+  <circle cx="5.5" cy="12" r="2.5" fill="currentColor"/>
+
+  <!-- Right node -->
+  <circle cx="18.5" cy="12" r="2.5" fill="currentColor"/>
+
+  <!-- Bottom left node -->
+  <circle cx="8" cy="19" r="2" fill="currentColor"/>
+
+  <!-- Bottom right node -->
+  <circle cx="16" cy="19" r="2" fill="currentColor"/>
+</svg>
