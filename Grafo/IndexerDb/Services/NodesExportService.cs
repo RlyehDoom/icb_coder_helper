@@ -29,7 +29,59 @@ namespace IndexerDb.Services
         {
             _logger = logger;
             var settings = mongoSettings.Value;
-            var client = new MongoClient(settings.ConnectionString);
+
+            // Parse connection string and create MongoClientSettings
+            var mongoUrl = new MongoUrl(settings.ConnectionString);
+            var clientSettings = MongoClientSettings.FromUrl(mongoUrl);
+
+            // Get certificate path (uses default if not explicitly configured)
+            var certPath = settings.GetTlsCertificatePath();
+
+            // Configure TLS/SSL settings
+            if (settings.TlsInsecure || !string.IsNullOrEmpty(certPath))
+            {
+                var sslSettings = new SslSettings
+                {
+                    CheckCertificateRevocation = false,
+                    ServerCertificateValidationCallback = (sender, certificate, chain, sslPolicyErrors) =>
+                    {
+                        // Accept all server certificates when TlsInsecure is enabled
+                        return true;
+                    }
+                };
+
+                // Load client certificate if available
+                if (!string.IsNullOrEmpty(certPath) && System.IO.File.Exists(certPath))
+                {
+                    try
+                    {
+                        var pemContent = System.IO.File.ReadAllText(certPath);
+                        var certWithEphemeralKey = System.Security.Cryptography.X509Certificates.X509Certificate2
+                            .CreateFromPem(pemContent, pemContent);
+                        var certBytes = certWithEphemeralKey.Export(System.Security.Cryptography.X509Certificates.X509ContentType.Pkcs12);
+                        var cert = new System.Security.Cryptography.X509Certificates.X509Certificate2(
+                            certBytes,
+                            (string?)null,
+                            System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.Exportable |
+                            System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.PersistKeySet);
+
+                        sslSettings.ClientCertificates = new[] { cert };
+                        _logger.LogInformation("🔒 TLS enabled with client certificate: {CertFile}", certPath);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "⚠️ Could not load client certificate, proceeding without it");
+                    }
+                }
+                else if (settings.TlsInsecure)
+                {
+                    _logger.LogInformation("🔒 TLS enabled with certificate validation disabled");
+                }
+
+                clientSettings.SslSettings = sslSettings;
+            }
+
+            var client = new MongoClient(clientSettings);
             _database = client.GetDatabase(settings.DatabaseName);
             _logger.LogInformation("NodesExportService connected to MongoDB: {Database}", settings.DatabaseName);
         }
