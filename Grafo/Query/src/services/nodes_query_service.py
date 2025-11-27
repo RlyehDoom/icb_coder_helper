@@ -615,8 +615,219 @@ class NodesQueryService:
             return {"error": str(e)}
 
     # ============================================================================
+    # IMPACT ANALYSIS
+    # ============================================================================
+
+    async def analyze_impact(
+        self,
+        version: str,
+        node_id: str
+    ) -> Dict[str, Any]:
+        """
+        Analyze the impact of changes to a node.
+        Returns callers, implementers, inheritors, and affected projects.
+        """
+        try:
+            collection = self._get_collection(version)
+
+            # Get full target node
+            target = await self.get_node_by_id(version, node_id)
+            if not target:
+                return {"found": False, "message": f"Node {node_id} not found in v{version}"}
+
+            # Outgoing dependencies
+            outgoing_calls = target.get("calls", [])
+            outgoing_via = target.get("callsVia", [])
+            outgoing_implements = target.get("implements", [])
+            outgoing_inherits = target.get("inherits", [])
+            outgoing_uses = target.get("uses", [])
+
+            # Incoming dependencies - who depends on this node
+            incoming_callers = []
+            incoming_implementers = []
+            incoming_inheritors = []
+
+            # Find nodes that call this one
+            async for doc in collection.find({"calls": node_id}):
+                incoming_callers.append(self._normalize_node(doc))
+
+            # Find nodes that implement this interface
+            async for doc in collection.find({"implements": node_id}):
+                incoming_implementers.append(self._normalize_node(doc))
+
+            # Find nodes that inherit from this class
+            async for doc in collection.find({"inherits": node_id}):
+                incoming_inheritors.append(self._normalize_node(doc))
+
+            # Calculate affected projects and layers
+            affected_projects = set()
+            affected_layers = set()
+
+            for node in incoming_callers + incoming_implementers + incoming_inheritors:
+                if node.get("project"):
+                    affected_projects.add(node["project"])
+                if node.get("layer"):
+                    affected_layers.add(node["layer"])
+
+            # Group callers by layer
+            callers_by_layer: Dict[str, list] = {}
+            for caller in incoming_callers:
+                layer = caller.get("layer") or "other"
+                if layer not in callers_by_layer:
+                    callers_by_layer[layer] = []
+                callers_by_layer[layer].append(caller)
+
+            # Calculate totals
+            total_incoming = len(incoming_callers) + len(incoming_implementers) + len(incoming_inheritors)
+            total_outgoing = len(outgoing_calls) + len(outgoing_via)
+
+            # Determine impact level
+            has_presentation = "presentation" in affected_layers
+            has_implementers = len(incoming_implementers) > 0
+            has_inheritors = len(incoming_inheritors) > 0
+
+            if total_incoming > 10 or has_implementers or has_inheritors or has_presentation:
+                impact_level = "high"
+            elif total_incoming > 5 or len(affected_layers) >= 2:
+                impact_level = "medium"
+            else:
+                impact_level = "low"
+
+            # Generate text description
+            description = self._generate_impact_description(
+                target=target,
+                impact_level=impact_level,
+                total_incoming=total_incoming,
+                incoming_callers=incoming_callers,
+                incoming_implementers=incoming_implementers,
+                incoming_inheritors=incoming_inheritors,
+                affected_projects=affected_projects,
+                affected_layers=affected_layers,
+                has_presentation=has_presentation
+            )
+
+            return {
+                "found": True,
+                "version": version,
+                "target": target,
+                "description": description,
+                "impact": {
+                    "level": impact_level,
+                    "totalIncoming": total_incoming,
+                    "totalOutgoing": total_outgoing,
+                    "directCallers": len(incoming_callers),
+                    "implementers": len(incoming_implementers),
+                    "inheritors": len(incoming_inheritors),
+                    "affectedProjects": len(affected_projects),
+                    "affectedLayers": len(affected_layers),
+                    "hasPresentation": has_presentation
+                },
+                "incoming": {
+                    "callers": incoming_callers,
+                    "callersByLayer": callers_by_layer,
+                    "implementers": incoming_implementers,
+                    "inheritors": incoming_inheritors
+                },
+                "outgoing": {
+                    "calls": outgoing_calls,
+                    "callsVia": outgoing_via,
+                    "implements": outgoing_implements,
+                    "inherits": outgoing_inherits,
+                    "uses": outgoing_uses
+                },
+                "affectedProjects": list(affected_projects),
+                "affectedLayers": list(affected_layers)
+            }
+
+        except Exception as e:
+            logger.error(f"Error analyzing impact for {node_id}: {e}")
+            return {"found": False, "error": str(e)}
+
+    # ============================================================================
     # HELPERS
     # ============================================================================
+
+    def _generate_impact_description(
+        self,
+        target: Dict[str, Any],
+        impact_level: str,
+        total_incoming: int,
+        incoming_callers: list,
+        incoming_implementers: list,
+        incoming_inheritors: list,
+        affected_projects: set,
+        affected_layers: set,
+        has_presentation: bool
+    ) -> str:
+        """Generate a human-readable description of the impact analysis."""
+        target_name = target.get("name", "Unknown")
+        target_kind = target.get("kind", "element")
+
+        # Header with impact level
+        level_icons = {"high": "🔴", "medium": "🟡", "low": "🟢"}
+        level_labels = {"high": "ALTO", "medium": "MEDIO", "low": "BAJO"}
+
+        lines = []
+        lines.append(f"## Análisis de Impacto: {target_name}")
+        lines.append("")
+        lines.append(f"**Nivel de Impacto:** {level_icons[impact_level]} {level_labels[impact_level]}")
+        lines.append("")
+
+        # Summary
+        lines.append("### Resumen")
+        lines.append(f"- **Tipo:** {target_kind}")
+        lines.append(f"- **Dependencias entrantes:** {total_incoming}")
+        lines.append(f"- **Proyectos afectados:** {len(affected_projects)}")
+        lines.append(f"- **Capas afectadas:** {len(affected_layers)}")
+        lines.append("")
+
+        # Risk factors
+        risk_factors = []
+        if has_presentation:
+            risk_factors.append("⚠️ Afecta la capa de presentación (UI)")
+        if len(incoming_implementers) > 0:
+            risk_factors.append(f"⚠️ {len(incoming_implementers)} clases implementan esta interfaz")
+        if len(incoming_inheritors) > 0:
+            risk_factors.append(f"⚠️ {len(incoming_inheritors)} clases heredan de este elemento")
+        if total_incoming > 10:
+            risk_factors.append(f"⚠️ Alto número de dependencias ({total_incoming})")
+
+        if risk_factors:
+            lines.append("### Factores de Riesgo")
+            for factor in risk_factors:
+                lines.append(f"- {factor}")
+            lines.append("")
+
+        # Callers by layer
+        if incoming_callers:
+            lines.append("### Callers por Capa")
+            callers_by_layer: Dict[str, list] = {}
+            for caller in incoming_callers:
+                layer = caller.get("layer") or "other"
+                if layer not in callers_by_layer:
+                    callers_by_layer[layer] = []
+                callers_by_layer[layer].append(caller)
+
+            for layer, callers in sorted(callers_by_layer.items()):
+                lines.append(f"- **{layer.upper()}:** {len(callers)} callers")
+            lines.append("")
+
+        # Recommendations
+        lines.append("### Recomendaciones")
+        if impact_level == "high":
+            lines.append("- ✅ Revisar TODAS las dependencias antes de modificar")
+            lines.append("- ✅ Coordinar con los equipos de los proyectos afectados")
+            if incoming_implementers or incoming_inheritors:
+                lines.append("- ✅ Cambios de firma serán breaking changes")
+            if has_presentation:
+                lines.append("- ✅ Validar impacto en la interfaz de usuario")
+        elif impact_level == "medium":
+            lines.append("- ✅ Revisar las dependencias principales")
+            lines.append("- ✅ Considerar pruebas de regresión")
+        else:
+            lines.append("- ✅ Impacto manejable, proceder con precaución normal")
+
+        return "\n".join(lines)
 
     def _normalize_node(self, doc: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize a node document for consistent output."""
@@ -638,6 +849,7 @@ class NodesQueryService:
             "layer": doc.get("layer"),
             "containedIn": doc.get("containedIn"),
             "contains": doc.get("contains", []),
+            "hasMember": doc.get("hasMember", []),
             "calls": doc.get("calls", []),
             "callsVia": doc.get("callsVia", []),
             "indirectCall": doc.get("indirectCall", []),

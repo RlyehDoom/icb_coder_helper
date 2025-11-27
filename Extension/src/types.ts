@@ -83,6 +83,39 @@ export interface InheritanceResponse {
     descendants: Array<{ node: GraphNode; depth: number }>;
 }
 
+export interface ImpactAnalysisResponse {
+    found: boolean;
+    version: string;
+    target: GraphNode;
+    description: string;
+    impact: {
+        level: 'high' | 'medium' | 'low';
+        totalIncoming: number;
+        totalOutgoing: number;
+        directCallers: number;
+        implementers: number;
+        inheritors: number;
+        affectedProjects: number;
+        affectedLayers: number;
+        hasPresentation: boolean;
+    };
+    incoming: {
+        callers: GraphNode[];
+        callersByLayer: Record<string, GraphNode[]>;
+        implementers: GraphNode[];
+        inheritors: GraphNode[];
+    };
+    outgoing: {
+        calls: string[];
+        callsVia: string[];
+        implements: string[];
+        inherits: string[];
+        uses: string[];
+    };
+    affectedProjects: string[];
+    affectedLayers: string[];
+}
+
 export interface VersionsResponse {
     versions: string[];
     default: string;

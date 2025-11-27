@@ -4,7 +4,7 @@
  */
 import * as vscode from 'vscode';
 import { getClient } from '../api/grafoClient';
-import { GraphNode, LayerType, CurrentContext } from '../types';
+import { GraphNode, LayerType, CurrentContext, ImpactAnalysisResponse } from '../types';
 import { logger } from '../logger';
 
 // ============================================================================
@@ -78,16 +78,26 @@ export class ImpactProvider implements vscode.TreeDataProvider<TreeItem> {
     private _onDidChange = new vscode.EventEmitter<void>();
     readonly onDidChangeTreeData = this._onDidChange.event;
 
-    private data: Map<string, NodeItem[]> = new Map();
+    private callersByLayer: Map<string, NodeItem[]> = new Map();
+    private implementers: NodeItem[] = [];
+    private inheritors: NodeItem[] = [];
     private currentNode: GraphNode | null = null;
     private loading = false;
+    private impactData: ImpactAnalysisResponse['impact'] | null = null;
+    private affectedProjects: string[] = [];
+    private impactDescription: string = '';
 
     refresh() { this._onDidChange.fire(); }
 
     async loadForNode(node: GraphNode) {
         this.loading = true;
         this.currentNode = node;
-        this.data.clear();
+        this.callersByLayer.clear();
+        this.implementers = [];
+        this.inheritors = [];
+        this.impactData = null;
+        this.affectedProjects = [];
+        this.impactDescription = '';
         this.refresh();
 
         const client = getClient();
@@ -98,18 +108,22 @@ export class ImpactProvider implements vscode.TreeDataProvider<TreeItem> {
         }
 
         try {
-            const response = await client.findCallers(node.id, 2);
+            const response = await client.analyzeImpact(node.id);
 
-            // Group by layer
-            const byLayer = new Map<string, NodeItem[]>();
+            // Store impact metrics and description
+            this.impactData = response.impact;
+            this.affectedProjects = response.affectedProjects;
+            this.impactDescription = response.description || '';
 
-            for (const { node: caller } of [...response.callers, ...response.indirectCallers]) {
-                const layer = caller.layer || 'other';
-                if (!byLayer.has(layer)) byLayer.set(layer, []);
-                byLayer.get(layer)!.push(new NodeItem(caller));
+            // Process callers by layer
+            for (const [layer, callers] of Object.entries(response.incoming.callersByLayer)) {
+                this.callersByLayer.set(layer, callers.map(c => new NodeItem(c)));
             }
 
-            this.data = byLayer;
+            // Process implementers and inheritors
+            this.implementers = response.incoming.implementers.map(i => new NodeItem(i));
+            this.inheritors = response.incoming.inheritors.map(i => new NodeItem(i));
+
         } catch (e) {
             console.error('Impact analysis error:', e);
         }
@@ -120,7 +134,12 @@ export class ImpactProvider implements vscode.TreeDataProvider<TreeItem> {
 
     clear() {
         this.currentNode = null;
-        this.data.clear();
+        this.callersByLayer.clear();
+        this.implementers = [];
+        this.inheritors = [];
+        this.impactData = null;
+        this.affectedProjects = [];
+        this.impactDescription = '';
         this.refresh();
     }
 
@@ -138,10 +157,23 @@ export class ImpactProvider implements vscode.TreeDataProvider<TreeItem> {
         }
 
         if (!element) {
-            if (this.data.size === 0) {
-                return [new InfoItem('No callers found', 'check')];
+            const items: TreeItem[] = [];
+
+            // Header showing which method is being analyzed
+            items.push(new InfoItem(`Method: ${this.currentNode.name}`, 'target'));
+
+            const hasCallers = this.callersByLayer.size > 0;
+            const hasImplementers = this.implementers.length > 0;
+            const hasInheritors = this.inheritors.length > 0;
+
+            if (!hasCallers && !hasImplementers && !hasInheritors) {
+                items.push(new InfoItem('No dependencies found', 'check'));
+                items.push(new InfoItem('───────────────', 'dash'));
+                items.push(new InfoItem('🟢 Low Impact - No dependencies', 'circle-filled'));
+                return items;
             }
 
+            // Layer groups for callers
             const layerOrder = ['presentation', 'services', 'business', 'data', 'infrastructure', 'other'];
             const layerIcons: Record<string, string> = {
                 presentation: 'browser',
@@ -152,9 +184,54 @@ export class ImpactProvider implements vscode.TreeDataProvider<TreeItem> {
                 other: 'question'
             };
 
-            return layerOrder
-                .filter(l => this.data.has(l))
-                .map(l => new GroupItem(l.toUpperCase(), this.data.get(l)!, layerIcons[l]));
+            const groups = layerOrder
+                .filter(l => this.callersByLayer.has(l))
+                .map(l => new GroupItem(l.toUpperCase(), this.callersByLayer.get(l)!, layerIcons[l]));
+
+            items.push(...groups);
+
+            // Implementers (high impact indicator)
+            if (hasImplementers) {
+                items.push(new GroupItem('⚠️ IMPLEMENTERS', this.implementers, 'symbol-interface'));
+            }
+
+            // Inheritors (high impact indicator)
+            if (hasInheritors) {
+                items.push(new GroupItem('⚠️ INHERITORS', this.inheritors, 'type-hierarchy'));
+            }
+
+            // Criticality summary at the end
+            items.push(new InfoItem('───────────────', 'dash'));
+
+            if (this.impactData) {
+                // Use impact level from API
+                const icons: Record<string, string> = { high: '🔴', medium: '🟡', low: '🟢' };
+                const labels: Record<string, string> = { high: 'High Impact', medium: 'Medium Impact', low: 'Low Impact' };
+
+                // Impact level with description tooltip
+                const impactItem = new InfoItem(`${icons[this.impactData.level]} ${labels[this.impactData.level]}`, 'circle-filled');
+                if (this.impactDescription) {
+                    impactItem.tooltip = new vscode.MarkdownString(this.impactDescription);
+                }
+                items.push(impactItem);
+
+                items.push(new InfoItem(`Callers: ${this.impactData.directCallers}`, 'call-incoming'));
+
+                if (this.impactData.implementers > 0) {
+                    items.push(new InfoItem(`Implementers: ${this.impactData.implementers}`, 'symbol-interface'));
+                }
+                if (this.impactData.inheritors > 0) {
+                    items.push(new InfoItem(`Inheritors: ${this.impactData.inheritors}`, 'type-hierarchy'));
+                }
+
+                items.push(new InfoItem(`Layers: ${this.impactData.affectedLayers} | Projects: ${this.impactData.affectedProjects}`, 'layers'));
+
+                if (this.impactData.hasPresentation) {
+                    items.push(new InfoItem('⚠️ UI layer affected', 'warning'));
+                }
+            }
+
+            return items;
         }
 
         if (element instanceof GroupItem) {
@@ -231,15 +308,21 @@ export class DependenciesProvider implements vscode.TreeDataProvider<TreeItem> {
         }
 
         if (!element) {
+            const items: TreeItem[] = [];
+
+            // Header showing which method is being analyzed
+            items.push(new InfoItem(`Method: ${this.currentNode.name}`, 'target'));
+
             const groups: GroupItem[] = [];
             if (this.methods.length > 0) groups.push(new GroupItem('Methods', this.methods, 'symbol-method'));
             if (this.classes.length > 0) groups.push(new GroupItem('Classes', this.classes, 'symbol-class'));
             if (this.interfaces.length > 0) groups.push(new GroupItem('Interfaces', this.interfaces, 'symbol-interface'));
 
             if (groups.length === 0) {
-                return [new InfoItem('No dependencies found', 'check')];
+                items.push(new InfoItem('No dependencies found', 'check'));
+                return items;
             }
-            return groups;
+            return [...items, ...groups];
         }
 
         if (element instanceof GroupItem) {
@@ -287,7 +370,8 @@ export class ClassOverviewProvider implements vscode.TreeDataProvider<TreeItem> 
 
             // Count relationships
             // Use hasMember for class->method relationships (logical containment)
-            const methods = node.hasMember?.filter(id => id.includes(':mtd/')) || [];
+            // Support both formats: grafo:mtd/hash (new) and grafo:method/project/name (old)
+            const methods = node.hasMember?.filter(id => id.includes(':mtd/') || id.includes(':method/')) || [];
             const calls = node.calls?.length || 0;
             const callsVia = node.callsVia?.length || 0;
             const implements_ = node.implements?.length || 0;
@@ -451,19 +535,30 @@ export class OverridableMethodsProvider implements vscode.TreeDataProvider<TreeI
                 try {
                     // Get full node with hasMember array (logical class->method containment)
                     const fullNode = await client.getNodeById(baseClassNode.id);
-                    const methodIds = fullNode?.hasMember?.filter(id => id.includes(':mtd/')) || [];
+                    // Support both formats: grafo:mtd/hash (new) and grafo:method/project/name (old)
+                    const methodIds = fullNode?.hasMember?.filter(id => id.includes(':mtd/') || id.includes(':method/')) || [];
                     logger.debug(`[OverridableMethods] Base class has ${methodIds.length} methods in hasMember`);
 
-                    // Fetch each method's details
+                    // Extract method info from IDs without making additional API calls
+                    // ID format: grafo:method/Project/MethodName
                     for (const methodId of methodIds) {
-                        const methodNode = await client.getNodeById(methodId);
-                        if (methodNode) {
-                            baseClassMethods.push(methodNode);
-                            logger.debug(`[OverridableMethods] Found method: ${methodNode.name}`);
-                        }
+                        const parts = methodId.split('/');
+                        const methodName = parts[parts.length - 1];
+                        const project = parts.length > 2 ? parts[parts.length - 2] : baseClassNode.project;
+
+                        // Create minimal node with info extracted from ID
+                        baseClassMethods.push({
+                            id: methodId,
+                            name: methodName,
+                            fullName: methodName,
+                            type: 'Method',
+                            kind: 'method',
+                            project: project,
+                            namespace: baseClassNode.namespace
+                        } as GraphNode);
                     }
 
-                    logger.debug(`[OverridableMethods] API returned ${baseClassMethods.length} methods for class`);
+                    logger.debug(`[OverridableMethods] Extracted ${baseClassMethods.length} methods from hasMember IDs`);
                 } catch (e) {
                     logger.debug(`[OverridableMethods] Could not fetch base methods from API`);
                 }

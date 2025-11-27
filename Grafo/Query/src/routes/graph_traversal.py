@@ -306,3 +306,47 @@ async def get_graph_statistics(solution: Optional[str] = None):
     except Exception as e:
         logger.error(f"Error getting statistics: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class AnalyzeImpactRequest(BaseModel):
+    nodeId: str = Field(..., description="ID of the node to analyze")
+    version: Optional[str] = Field(default=None, description="Graph version to query (e.g., '7.9.2')")
+
+
+@router.post("/impact")
+async def analyze_impact(request: AnalyzeImpactRequest):
+    """
+    Analyze the impact of changes to a specific node.
+
+    Returns comprehensive impact analysis including:
+    - Callers (grouped by layer)
+    - Implementers (for interfaces)
+    - Inheritors (for classes)
+    - Affected projects and layers
+    - Impact level (high/medium/low)
+
+    Impact level criteria:
+    - HIGH: >10 callers, or has implementers, or has inheritors, or affects presentation layer
+    - MEDIUM: >5 callers, or affects 2+ layers
+    - LOW: ≤5 callers, single layer
+    """
+    try:
+        service = get_nodes_service()
+
+        # Use default version if not specified
+        version = request.version or "7.9.2"
+
+        result = await service.analyze_impact(
+            version=version,
+            node_id=request.nodeId
+        )
+
+        if not result.get("found"):
+            raise HTTPException(status_code=404, detail=result.get("message", "Node not found"))
+
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error analyzing impact: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

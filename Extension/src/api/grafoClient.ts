@@ -11,6 +11,7 @@ import {
     CalleesResponse,
     ImplementationsResponse,
     InheritanceResponse,
+    ImpactAnalysisResponse,
     VersionsResponse,
     HealthResponse,
     StatsResponse,
@@ -69,6 +70,7 @@ export class GrafoClient {
         if (data.callers) return `${data.callers.length} callers`;
         if (data.callees) return `${data.callees.length} callees`;
         if (data.implementations) return `${data.implementations.length} implementations`;
+        if (data.impact) return `impact: ${data.impact.level}`;
         if (data.versions) return `${data.versions.length} versions`;
         if (data.status) return data.status;
         if (data.name) return data.name;
@@ -160,6 +162,15 @@ export class GrafoClient {
         logger.debug(`Finding inheritance for: ${classId}`);
         const { data } = await this.client.get<InheritanceResponse>(
             `/api/v1/graph/${this.version}/inheritance/${encodeURIComponent(classId)}?max_depth=${maxDepth}`
+        );
+        return data;
+    }
+
+    async analyzeImpact(nodeId: string): Promise<ImpactAnalysisResponse> {
+        logger.debug(`Analyzing impact for: ${nodeId}`);
+        const { data } = await this.client.post<ImpactAnalysisResponse>(
+            `/api/graph/impact`,
+            { nodeId, version: this.version }
         );
         return data;
     }
