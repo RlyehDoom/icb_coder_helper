@@ -172,14 +172,21 @@ export interface LayerStats {
 }
 
 // Graph Visualization
+// Note: type is string (not NodeKind) to allow display types like 'interfaceMethod'
 export interface CytoscapeNode {
     data: {
         id: string;
         label: string;
-        type: NodeKind;
+        type: string;
         layer?: LayerType;
         project?: string;
+        namespace?: string;
+        fullName?: string;
+        accessibility?: string;
+        isAbstract?: boolean;
+        isStatic?: boolean;
         isCurrent?: boolean;
+        containedIn?: string;
     };
 }
 

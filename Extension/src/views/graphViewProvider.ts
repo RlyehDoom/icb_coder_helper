@@ -15,6 +15,10 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
 
     constructor(private readonly _extensionUri: vscode.Uri) {}
 
+    public get currentNode(): GraphNode | null {
+        return this._currentNode;
+    }
+
     public resolveWebviewView(
         webviewView: vscode.WebviewView,
         _context: vscode.WebviewViewResolveContext,
@@ -35,8 +39,39 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
                 const client = getClient();
                 if (client) {
                     const node = await client.getNodeById(data.nodeId);
-                    if (node?.source?.file) {
-                        vscode.commands.executeCommand('grafo.navigateToNode', node);
+                    if (node) {
+                        // If it's an interface or interface method, try to find implementation
+                        if (node.kind === 'interface' || (node.kind === 'method' && node.containedIn?.includes('interface'))) {
+                            try {
+                                const impls = await client.findImplementations(node.id);
+                                if (impls.implementations && impls.implementations.length > 0) {
+                                    if (impls.implementations.length === 1) {
+                                        // Single implementation, navigate directly
+                                        vscode.commands.executeCommand('grafo.navigateToNode', impls.implementations[0]);
+                                    } else {
+                                        // Multiple implementations, let user choose
+                                        const items = impls.implementations.map(impl => ({
+                                            label: impl.name,
+                                            description: impl.namespace || impl.project,
+                                            impl
+                                        }));
+                                        const selected = await vscode.window.showQuickPick(items, {
+                                            placeHolder: 'Select implementation to navigate'
+                                        });
+                                        if (selected) {
+                                            vscode.commands.executeCommand('grafo.navigateToNode', selected.impl);
+                                        }
+                                    }
+                                    return;
+                                }
+                            } catch (e) {
+                                // No implementations found, fall through to default behavior
+                            }
+                        }
+                        // Default: navigate to the node itself
+                        if (node.source?.file) {
+                            vscode.commands.executeCommand('grafo.navigateToNode', node);
+                        }
                     }
                 }
             }
@@ -56,14 +91,54 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
             const edges: CytoscapeEdge[] = [];
             const addedNodes = new Set<string>();
 
+            // Helper to get node type with fallback
+            // Use kind, fallback to type, fallback to extracting from ID (grafo:{kind}/...)
+            const getNodeType = (n: GraphNode, nodeId: string): string => {
+                let kind: string = 'class';
+                if (n.kind) kind = n.kind;
+                else if (n.type) kind = n.type;
+                else {
+                    // Extract from ID format: grafo:{kind}/{project}/{name}
+                    const match = nodeId.match(/^grafo:(\w+)\//);
+                    if (match) kind = match[1];
+                }
+                return kind;
+            };
+
+            // Check if a method belongs to an interface
+            const isInterfaceMethod = (n: GraphNode, nodeId: string): boolean => {
+                // Check containedIn for interface
+                if (n.containedIn && n.containedIn.includes('interface')) return true;
+                // Check if contained in an interface node (ID pattern)
+                if (n.containedIn && n.containedIn.match(/grafo:interface\//)) return true;
+                // Check node name patterns (methods in interfaces often have I prefix in container)
+                if (n.namespace && n.namespace.match(/\.I[A-Z]/)) return true;
+                return false;
+            };
+
+            // Helper to create node data with full info
+            const createNodeData = (n: GraphNode, id: string) => {
+                let nodeType = getNodeType(n, id);
+                // Differentiate interface methods from implementation methods
+                if (nodeType === 'method' && isInterfaceMethod(n, id)) {
+                    nodeType = 'interfaceMethod';
+                }
+                return {
+                    id: id,
+                    label: n.name,
+                    type: nodeType,
+                    layer: n.layer,
+                    project: n.project,
+                    namespace: n.namespace,
+                    fullName: n.fullName,
+                    accessibility: n.accessibility
+                };
+            };
+
             // Add current node
             nodes.push({
                 data: {
-                    id: node.id,
-                    label: node.name,
-                    type: node.kind,
-                    layer: node.layer,
-                    project: node.project,
+                    ...createNodeData(node, node.id),
                     isCurrent: true
                 }
             });
@@ -74,15 +149,7 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
                 for (const callId of node.calls.slice(0, 10)) {
                     const callee = await client.getNodeById(callId);
                     if (callee && !addedNodes.has(callId)) {
-                        nodes.push({
-                            data: {
-                                id: callId,
-                                label: callee.name,
-                                type: callee.kind,
-                                layer: callee.layer,
-                                project: callee.project
-                            }
-                        });
+                        nodes.push({ data: createNodeData(callee, callId) });
                         addedNodes.add(callId);
                     }
                     edges.push({
@@ -101,15 +168,7 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
                 for (const viaId of node.callsVia.slice(0, 5)) {
                     const viaNode = await client.getNodeById(viaId);
                     if (viaNode && !addedNodes.has(viaId)) {
-                        nodes.push({
-                            data: {
-                                id: viaId,
-                                label: viaNode.name,
-                                type: viaNode.kind,
-                                layer: viaNode.layer,
-                                project: viaNode.project
-                            }
-                        });
+                        nodes.push({ data: createNodeData(viaNode, viaId) });
                         addedNodes.add(viaId);
                     }
                     edges.push({
@@ -128,15 +187,7 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
                 for (const implId of node.implements) {
                     const implNode = await client.getNodeById(implId);
                     if (implNode && !addedNodes.has(implId)) {
-                        nodes.push({
-                            data: {
-                                id: implId,
-                                label: implNode.name,
-                                type: implNode.kind,
-                                layer: implNode.layer,
-                                project: implNode.project
-                            }
-                        });
+                        nodes.push({ data: createNodeData(implNode, implId) });
                         addedNodes.add(implId);
                     }
                     edges.push({
@@ -155,15 +206,7 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
                 for (const inheritId of node.inherits) {
                     const inheritNode = await client.getNodeById(inheritId);
                     if (inheritNode && !addedNodes.has(inheritId)) {
-                        nodes.push({
-                            data: {
-                                id: inheritId,
-                                label: inheritNode.name,
-                                type: inheritNode.kind,
-                                layer: inheritNode.layer,
-                                project: inheritNode.project
-                            }
-                        });
+                        nodes.push({ data: createNodeData(inheritNode, inheritId) });
                         addedNodes.add(inheritId);
                     }
                     edges.push({
@@ -183,15 +226,7 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
                     const callers = await client.findCallers(node.id, 1);
                     for (const { node: caller } of callers.callers.slice(0, 5)) {
                         if (!addedNodes.has(caller.id)) {
-                            nodes.push({
-                                data: {
-                                    id: caller.id,
-                                    label: caller.name,
-                                    type: caller.kind,
-                                    layer: caller.layer,
-                                    project: caller.project
-                                }
-                            });
+                            nodes.push({ data: createNodeData(caller, caller.id) });
                             addedNodes.add(caller.id);
                         }
                         edges.push({
@@ -278,6 +313,7 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
         <div class="legend-item"><span class="legend-color" style="background:#4fc3f7"></span>Class</div>
         <div class="legend-item"><span class="legend-color" style="background:#81c784"></span>Interface</div>
         <div class="legend-item"><span class="legend-color" style="background:#ffb74d"></span>Method</div>
+        <div class="legend-item"><span class="legend-color" style="background:#4db6ac"></span>Interface Method</div>
     </div>
     <script>
         const vscode = acquireVsCodeApi();
@@ -286,6 +322,7 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
             class: '#4fc3f7',
             interface: '#81c784',
             method: '#ffb74d',
+            interfaceMethod: '#4db6ac',
             property: '#ce93d8',
             enum: '#f48fb1',
             default: '#90a4ae'
@@ -301,6 +338,7 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
 
         let cy = cytoscape({
             container: document.getElementById('cy'),
+            wheelSensitivity: 0.1,
             style: [
                 {
                     selector: 'node',

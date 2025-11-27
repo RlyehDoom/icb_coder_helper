@@ -64,6 +64,11 @@
         "title": "Grafo: Check Connection"
       },
       {
+        "command": "grafo.configureApiUrl",
+        "title": "Grafo: Configure API URL",
+        "icon": "$(gear)"
+      },
+      {
         "command": "grafo.selectVersion",
         "title": "Grafo: Select Version",
         "icon": "$(versions)"
@@ -85,6 +90,16 @@
       {
         "command": "grafo.clearOutput",
         "title": "Grafo: Clear Output Console"
+      },
+      {
+        "command": "grafo.openPanel",
+        "title": "Grafo: Open in Side Panel",
+        "icon": "$(split-horizontal)"
+      },
+      {
+        "command": "grafo.dockPanel",
+        "title": "Grafo: Dock to Sidebar",
+        "icon": "$(layout-sidebar-left)"
       }
     ],
     "viewsContainers": {
@@ -134,28 +149,39 @@
     "menus": {
       "view/title": [
         {
+          "command": "grafo.openPanel",
+          "when": "view =~ /^grafo\\./",
+          "group": "navigation@1"
+        },
+        {
           "command": "grafo.refreshAll",
           "when": "view =~ /^grafo\\./",
-          "group": "navigation"
+          "group": "navigation@2"
         },
         {
           "command": "grafo.selectVersion",
           "when": "view == grafo.classOverviewView",
-          "group": "navigation"
+          "group": "navigation@3"
         }
       ]
     }
   },
   "scripts": {
-    "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
+    "vscode:prepublish": "npm run package-extension",
+    "compile": "npm run check-types && node esbuild.js",
+    "watch": "npm-run-all -p watch:*",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "check-types": "tsc --noEmit",
+    "package-extension": "npm run check-types && node esbuild.js --production",
     "package": "vsce package --out dist/"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
     "@types/vscode": "^1.85.0",
-    "@vscode/vsce": "^2.22.0",
+    "@vscode/vsce": "^3.7.1",
+    "esbuild": "^0.27.0",
+    "npm-run-all": "^4.1.5",
     "typescript": "^5.3.0"
   },
   "dependencies": {

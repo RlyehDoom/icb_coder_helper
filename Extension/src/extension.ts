@@ -14,6 +14,7 @@ import {
     ImplementationsProvider
 } from './views/treeProviders';
 import { GraphViewProvider } from './views/graphViewProvider';
+import { GrafoPanel } from './views/grafoPanel';
 
 // Providers
 let impactProvider: ImpactProvider;
@@ -115,6 +116,11 @@ function registerCommands(context: vscode.ExtensionContext) {
         vscode.commands.registerCommand('grafo.checkConnection', checkConnection)
     );
 
+    // Configure API URL
+    context.subscriptions.push(
+        vscode.commands.registerCommand('grafo.configureApiUrl', configureApiUrl)
+    );
+
     // Select version
     context.subscriptions.push(
         vscode.commands.registerCommand('grafo.selectVersion', async () => {
@@ -141,9 +147,9 @@ function registerCommands(context: vscode.ExtensionContext) {
         })
     );
 
-    // Navigate to node
+    // Navigate to node (opens file in background without losing focus, always in left column)
     context.subscriptions.push(
-        vscode.commands.registerCommand('grafo.navigateToNode', async (node: GraphNode) => {
+        vscode.commands.registerCommand('grafo.navigateToNode', async (node: GraphNode, preserveFocus: boolean = true) => {
             if (!node.source?.file) return;
 
             // Try to find file in workspace
@@ -156,7 +162,15 @@ function registerCommands(context: vscode.ExtensionContext) {
                     await vscode.workspace.fs.stat(filePath);
                     const doc = await vscode.workspace.openTextDocument(filePath);
                     const line = node.source.range?.start || 1;
+
+                    // Find the first editor group (leftmost column)
+                    const firstGroup = vscode.window.tabGroups.all.find(g => g.viewColumn === vscode.ViewColumn.One);
+                    const targetColumn = firstGroup ? vscode.ViewColumn.One : vscode.ViewColumn.Active;
+
                     await vscode.window.showTextDocument(doc, {
+                        viewColumn: targetColumn,
+                        preserveFocus: preserveFocus,
+                        preview: false,
                         selection: new vscode.Range(line - 1, 0, line - 1, 0)
                     });
                     return;
@@ -203,6 +217,68 @@ function registerCommands(context: vscode.ExtensionContext) {
             }
         })
     );
+
+    // Open panel (undock to side)
+    context.subscriptions.push(
+        vscode.commands.registerCommand('grafo.openPanel', () => {
+            const panel = GrafoPanel.createOrShow(context.extensionUri);
+            // Sync from sidebar graph context (not from current file)
+            const sidebarNode = graphViewProvider.currentNode;
+            if (sidebarNode) {
+                panel.loadForClass(sidebarNode);
+            }
+            logger.info('Panel opened in side view');
+        })
+    );
+
+    // Dock panel (close panel, focus sidebar)
+    context.subscriptions.push(
+        vscode.commands.registerCommand('grafo.dockPanel', () => {
+            if (GrafoPanel.currentPanel) {
+                GrafoPanel.currentPanel.dispose();
+            }
+            // Focus the sidebar
+            vscode.commands.executeCommand('grafo.graphView.focus');
+            logger.info('Panel docked to sidebar');
+        })
+    );
+}
+
+async function configureApiUrl() {
+    const config = vscode.workspace.getConfiguration('grafo');
+    const currentUrl = config.get<string>('apiUrl', 'http://localhost:8081');
+
+    const url = await vscode.window.showInputBox({
+        title: 'Grafo API URL',
+        prompt: 'Enter the Grafo Query Service API URL',
+        value: currentUrl,
+        placeHolder: 'http://localhost:8081',
+        validateInput: (value) => {
+            if (!value) {
+                return 'URL is required';
+            }
+            try {
+                new URL(value);
+                return null;
+            } catch {
+                return 'Please enter a valid URL (e.g., http://localhost:8081)';
+            }
+        }
+    });
+
+    if (url && url !== currentUrl) {
+        await config.update('apiUrl', url, vscode.ConfigurationTarget.Global);
+
+        // Reinitialize client with new URL
+        const version = config.get<string>('graphVersion', '6.5.0');
+        initClient(url, version);
+
+        logger.info(`API URL updated to: ${url}`);
+        vscode.window.showInformationMessage(`Grafo: API URL updated to ${url}`);
+
+        // Test connection with new URL
+        await checkConnection();
+    }
 }
 
 async function checkConnection() {
@@ -230,7 +306,21 @@ async function checkConnection() {
     } catch (e) {
         statusBar.text = '$(error) Grafo: Disconnected';
         statusBar.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
-        vscode.window.showErrorMessage('Grafo: Cannot connect to API');
+
+        const config = vscode.workspace.getConfiguration('grafo');
+        const apiUrl = config.get<string>('apiUrl', 'http://localhost:8081');
+
+        const action = await vscode.window.showErrorMessage(
+            `Grafo: Cannot connect to API at ${apiUrl}`,
+            'Configure URL',
+            'Retry'
+        );
+
+        if (action === 'Configure URL') {
+            vscode.commands.executeCommand('grafo.configureApiUrl');
+        } else if (action === 'Retry') {
+            checkConnection();
+        }
     }
 }
 
@@ -375,6 +465,11 @@ async function loadContextFromDocument(document: vscode.TextDocument) {
             overridableMethodsProvider.loadForClass(node, document);
             graphViewProvider.loadForNode(node);
 
+            // Sync to panel if open and not locked
+            if (GrafoPanel.currentPanel && !GrafoPanel.currentPanel.isLocked) {
+                GrafoPanel.currentPanel.loadForClass(node);
+            }
+
             if (node.kind === 'interface') {
                 logger.widget('Implementations', 'Loading', node.name);
                 implementationsProvider.loadForInterface(node);
@@ -412,6 +507,11 @@ async function loadContextFromSelection(editor: vscode.TextEditor) {
                 impactProvider.loadForNode(node);
                 dependenciesProvider.loadForNode(node);
                 graphViewProvider.loadForNode(node);
+
+                // Sync to panel if open and not locked
+                if (GrafoPanel.currentPanel && !GrafoPanel.currentPanel.isLocked) {
+                    GrafoPanel.currentPanel.loadForNode(node);
+                }
             } else {
                 logger.warn(`Method not found in graph: ${methodName}`);
             }
@@ -469,6 +569,9 @@ function clearAllProviders() {
     overridableMethodsProvider.clear();
     implementationsProvider.clear();
     graphViewProvider.clear();
+    if (GrafoPanel.currentPanel) {
+        GrafoPanel.currentPanel.clear();
+    }
 }
 
 export function deactivate() {

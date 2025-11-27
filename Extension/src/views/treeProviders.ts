@@ -167,11 +167,46 @@ export class ImpactProvider implements vscode.TreeDataProvider<TreeItem> {
             const hasInheritors = this.inheritors.length > 0;
 
             if (!hasCallers && !hasImplementers && !hasInheritors) {
-                items.push(new InfoItem('No dependencies found', 'check'));
                 items.push(new InfoItem('───────────────', 'dash'));
                 items.push(new InfoItem('🟢 Low Impact - No dependencies', 'circle-filled'));
+                items.push(new InfoItem('No dependencies found', 'check'));
                 return items;
             }
+
+            // Impact summary first (before components)
+            items.push(new InfoItem('───────────────', 'dash'));
+
+            if (this.impactData) {
+                // Use impact level from API
+                const icons: Record<string, string> = { high: '🔴', medium: '🟡', low: '🟢' };
+                const labels: Record<string, string> = { high: 'High Impact', medium: 'Medium Impact', low: 'Low Impact' };
+
+                // Impact level with description tooltip
+                const impactItem = new InfoItem(`${icons[this.impactData.level]} ${labels[this.impactData.level]}`, 'circle-filled');
+                if (this.impactDescription) {
+                    impactItem.tooltip = new vscode.MarkdownString(this.impactDescription);
+                }
+                items.push(impactItem);
+
+                items.push(new InfoItem(`Callers: ${this.impactData.directCallers}`, 'call-incoming'));
+                items.push(new InfoItem(`Layers: ${this.impactData.affectedLayers} | Projects: ${this.impactData.affectedProjects}`, 'layers'));
+
+                // Warning for UI layer affected
+                if (this.impactData.hasPresentation) {
+                    items.push(new InfoItem('⚠️ UI layer affected', 'warning'));
+                }
+
+                // Additional stats
+                if (this.impactData.implementers > 0) {
+                    items.push(new InfoItem(`Implementers: ${this.impactData.implementers}`, 'symbol-interface'));
+                }
+                if (this.impactData.inheritors > 0) {
+                    items.push(new InfoItem(`Inheritors: ${this.impactData.inheritors}`, 'type-hierarchy'));
+                }
+            }
+
+            // Components section
+            items.push(new InfoItem('───────────────', 'dash'));
 
             // Layer groups for callers
             const layerOrder = ['presentation', 'services', 'business', 'data', 'infrastructure', 'other'];
@@ -198,37 +233,6 @@ export class ImpactProvider implements vscode.TreeDataProvider<TreeItem> {
             // Inheritors (high impact indicator)
             if (hasInheritors) {
                 items.push(new GroupItem('⚠️ INHERITORS', this.inheritors, 'type-hierarchy'));
-            }
-
-            // Criticality summary at the end
-            items.push(new InfoItem('───────────────', 'dash'));
-
-            if (this.impactData) {
-                // Use impact level from API
-                const icons: Record<string, string> = { high: '🔴', medium: '🟡', low: '🟢' };
-                const labels: Record<string, string> = { high: 'High Impact', medium: 'Medium Impact', low: 'Low Impact' };
-
-                // Impact level with description tooltip
-                const impactItem = new InfoItem(`${icons[this.impactData.level]} ${labels[this.impactData.level]}`, 'circle-filled');
-                if (this.impactDescription) {
-                    impactItem.tooltip = new vscode.MarkdownString(this.impactDescription);
-                }
-                items.push(impactItem);
-
-                items.push(new InfoItem(`Callers: ${this.impactData.directCallers}`, 'call-incoming'));
-
-                if (this.impactData.implementers > 0) {
-                    items.push(new InfoItem(`Implementers: ${this.impactData.implementers}`, 'symbol-interface'));
-                }
-                if (this.impactData.inheritors > 0) {
-                    items.push(new InfoItem(`Inheritors: ${this.impactData.inheritors}`, 'type-hierarchy'));
-                }
-
-                items.push(new InfoItem(`Layers: ${this.impactData.affectedLayers} | Projects: ${this.impactData.affectedProjects}`, 'layers'));
-
-                if (this.impactData.hasPresentation) {
-                    items.push(new InfoItem('⚠️ UI layer affected', 'warning'));
-                }
             }
 
             return items;
