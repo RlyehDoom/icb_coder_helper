@@ -18,9 +18,9 @@ services:
       - "8081:8081"
 
     environment:
-      # MongoDB Configuration - PRODUCCIÓN (optimized connection string)
-      - MONGODB_CONNECTION_STRING=mongodb://sonata:qwertY.!1982@207.244.249.22:28101/GraphDB?authSource=admin&tls=true&tlsAllowInvalidCertificates=true&tlsAllowInvalidHostnames=true
-      - MONGODB_DATABASE=GraphDB
+      # MongoDB Configuration - PRODUCCIÓN (desde .env.prod)
+      - MONGODB_CONNECTION_STRING=${MONGODB_CONNECTION_STRING}
+      - MONGODB_DATABASE=${MONGODB_DATABASE:-GraphDB}
       - MONGODB_PROJECTS_COLLECTION=projects
 
       # TLS Configuration (optional - connection string handles TLS)
@@ -69,9 +69,9 @@ services:
     environment:
       # Server Configuration (puerto 8082 está tomado en producción)
       - SERVER_PORT=9083
-      # MongoDB Configuration - PRODUCCIÓN (optimized connection string)
-      - MONGODB_CONNECTION_STRING=mongodb://sonata:qwertY.!1982@207.244.249.22:28101/GraphDB?authSource=admin&tls=true&tlsAllowInvalidCertificates=true&tlsAllowInvalidHostnames=true
-      - MONGODB_DATABASE=GraphDB
+      # MongoDB Configuration - PRODUCCIÓN (desde .env.prod)
+      - MONGODB_CONNECTION_STRING=${MONGODB_CONNECTION_STRING}
+      - MONGODB_DATABASE=${MONGODB_DATABASE:-GraphDB}
       - MONGODB_PROJECTS_COLLECTION=projects
 
       # TLS Configuration (optional - connection string handles TLS)

@@ -1,4 +1,1 @@
-"""
-Tests para el servicio de consultas de grafo.
-"""
-
+# Grafo API Tests

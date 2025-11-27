@@ -1,5 +1,6 @@
 using Newtonsoft.Json;
 using System.Text;
+using System.Text.Json;
 using System.Xml;
 using System.Xml.Serialization;
 using SymbolInfo = RoslynIndexer.Models.SymbolInfo;
@@ -10,6 +11,8 @@ namespace RoslynIndexer.Services
 {
     public class OutputService
     {
+        private readonly JsonLdConverter _jsonLdConverter = new();
+
         public async Task SaveIndexResult(IndexResult result, string outputPath, string format)
         {
             var content = format.ToLower() switch
@@ -24,14 +27,62 @@ namespace RoslynIndexer.Services
 
         public async Task SaveGraphResult(GraphResult result, string outputPath, string format)
         {
-            var content = format.ToLower() switch
+            switch (format.ToLower())
             {
-                "json" => JsonConvert.SerializeObject(result, Newtonsoft.Json.Formatting.Indented),
-                "xml" => SerializeToXml(result),
-                _ => throw new NotSupportedException($"Output format not supported: {format}")
-            };
+                case "json":
+                case "jsonld":
+                case "ndjson":
+                    // Default: NDJSON-LD format (scalable, one document per line)
+                    await SaveNdjsonLd(result, outputPath);
+                    break;
 
-            await File.WriteAllTextAsync(outputPath, content, Encoding.UTF8);
+                case "json-legacy":
+                    // Legacy format (old custom format with all data in one file)
+                    var content = JsonConvert.SerializeObject(result, Newtonsoft.Json.Formatting.Indented);
+                    await File.WriteAllTextAsync(outputPath, content, Encoding.UTF8);
+                    Console.WriteLine($"Graph saved in JSON-LEGACY format to: {outputPath}");
+                    break;
+
+                case "xml":
+                    var xmlContent = SerializeToXml(result);
+                    await File.WriteAllTextAsync(outputPath, xmlContent, Encoding.UTF8);
+                    Console.WriteLine($"Graph saved in XML format to: {outputPath}");
+                    break;
+
+                default:
+                    throw new NotSupportedException($"Output format not supported: {format}. Supported: json, ndjson, json-legacy, xml");
+            }
+        }
+
+        /// <summary>
+        /// Saves graph as NDJSON-LD format (one JSON document per line)
+        /// Streaming output for memory efficiency with large graphs
+        /// </summary>
+        private async Task SaveNdjsonLd(GraphResult result, string outputPath)
+        {
+            // Change extension to .ndjson if it's .json
+            var ndjsonPath = outputPath;
+            if (outputPath.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+            {
+                ndjsonPath = outputPath.Substring(0, outputPath.Length - 5) + ".ndjson";
+            }
+
+            // Stream write for memory efficiency
+            using var writer = new StreamWriter(ndjsonPath, false, Encoding.UTF8);
+
+            var lineCount = 0;
+            foreach (var line in _jsonLdConverter.ConvertToNdjsonLd(result))
+            {
+                await writer.WriteLineAsync(line);
+                lineCount++;
+            }
+
+            Console.WriteLine($"Graph saved in NDJSON-LD format ({lineCount} documents) to: {ndjsonPath}");
+
+            // Also save context.jsonld for reference
+            var contextPath = Path.Combine(Path.GetDirectoryName(ndjsonPath) ?? "", "context.jsonld");
+            await File.WriteAllTextAsync(contextPath, _jsonLdConverter.GenerateContextFile(), Encoding.UTF8);
+            Console.WriteLine($"Context file saved to: {contextPath}");
         }
 
         public async Task SaveStatistics(Dictionary<string, int> statistics, string csvPath)

@@ -150,7 +150,6 @@ static class Program
             // Build output file paths
             var symbolsPath = Path.Combine(outputDirectory, $"{filePrefix}-symbols.json");
             var graphPath = Path.Combine(outputDirectory, $"{filePrefix}-graph.json");
-            var structuralGraphPath = Path.Combine(outputDirectory, $"{filePrefix}-graph-structural.json");
             var statsPath = Path.Combine(outputDirectory, $"{filePrefix}-stats.csv");
 
             // Create index result
@@ -170,33 +169,59 @@ static class Program
             // Always generate graph (consolidating old GraphOutputPath logic)
             if (options.Verbose)
                 Console.WriteLine("Generating symbol relationship graph...");
-            
+
             var graphResult = await graphService.GenerateSymbolGraph(
-                filteredSymbols, 
+                filteredSymbols,
                 options.SolutionPath,
                 analysisService.AllMethodInvocations,
                 analysisService.AllTypeUsages,
                 analysisService.AllInheritanceRelations,
                 analysisService.AllInterfaceImplementations);
-            await outputService.SaveGraphResult(graphResult, graphPath, options.OutputFormat);
-            
-            if (options.Verbose)
-                Console.WriteLine($"Graph saved to: {graphPath}");
-            
-            // Generate structural-only version
-            if (options.Verbose)
-                Console.WriteLine("Generating structural-only graph...");
-            
-            var structuralGraph = graphService.GenerateStructuralOnlyGraph(graphResult);
-            await outputService.SaveGraphResult(structuralGraph, structuralGraphPath, options.OutputFormat);
-            
-            if (options.Verbose)
-                Console.WriteLine($"Structural-only graph saved to: {structuralGraphPath}");
 
-            // Save graph statistics CSV
-            await outputService.SaveGraphStatisticsCsv(graphResult, statsPath);
-            if (options.Verbose)
-                Console.WriteLine($"Graph statistics saved to: {statsPath}");
+            // MongoDB Direct Export (v2.1)
+            if (options.OutputMongoDB)
+            {
+                var connectionString = options.MongoDbConnection ?? "mongodb://localhost:27019/";
+                var mongoExporter = new MongoDbExporter(connectionString, options.MongoDbDatabase, options.Verbose);
+
+                var solutionName = Path.GetFileNameWithoutExtension(options.SolutionPath);
+
+                // Clean existing data if requested
+                if (options.MongoDbClean)
+                {
+                    Console.WriteLine($"Cleaning existing data for: {solutionName}");
+                    await mongoExporter.DeleteSolutionAsync(solutionName);
+                }
+
+                // Export to MongoDB
+                var exportResult = await mongoExporter.ExportAsync(graphResult, solutionName);
+
+                if (exportResult.Success)
+                {
+                    Console.WriteLine($"MongoDB export completed successfully");
+                    Console.WriteLine($"  Nodes: {exportResult.NodesExported}");
+                    Console.WriteLine($"  Duration: {exportResult.Duration.TotalSeconds:F2}s");
+                    Console.WriteLine($"  Database: {options.MongoDbDatabase}");
+                }
+                else
+                {
+                    Console.WriteLine($"MongoDB export failed: {exportResult.Error}");
+                    return 1;
+                }
+            }
+            else
+            {
+                // File-based output (default)
+                await outputService.SaveGraphResult(graphResult, graphPath, options.OutputFormat);
+
+                if (options.Verbose)
+                    Console.WriteLine($"Graph saved to: {graphPath}");
+
+                // Save graph statistics CSV
+                await outputService.SaveGraphStatisticsCsv(graphResult, statsPath);
+                if (options.Verbose)
+                    Console.WriteLine($"Graph statistics saved to: {statsPath}");
+            }
 
             // Save custom statistics CSV if requested
             if (!string.IsNullOrEmpty(options.StatsCsvPath))

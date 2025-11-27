@@ -7,31 +7,31 @@ VS Code / Cursor extension for exploring C# code relationships using the Grafo k
 ### Hover Information
 Hover over methods, classes, or interfaces to see:
 - Type information and modifiers
-- Parameters and return types (for methods)
+- Parameters and return types
 - Inheritance and implementations
 - Related elements summary
 
 ### CodeLens
-Inline annotations above code elements showing:
+Inline annotations showing:
 - Number of callers
 - Methods called
-- Implementations count
+- Implementation count
 - Inheritance relationships
 
 ### Tree Views
-Sidebar panels providing:
-- **Relations View**: Browse all relationships for the selected element
-- **Hierarchy View**: Visualize class inheritance hierarchy
-- **Statistics View**: Graph statistics overview
+Sidebar panels:
+- **Relations View**: Browse relationships for selected element
+- **Hierarchy View**: Class inheritance hierarchy
+- **Statistics View**: Graph statistics
 
 ### Commands
-- `Grafo: Show Relations` - Display relationships for selected element
-- `Grafo: Find Implementations` - Find all implementations of an interface
-- `Grafo: Show Inheritance Hierarchy` - Display class hierarchy
-- `Grafo: Show Who Calls This` - Find all callers of a method
-- `Grafo: Show What This Calls` - Find all methods called by this method
-- `Grafo: Search Code Elements` - Search the code graph
-- `Grafo: Check API Connection` - Verify API connectivity
+- `Grafo: Show Relations` - Display relationships
+- `Grafo: Find Implementations` - Find interface implementations
+- `Grafo: Show Inheritance Hierarchy` - Display hierarchy
+- `Grafo: Show Who Calls This` - Find callers
+- `Grafo: Show What This Calls` - Find callees
+- `Grafo: Search Code Elements` - Search graph
+- `Grafo: Check API Connection` - Verify connectivity
 
 ## Requirements
 
@@ -40,122 +40,94 @@ Sidebar panels providing:
 
 ## Installation
 
-### Option 1: Install from VSIX (Recommended)
-
-Download or build the VSIX file, then install it:
-
-**VS Code - Command Line:**
-```bash
-code --install-extension grafo-code-explorer-0.1.0.vsix
-```
-
-**Cursor - Command Line:**
-```bash
-cursor --install-extension grafo-code-explorer-0.1.0.vsix
-```
-
-**VS Code / Cursor - GUI:**
-1. Open VS Code or Cursor
-2. Press `Ctrl+Shift+X` to open Extensions
-3. Click the `...` menu (top right of Extensions panel)
-4. Select **"Install from VSIX..."**
-5. Browse to the `.vsix` file and select it
-6. Reload the editor when prompted
-
-### Option 2: Build from Source
+### From VSIX
 
 ```bash
-# Clone the repository
-git clone https://github.com/RlyehDoom/icb_coder_helper.git
-cd icb_coder_helper/Extension
+# VS Code
+code --install-extension dist/grafo-code-explorer-0.1.0.vsix
 
-# Install dependencies
-npm install
-
-# Compile TypeScript
-npm run compile
-
-# Package as VSIX
-npm run package
-
-# Install the generated VSIX
-code --install-extension grafo-code-explorer-0.1.0.vsix
-# or for Cursor:
-cursor --install-extension grafo-code-explorer-0.1.0.vsix
+# Cursor
+cursor --install-extension dist/grafo-code-explorer-0.1.0.vsix
 ```
 
-### Option 3: Development Mode
-
-For development with hot-reload:
+### Build from Source
 
 ```bash
 cd Extension
 npm install
-npm run watch
+npm run compile
+npm run package
 ```
-
-Then press `F5` in VS Code to launch the Extension Development Host.
 
 ## Configuration
 
 | Setting | Description | Default |
 |---------|-------------|---------|
-| `grafo.apiUrl` | URL of Grafo Query Service | `http://localhost:8081` |
-| `grafo.graphVersion` | Graph version to query | `""` (all versions) |
-| `grafo.enableHover` | Enable hover information | `true` |
-| `grafo.enableCodeLens` | Enable CodeLens annotations | `true` |
-| `grafo.enableTreeView` | Enable tree view panels | `true` |
-| `grafo.maxRelatedItems` | Maximum related items to show | `20` |
+| `grafo.apiUrl` | Grafo Query Service URL | `http://localhost:8081` |
+| `grafo.graphVersion` | Graph version (e.g., `6.5.0`) | `""` |
+| `grafo.enableHover` | Enable hover info | `true` |
+| `grafo.enableCodeLens` | Enable CodeLens | `true` |
+| `grafo.enableTreeView` | Enable tree views | `true` |
+| `grafo.maxRelatedItems` | Max related items | `20` |
 
 ## Usage
 
-1. Start the Grafo Query Service:
+1. Start Grafo services:
    ```bash
    grafo mcp start
    ```
 
-2. Open a C# file in VS Code / Cursor
+2. Open a C# file
 
-3. Hover over methods or classes to see information
+3. Hover over methods/classes for info
 
-4. Right-click for context menu commands
+4. Right-click for context menu
 
-5. Use the Grafo Explorer panel in the sidebar
+5. Use Grafo Explorer sidebar panel
+
+## API v2.1 Endpoints
+
+The extension uses versioned REST endpoints:
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /v1/versions` | List available versions |
+| `GET /v1/nodes/{version}/search` | Search nodes |
+| `GET /v1/nodes/{version}/id/{id}` | Get node by ID |
+| `GET /v1/graph/{version}/callers/{id}` | Find callers |
+| `GET /v1/graph/{version}/callees/{id}` | Find callees |
+| `GET /v1/graph/{version}/implementations/{id}` | Find implementations |
+| `GET /v1/graph/{version}/inheritance/{id}` | Inheritance chain |
+| `GET /v1/stats/{version}` | Statistics |
+
+### Node ID Format
+
+Semantic IDs: `grafo:{kind}/{project}/{identifier}`
+
+Examples:
+- `grafo:class/BackOffice.BusinessComponents/Communication`
+- `grafo:method/BackOffice.DataAccess/InsertBackOfficeMessage`
 
 ## Project Structure
 
 ```
 Extension/
 ├── src/
-│   ├── api/
-│   │   └── grafoClient.ts    # API client for Grafo Query
+│   ├── api/grafoClient.ts     # API client (v2.1)
 │   ├── providers/
-│   │   ├── hoverProvider.ts  # Hover information
+│   │   ├── hoverProvider.ts
 │   │   └── codeLensProvider.ts
-│   ├── views/
-│   │   └── relationsTreeView.ts
-│   ├── config.ts             # Configuration management
-│   ├── types.ts              # TypeScript interfaces
-│   └── extension.ts          # Main entry point
+│   ├── views/relationsTreeView.ts
+│   ├── types.ts               # TypeScript interfaces
+│   └── extension.ts           # Entry point
 ├── package.json
 └── tsconfig.json
 ```
 
-## API Integration
-
-The extension consumes the Grafo Query REST API:
-
-- `POST /api/context/code` - Get code context with relationships
-- `POST /api/nodes/search` - Search for code elements
-- `GET /api/classes/{id}/hierarchy` - Get class inheritance
-- `GET /api/interfaces/{id}/implementations` - Find implementations
-- `GET /api/context/statistics` - Graph statistics
-
 ## Author
 
 **Jose Luis Yanez Rojas**
-- Website: [joseluisyr.com](https://joseluisyr.com)
-- GitHub: [@RlyehDoom](https://github.com/RlyehDoom)
+[joseluisyr.com](https://joseluisyr.com) | [@RlyehDoom](https://github.com/RlyehDoom)
 
 ## License
 

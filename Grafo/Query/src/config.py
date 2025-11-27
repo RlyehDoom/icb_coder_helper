@@ -37,9 +37,10 @@ CACHE_TTL = int(os.getenv("CACHE_TTL", "300"))  # 5 minutos por defecto
 # Logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
-# Configuración de versión de grafo (para MCP)
-# Si se especifica, todas las consultas MCP filtrarán por esta versión
-GRAFO_DEFAULT_VERSION = os.getenv("GRAFO_DEFAULT_VERSION", None)
+# Configuración de versión de grafo (REQUERIDO para v2.1)
+# Las colecciones tienen formato: nodes_{version} (ej: nodes_6_5_0)
+# Ejemplo: GRAFO_DEFAULT_VERSION=6.5.0 → collection nodes_6_5_0
+GRAFO_DEFAULT_VERSION = os.getenv("GRAFO_DEFAULT_VERSION", "6.5.0")
 
 
 def validate_config() -> bool:

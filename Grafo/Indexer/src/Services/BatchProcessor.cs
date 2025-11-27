@@ -136,12 +136,6 @@ namespace RoslynIndexer.Services
                     _analysisService.AllInterfaceImplementations);
                 await _outputService.SaveGraphResult(graphResult, graphPath, "json");
                 progress.Report($"Saved graph: {graphPath}");
-
-                // Also generate structural-only version
-                var structuralGraph = _graphService.GenerateStructuralOnlyGraph(graphResult);
-                var structuralPath = Path.ChangeExtension(graphPath, null) + "-structural.json";
-                await _outputService.SaveGraphResult(structuralGraph, structuralPath, "json");
-                progress.Report($"Saved structural graph: {structuralPath}");
             }
 
             // Generate statistics CSV if requested

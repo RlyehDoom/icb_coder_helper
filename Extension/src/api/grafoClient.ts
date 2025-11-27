@@ -1,413 +1,222 @@
-import axios, { AxiosInstance, AxiosError, InternalAxiosRequestConfig, AxiosResponse } from 'axios';
+/**
+ * Grafo API Client v2.1
+ * Endpoints: /api/v1/nodes/{version}/... and /api/v1/graph/{version}/...
+ */
+import axios, { AxiosInstance } from 'axios';
 import { logger } from '../logger';
 import {
     GraphNode,
-    CodeContextRequest,
-    CodeContextResponse,
-    SearchNodesRequest,
-    RelatedNodesResponse,
-    ClassHierarchyResponse,
-    InterfaceImplementationsResponse,
-    HealthCheckResponse,
-    GraphStatisticsResponse,
-    ProjectSummary,
-    SemanticStatsResponse,
-    RelationshipsResponse,
-    RelationshipType,
+    SearchResponse,
+    CallersResponse,
+    CalleesResponse,
+    ImplementationsResponse,
+    InheritanceResponse,
+    VersionsResponse,
+    HealthResponse,
+    StatsResponse,
+    SemanticStatsResponse
 } from '../types';
-
-export interface GrafoClientConfig {
-    baseUrl: string;
-    version?: string;
-    timeout?: number;
-}
-
-interface RequestMetadata {
-    startTime: number;
-}
 
 export class GrafoClient {
     private client: AxiosInstance;
     private version: string;
     private baseUrl: string;
 
-    constructor(config: GrafoClientConfig) {
-        this.version = config.version || '';
-        this.baseUrl = config.baseUrl;
+    constructor(baseUrl: string, version: string) {
+        this.version = version;
+        this.baseUrl = baseUrl;
 
-        logger.info(`Initializing Grafo API client: ${config.baseUrl}`);
-        if (this.version) {
-            logger.info(`Graph version: ${this.version}`);
-        }
+        logger.info(`Initializing API client: ${baseUrl}`);
+        logger.info(`Graph version: ${version}`);
 
         this.client = axios.create({
-            baseURL: config.baseUrl,
-            timeout: config.timeout || 10000,
-            headers: {
-                'Content-Type': 'application/json',
-            },
+            baseURL: baseUrl,
+            timeout: 15000,
+            headers: { 'Content-Type': 'application/json' }
         });
 
-        // Request interceptor for logging
-        this.client.interceptors.request.use(
-            (config: InternalAxiosRequestConfig) => {
-                const method = config.method?.toUpperCase() || 'GET';
-                const url = config.url || '';
-                logger.debug(`→ ${method} ${url}`);
-                if (config.data) {
-                    logger.debug(`  Request body: ${JSON.stringify(config.data)}`);
-                }
-                // Store start time for duration calculation
-                (config as InternalAxiosRequestConfig & { metadata: RequestMetadata }).metadata = { startTime: Date.now() };
-                return config;
-            },
-            (error) => {
-                logger.error('Request setup error:', error);
-                return Promise.reject(error);
-            }
-        );
+        // Request interceptor
+        this.client.interceptors.request.use((config) => {
+            const url = config.url || '';
+            logger.apiRequest(config.method?.toUpperCase() || 'GET', url);
+            (config as any).startTime = Date.now();
+            return config;
+        });
 
-        // Response interceptor for logging
+        // Response interceptor
         this.client.interceptors.response.use(
-            (response: AxiosResponse) => {
-                const config = response.config as InternalAxiosRequestConfig & { metadata?: RequestMetadata };
-                const duration = config.metadata ? Date.now() - config.metadata.startTime : 0;
-                const method = config.method?.toUpperCase() || 'GET';
-                const url = config.url || '';
-
-                logger.api(method, url, response.status, duration);
-
-                if (response.data) {
-                    const dataStr = JSON.stringify(response.data);
-                    const truncated = dataStr.length > 500 ? dataStr.substring(0, 500) + '...' : dataStr;
-                    logger.debug(`  Response: ${truncated}`);
-                }
-
+            (response) => {
+                const duration = Date.now() - ((response.config as any).startTime || Date.now());
+                const info = this.extractResultInfo(response.data);
+                logger.apiResponse(response.status, duration, info);
                 return response;
             },
-            (error: AxiosError) => {
-                const config = error.config as InternalAxiosRequestConfig & { metadata?: RequestMetadata } | undefined;
-                const duration = config?.metadata ? Date.now() - config.metadata.startTime : 0;
-                const method = config?.method?.toUpperCase() || 'GET';
-                const url = config?.url || '';
-                const status = error.response?.status || 0;
-
-                logger.api(method, url, status, duration);
-                logger.error(`API Error: ${error.message}`, error.response?.data);
-
-                return Promise.reject(error);
+            (error) => {
+                const duration = Date.now() - ((error.config as any)?.startTime || Date.now());
+                if (error.response) {
+                    logger.apiResponse(error.response.status, duration, error.message);
+                } else {
+                    logger.apiError(error);
+                }
+                throw error;
             }
         );
     }
 
-    /**
-     * Update the graph version for queries
-     */
-    setVersion(version: string): void {
-        this.version = version;
-        logger.info(`Graph version updated: ${version || '(all versions)'}`);
+    private extractResultInfo(data: any): string {
+        if (!data) return '';
+        if (data.results) return `${data.results.length} results`;
+        if (data.callers) return `${data.callers.length} callers`;
+        if (data.callees) return `${data.callees.length} callees`;
+        if (data.implementations) return `${data.implementations.length} implementations`;
+        if (data.versions) return `${data.versions.length} versions`;
+        if (data.status) return data.status;
+        if (data.name) return data.name;
+        return '';
     }
 
-    /**
-     * Get current version
-     */
+    setVersion(version: string): void {
+        this.version = version;
+        logger.info(`Version changed to: ${version}`);
+    }
+
     getVersion(): string {
         return this.version;
     }
 
-    /**
-     * Get base URL
-     */
-    getBaseUrl(): string {
-        return this.baseUrl;
+    // Health & Versions
+    async checkHealth(): Promise<HealthResponse> {
+        logger.separator('Health Check');
+        const { data } = await this.client.get<HealthResponse>('/health');
+        logger.info(`MongoDB: ${data.mongodb}, Status: ${data.status}`);
+        return data;
     }
 
-    /**
-     * Check API health status
-     */
-    async checkHealth(): Promise<HealthCheckResponse> {
-        logger.info('Checking API health...');
-        const response = await this.client.get<HealthCheckResponse>('/health');
-        logger.info(`Health check result: ${response.data.status} (MongoDB: ${response.data.mongodb})`);
-        return response.data;
+    async getVersions(): Promise<VersionsResponse> {
+        const { data } = await this.client.get<VersionsResponse>('/api/v1/versions');
+        return data;
     }
 
-    /**
-     * Get code context for a specific element
-     * This is the main API for getting detailed information about methods, classes, etc.
-     */
-    async getCodeContext(request: CodeContextRequest): Promise<CodeContextResponse> {
-        logger.info(`Getting code context for: ${request.methodName || request.className || 'unknown'}`);
-        const payload = {
-            ...request,
-            version: request.version || this.version,
-        };
-        const response = await this.client.post<CodeContextResponse>('/api/context/code', payload);
-
-        if (response.data.found) {
-            logger.info(`Found element: ${response.data.mainElement?.Name} (${response.data.mainElement?.Type})`);
-            logger.info(`Related elements: ${response.data.relatedElements?.length || 0}, Edges: ${response.data.edges?.length || 0}`);
-        } else {
-            logger.warn(`Element not found: ${request.methodName || request.className}`);
-        }
-
-        return response.data;
+    async getStats(): Promise<StatsResponse> {
+        const { data } = await this.client.get<StatsResponse>(`/api/v1/stats/${this.version}`);
+        return data;
     }
 
-    /**
-     * Search for nodes by query string
-     */
-    async searchNodes(request: SearchNodesRequest): Promise<GraphNode[]> {
-        logger.info(`Searching nodes: query="${request.query}", type=${request.nodeType || 'any'}`);
-        const payload = {
-            ...request,
-            version: request.version || this.version,
-        };
-        const response = await this.client.post<any[]>('/api/nodes/search', payload);
-        logger.info(`Search returned ${response.data.length} results`);
-
-        // Normalize response to handle both uppercase and lowercase property names
-        return response.data.map(node => this.normalizeNode(node));
-    }
-
-    /**
-     * Normalize a node object to use uppercase property names
-     * API may return lowercase (id, name) or uppercase (Id, Name)
-     */
-    private normalizeNode(node: any): GraphNode {
-        return {
-            Id: node.Id || node.id || node._id || '',
-            Name: node.Name || node.name || '',
-            FullName: node.FullName || node.fullName || node.Name || node.name || '',
-            Type: node.Type || node.type || 'Class',
-            Project: node.Project || node.project || node.projectName || '',
-            Namespace: node.Namespace || node.namespace || '',
-            Accessibility: node.Accessibility || node.accessibility || 'Public',
-            IsAbstract: node.IsAbstract || node.isAbstract || false,
-            IsStatic: node.IsStatic || node.isStatic || false,
-            IsSealed: node.IsSealed || node.isSealed || false,
-            Location: node.Location || node.location ? {
-                AbsolutePath: (node.Location || node.location)?.AbsolutePath || (node.Location || node.location)?.absolutePath,
-                RelativePath: (node.Location || node.location)?.RelativePath || (node.Location || node.location)?.relativePath,
-                Line: (node.Location || node.location)?.Line || (node.Location || node.location)?.line,
-                Column: (node.Location || node.location)?.Column || (node.Location || node.location)?.column,
-            } : undefined,
-            Attributes: node.Attributes || node.attributes,
-            ContainingType: node.ContainingType || node.containingType,
-        };
-    }
-
-    /**
-     * Get related nodes for a given node ID
-     */
-    async getRelatedNodes(
-        nodeId: string,
-        relationshipType?: RelationshipType,
-        direction: 'incoming' | 'outgoing' | 'both' = 'both',
-        maxDepth: number = 1
-    ): Promise<RelatedNodesResponse> {
-        logger.info(`Getting related nodes for: ${nodeId}`);
-        const params = new URLSearchParams();
-        if (relationshipType) {
-            params.append('relationshipType', relationshipType);
-        }
-        params.append('direction', direction);
-        params.append('maxDepth', maxDepth.toString());
-        if (this.version) {
-            params.append('version', this.version);
-        }
-
-        const response = await this.client.get<RelatedNodesResponse>(
-            `/api/nodes/${encodeURIComponent(nodeId)}/related?${params.toString()}`
-        );
-        logger.info(`Found ${response.data.relatedNodes?.length || 0} related nodes`);
-        return response.data;
-    }
-
-    /**
-     * Get class inheritance hierarchy
-     */
-    async getClassHierarchy(classId: string, maxDepth: number = 5): Promise<ClassHierarchyResponse> {
-        logger.info(`Getting class hierarchy for: ${classId}`);
-        const params = new URLSearchParams();
-        params.append('maxDepth', maxDepth.toString());
-        if (this.version) {
-            params.append('version', this.version);
-        }
-
-        const response = await this.client.get<ClassHierarchyResponse>(
-            `/api/classes/${encodeURIComponent(classId)}/hierarchy?${params.toString()}`
-        );
-
-        if (response.data.found) {
-            logger.info(`Hierarchy: ${response.data.ancestors?.length || 0} ancestors, ${response.data.descendants?.length || 0} descendants`);
-        }
-
-        return response.data;
-    }
-
-    /**
-     * Get implementations of an interface
-     */
-    async getInterfaceImplementations(interfaceId: string): Promise<InterfaceImplementationsResponse> {
-        logger.info(`Getting implementations for interface: ${interfaceId}`);
-        const params = new URLSearchParams();
-        if (this.version) {
-            params.append('version', this.version);
-        }
-
-        const response = await this.client.get<InterfaceImplementationsResponse>(
-            `/api/interfaces/${encodeURIComponent(interfaceId)}/implementations?${params.toString()}`
-        );
-
-        logger.info(`Found ${response.data.implementationCount || 0} implementations`);
-        return response.data;
-    }
-
-    /**
-     * Get graph statistics
-     */
-    async getStatistics(): Promise<GraphStatisticsResponse> {
-        logger.info('Getting graph statistics...');
-        const params = new URLSearchParams();
-        if (this.version) {
-            params.append('version', this.version);
-        }
-
-        const response = await this.client.get<GraphStatisticsResponse>(
-            `/api/context/statistics?${params.toString()}`
-        );
-
-        logger.info(`Statistics: ${response.data.totalProjects} projects, ${response.data.totalNodes} nodes, ${response.data.totalEdges} edges`);
-        return response.data;
-    }
-
-    /**
-     * Get semantic statistics (relationship counts)
-     */
     async getSemanticStats(): Promise<SemanticStatsResponse> {
-        logger.info('Getting semantic statistics...');
-        const response = await this.client.get<SemanticStatsResponse>('/api/semantic/stats');
-        return response.data;
+        const { data } = await this.client.get<SemanticStatsResponse>(`/api/semantic/stats?version=${this.version}`);
+        return data;
     }
 
-    /**
-     * Get relationships of a specific type
-     */
-    async getRelationships(
-        relationshipType: RelationshipType,
-        projectId?: string,
-        limit: number = 100
-    ): Promise<RelationshipsResponse> {
-        logger.info(`Getting ${relationshipType} relationships...`);
-        const params = new URLSearchParams();
-        params.append('type', relationshipType);
-        if (projectId) {
-            params.append('projectId', projectId);
-        }
-        params.append('limit', limit.toString());
-        if (this.version) {
-            params.append('version', this.version);
-        }
+    // Node Search
+    async searchNodes(query: string, type?: string, project?: string, limit = 20): Promise<GraphNode[]> {
+        const params = new URLSearchParams({ q: query, limit: String(limit) });
+        if (type) params.append('type', type);
+        if (project) params.append('project', project);
 
-        const response = await this.client.get<RelationshipsResponse>(
-            `/api/relationships?${params.toString()}`
+        const { data } = await this.client.get<SearchResponse>(
+            `/api/v1/nodes/${this.version}/search?${params}`
         );
-        return response.data;
+        return data.results;
     }
 
-    /**
-     * Search for projects
-     */
-    async searchProjects(query: string, limit: number = 20): Promise<ProjectSummary[]> {
-        logger.info(`Searching projects: "${query}"`);
-        const payload = {
-            query,
-            limit,
-            version: this.version || undefined,
-        };
-        const response = await this.client.post<ProjectSummary[]>('/api/projects/search', payload);
-        logger.info(`Found ${response.data.length} projects`);
-        return response.data;
-    }
-
-    /**
-     * List all projects
-     */
-    async listProjects(): Promise<ProjectSummary[]> {
-        logger.info('Listing all projects...');
-        const params = new URLSearchParams();
-        if (this.version) {
-            params.append('version', this.version);
-        }
-
-        const response = await this.client.get<ProjectSummary[]>(
-            `/api/projects?${params.toString()}`
-        );
-        logger.info(`Found ${response.data.length} projects`);
-        return response.data;
-    }
-
-    /**
-     * Get callers of a method
-     */
-    async getCallers(methodName: string, className?: string, namespace?: string): Promise<CodeContextResponse> {
-        logger.info(`Getting callers for method: ${methodName}`);
-        return this.getCodeContext({
-            methodName,
-            className,
-            namespace,
-            includeRelated: true,
-            maxRelated: 50,
-        });
-    }
-
-    /**
-     * Get methods called by a method
-     */
-    async getCallees(methodName: string, className?: string, namespace?: string): Promise<CodeContextResponse> {
-        logger.info(`Getting callees for method: ${methodName}`);
-        return this.getCodeContext({
-            methodName,
-            className,
-            namespace,
-            includeRelated: true,
-            maxRelated: 50,
-        });
-    }
-
-    /**
-     * Check if API is available
-     */
-    async isAvailable(): Promise<boolean> {
+    async getNodeById(nodeId: string): Promise<GraphNode | null> {
         try {
-            const health = await this.checkHealth();
-            return health.status === 'healthy';
-        } catch {
-            return false;
+            const { data } = await this.client.get<GraphNode>(
+                `/api/v1/nodes/${this.version}/id/${encodeURIComponent(nodeId)}`
+            );
+            return data;
+        } catch (e: any) {
+            if (e.response?.status === 404) return null;
+            throw e;
         }
+    }
+
+    // Graph Traversal
+    async findCallers(nodeId: string, maxDepth = 2): Promise<CallersResponse> {
+        logger.debug(`Finding callers for: ${nodeId}`);
+        const { data } = await this.client.get<CallersResponse>(
+            `/api/v1/graph/${this.version}/callers/${encodeURIComponent(nodeId)}?max_depth=${maxDepth}&include_indirect=true`
+        );
+        return data;
+    }
+
+    async findCallees(nodeId: string, maxDepth = 2): Promise<CalleesResponse> {
+        logger.debug(`Finding callees for: ${nodeId}`);
+        const { data } = await this.client.get<CalleesResponse>(
+            `/api/v1/graph/${this.version}/callees/${encodeURIComponent(nodeId)}?max_depth=${maxDepth}&include_via_interface=true`
+        );
+        return data;
+    }
+
+    async findImplementations(interfaceId: string): Promise<ImplementationsResponse> {
+        logger.debug(`Finding implementations for: ${interfaceId}`);
+        const { data } = await this.client.get<ImplementationsResponse>(
+            `/api/v1/graph/${this.version}/implementations/${encodeURIComponent(interfaceId)}`
+        );
+        return data;
+    }
+
+    async findInheritance(classId: string, maxDepth = 5): Promise<InheritanceResponse> {
+        logger.debug(`Finding inheritance for: ${classId}`);
+        const { data } = await this.client.get<InheritanceResponse>(
+            `/api/v1/graph/${this.version}/inheritance/${encodeURIComponent(classId)}?max_depth=${maxDepth}`
+        );
+        return data;
+    }
+
+    // Utility: Find class/method by name
+    async findByName(name: string, type: 'class' | 'method' | 'interface', className?: string): Promise<GraphNode | null> {
+        logger.debug(`Finding ${type}: "${name}"${className ? ` in class ${className}` : ''}`);
+
+        // Check if it's a fully qualified name (contains dots)
+        const isFullyQualified = name.includes('.');
+        const simpleName = isFullyQualified ? name.split('.').pop() || name : name;
+
+        const results = await this.searchNodes(simpleName, type, undefined, 20);
+
+        // Find exact match
+        for (const node of results) {
+            if (isFullyQualified) {
+                // Match against fullName or namespace + name
+                const nodeFullName = node.fullName || `${node.namespace}.${node.name}`;
+                if (nodeFullName === name || nodeFullName.endsWith(name)) {
+                    logger.debug(`Found exact match (full name): ${node.id}`);
+                    return node;
+                }
+            } else {
+                if (node.name === name) {
+                    if (type === 'method' && className) {
+                        if (node.containedIn?.includes(className) || node.namespace?.includes(className)) {
+                            logger.debug(`Found exact match: ${node.id}`);
+                            return node;
+                        }
+                    } else {
+                        logger.debug(`Found exact match: ${node.id}`);
+                        return node;
+                    }
+                }
+            }
+        }
+
+        if (results[0]) {
+            logger.debug(`Using first result: ${results[0].id}`);
+        } else {
+            logger.debug(`No results found for ${type}: "${name}"`);
+        }
+
+        return results[0] || null;
     }
 }
 
-// Singleton instance for the extension
-let clientInstance: GrafoClient | null = null;
+// Singleton
+let client: GrafoClient | null = null;
 
-export function getGrafoClient(): GrafoClient | null {
-    return clientInstance;
+export function initClient(baseUrl: string, version: string): GrafoClient {
+    logger.separator('Grafo Client Init');
+    client = new GrafoClient(baseUrl, version);
+    return client;
 }
 
-export function initializeGrafoClient(config: GrafoClientConfig): GrafoClient {
-    logger.info('='.repeat(50));
-    logger.info('Initializing Grafo Client');
-    logger.info(`  URL: ${config.baseUrl}`);
-    logger.info(`  Version: ${config.version || '(all versions)'}`);
-    logger.info('='.repeat(50));
-
-    clientInstance = new GrafoClient(config);
-    return clientInstance;
-}
-
-export function disposeGrafoClient(): void {
-    logger.info('Disposing Grafo Client');
-    clientInstance = null;
+export function getClient(): GrafoClient | null {
+    return client;
 }

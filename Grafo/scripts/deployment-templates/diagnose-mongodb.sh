@@ -218,7 +218,7 @@ try:
     # Test 1: Internal IP with tlsInsecure
     try:
         client = MongoClient(
-            'mongodb://sonata:qwertY.!1982@MONGO_IP:27017/GraphDB?authSource=admin',
+            'mongodb://user:pass@MONGO_IP:27017/GraphDB?authSource=admin',
             tls=True,
             tlsInsecure=True,
             serverSelectionTimeoutMS=3000
@@ -231,7 +231,7 @@ try:
     # Test 2: External IP
     try:
         client = MongoClient(
-            'mongodb://sonata:qwertY.!1982@207.244.249.22:28101/GraphDB?authSource=admin',
+            'mongodb://user:pass@207.244.249.22:28101/GraphDB?authSource=admin',
             tls=True,
             tlsInsecure=True,
             serverSelectionTimeoutMS=3000

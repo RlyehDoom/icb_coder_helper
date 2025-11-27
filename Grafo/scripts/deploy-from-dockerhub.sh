@@ -151,7 +151,7 @@ echo ""
 
 # Python (pymongo/motor) requiere tlsInsecure=true + certificado
 # El certificado se pasa como variable de entorno MONGODB_TLS_CERTIFICATE_KEY_FILE
-MONGODB_CONNECTION_STRING="mongodb://sonata:qwertY.!1982@${MONGODB_HOST}:${MONGODB_PORT}/GraphDB?authSource=admin&tls=true&tlsInsecure=true"
+MONGODB_CONNECTION_STRING="mongodb://user:pass@${MONGODB_HOST}:${MONGODB_PORT}/GraphDB?authSource=admin&tls=true&tlsInsecure=true"
 
 echo ""
 echo -e "${YELLOW}📦 Deployment de Grafo Production usando Docker Hub${NC}"

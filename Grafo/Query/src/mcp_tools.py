@@ -11,7 +11,8 @@ from mcp.server import Server
 from mcp.types import Tool, TextContent
 import json
 
-from .services import GraphQueryService
+from .services import GraphQueryService, get_mongodb_service
+from .services.nodes_query_service import NodesQueryService
 from .models import (
     SearchNodesRequest,
     CodeContextRequest,
@@ -24,22 +25,27 @@ logger = logging.getLogger(__name__)
 
 
 class GraphMCPTools:
-    """Herramientas MCP para consultar el grafo de código."""
+    """Herramientas MCP para consultar el grafo de código (v2.1 - versioned collections)."""
 
     def __init__(self, graph_service: GraphQueryService, default_version: str = None):
         """
         Inicializa las herramientas MCP.
 
         Args:
-            graph_service: Servicio de consultas del grafo
-            default_version: Versión por defecto del grafo a consultar (e.g., "1.0.0")
+            graph_service: Servicio legacy de consultas del grafo (compatibilidad)
+            default_version: Versión por defecto del grafo a consultar (e.g., "6.5.0")
         """
         self.graph_service = graph_service
-        self.tailored_guidance = TailoredGuidanceService(graph_service)
         self.default_version = default_version or GRAFO_DEFAULT_VERSION
 
+        # Inicializar NodesQueryService para v2.1 (versioned collections)
+        mongodb = get_mongodb_service()
+        self.nodes_service = NodesQueryService(mongodb)
+
+        self.tailored_guidance = TailoredGuidanceService(graph_service)
+
         if self.default_version:
-            logger.info(f"🏷️  MCP Tools configurado con versión por defecto: {self.default_version}")
+            logger.info(f"🏷️  MCP Tools v2.1 configurado con versión: {self.default_version}")
 
     def get_tools(self) -> List[Tool]:
         """Retorna la lista de herramientas MCP disponibles."""
@@ -47,53 +53,63 @@ class GraphMCPTools:
             Tool(
                 name="search_code",
                 description=(
-                    "🔍 PRIMERA HERRAMIENTA A USAR - Ubica componentes en el grafo de código BASE de ICBanking.\n\n"
-                    "⚠️ REGLA OBLIGATORIA: Cuando trabajes en proyectos /ICBanking/* o /Tailored/*, "
-                    "SIEMPRE debes usar este MCP para consultar el grafo de código.\n\n"
-                    "USA ESTA TOOL PRIMERO para localizar el componente exacto que el usuario menciona. "
-                    "Retorna información precisa (Namespace, Proyecto) que necesitas para llamar a get_code_context.\n\n"
-                    "🎯 EJEMPLOS DE USO:\n"
-                    "- 'método UpdateState de clase Geolocation' → query='UpdateState', node_type='Method', class_name='Geolocation'\n"
-                    "- 'buscar clase Account en BusinessComponents' → query='Account', node_type='Class', namespace='BusinessComponents'\n"
-                    "- 'interfaz IAccountService' → query='IAccountService', node_type='Interface'\n\n"
-                    "IMPORTANTE: El grafo contiene SOLO código BASE de ICBanking, NO incluye clases Extended de Tailored."
+                    "🔍 Busca componentes en el grafo de código BASE de ICBanking.\n\n"
+                    "⛔ **REGLA CRÍTICA DE EJECUCIÓN:**\n"
+                    "Esta herramienta puede retornar MÚLTIPLES resultados cuando el mismo componente existe en diferentes capas. "
+                    "Cuando esto ocurra, STOP, mostrar tabla, preguntar al usuario cuál desea analizar.\n\n"
+                    "🎯 **MAPEO DE PARÁMETROS según lo que dice el usuario:**\n"
+                    "- 'método X de CLASE Y' → class_name='Y'\n"
+                    "- 'método X de CAPA BusinessComponents' → layer='BusinessComponents'\n"
+                    "- 'método X de CAPA DataAccess' → layer='DataAccess'\n"
+                    "- 'método X del PROYECTO BackOffice.DataAccess' → project='BackOffice.DataAccess'\n\n"
+                    "**EJEMPLOS COMPLETOS:**\n"
+                    "- 'método InsertMessage de clase Communication' → query='InsertMessage', node_type='Method', class_name='Communication'\n"
+                    "- 'método InsertMessage de capa BusinessComponents' → query='InsertMessage', node_type='Method', layer='BusinessComponents'\n"
+                    "- 'método InsertMessage de DataAccess' → query='InsertMessage', node_type='Method', layer='DataAccess'\n"
+                    "- 'clase Communication' → query='Communication', node_type='Class'\n\n"
+                    "IMPORTANTE: El grafo contiene SOLO código BASE de ICBanking."
                 ),
                 inputSchema={
                     "type": "object",
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "Nombre EXACTO del elemento a buscar. Ejemplos: 'UpdateState', 'Geolocation', 'IAccountService'"
+                            "description": "Nombre del elemento a buscar. Ejemplos: 'InsertBackOfficeMessage', 'Communication', 'IAccountService'"
                         },
                         "node_type": {
                             "type": "string",
-                            "description": "Tipo de elemento: Method (métodos), Class (clases), Interface (interfaces)",
+                            "description": "Tipo de elemento a buscar",
                             "enum": ["Method", "Class", "Interface", "Property", "Field", "Enum", "Struct"]
                         },
                         "class_name": {
                             "type": "string",
                             "description": (
-                                "Nombre de la CLASE que contiene el método. "
-                                "SOLO usar cuando node_type='Method'. "
-                                "Ejemplo: Si buscan 'método X de clase Y', usar class_name='Y'"
+                                "Nombre de la CLASE contenedora. "
+                                "USAR cuando el usuario dice 'de clase X' o 'de la clase X'. "
+                                "Ejemplos: 'Communication', 'TransferBatch', 'Geolocation'. "
+                                "NO usar para capas como BusinessComponents o DataAccess."
                             )
                         },
-                        "namespace": {
+                        "layer": {
                             "type": "string",
                             "description": (
-                                "Filtrar por NAMESPACE (ruta de paquetes). "
-                                "Usar para filtrar por capa o módulo. "
-                                "Ejemplos: 'BusinessComponents', 'DataAccess', 'Infocorp.Banking.BusinessComponents'"
+                                "Capa de arquitectura. "
+                                "USAR cuando el usuario dice 'de capa X', 'de BusinessComponents', 'de DataAccess', etc. "
+                                "Valores válidos: 'BusinessComponents', 'DataAccess', 'ServiceAgents', 'BusinessEntities', 'Interfaces', 'Cross-Cutting', 'Common'"
                             )
                         },
                         "project": {
                             "type": "string",
-                            "description": "Nombre del proyecto específico si se conoce"
+                            "description": (
+                                "Nombre completo del proyecto. "
+                                "USAR cuando el usuario dice 'del proyecto X'. "
+                                "Ejemplos: 'BackOffice.BusinessComponents', 'BackOffice.DataAccess'"
+                            )
                         },
                         "limit": {
                             "type": "integer",
-                            "description": "Máximo de resultados (default: 10)",
-                            "default": 10
+                            "description": "Máximo de resultados (default: 20)",
+                            "default": 20
                         }
                     },
                     "required": ["query", "node_type"]
@@ -384,6 +400,97 @@ class GraphMCPTools:
                     },
                     "required": ["task_type"]
                 }
+            ),
+            Tool(
+                name="find_callers",
+                description=(
+                    "🔍 Encuentra TODOS los métodos que llaman a un método específico.\n\n"
+                    "Usa $graphLookup para traversal eficiente del grafo de llamadas.\n\n"
+                    "🎯 USAR CUANDO:\n"
+                    "- '¿Quién llama a este método?'\n"
+                    "- 'Análisis de impacto: qué código se afecta si cambio X'\n"
+                    "- '¿De dónde se invoca ProcessMessage?'\n\n"
+                    "Retorna cadena de callers con profundidad de llamada."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "target_id": {
+                            "type": "string",
+                            "description": "ID del método/nodo objetivo (ej: 'grafo:mtd/a1b2c3d4')"
+                        },
+                        "max_depth": {
+                            "type": "integer",
+                            "description": "Profundidad máxima de búsqueda (default: 3)",
+                            "default": 3
+                        },
+                        "include_indirect": {
+                            "type": "boolean",
+                            "description": "Incluir llamadas indirectas via interfaces (default: true)",
+                            "default": True
+                        }
+                    },
+                    "required": ["target_id"]
+                }
+            ),
+            Tool(
+                name="find_callees",
+                description=(
+                    "➡️ Encuentra TODOS los métodos llamados por un método específico.\n\n"
+                    "Usa $graphLookup para traversal del grafo de dependencias.\n\n"
+                    "🎯 USAR CUANDO:\n"
+                    "- '¿Qué métodos llama este código?'\n"
+                    "- 'Dependencias de ProcessMessage'\n"
+                    "- '¿Qué necesita este método para funcionar?'\n\n"
+                    "Retorna árbol de callees con profundidad."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "source_id": {
+                            "type": "string",
+                            "description": "ID del método/nodo origen (ej: 'grafo:mtd/a1b2c3d4')"
+                        },
+                        "max_depth": {
+                            "type": "integer",
+                            "description": "Profundidad máxima de búsqueda (default: 3)",
+                            "default": 3
+                        },
+                        "include_via_interface": {
+                            "type": "boolean",
+                            "description": "Incluir llamadas via abstracción de interfaces (default: true)",
+                            "default": True
+                        }
+                    },
+                    "required": ["source_id"]
+                }
+            ),
+            Tool(
+                name="find_inheritance_chain",
+                description=(
+                    "🔗 Obtiene la cadena completa de herencia de una clase.\n\n"
+                    "Encuentra ancestors (clases base) y descendants (clases derivadas).\n\n"
+                    "🎯 USAR CUANDO:\n"
+                    "- '¿De qué hereda esta clase?'\n"
+                    "- '¿Qué clases heredan de BaseAccount?'\n"
+                    "- 'Jerarquía completa de herencia'\n\n"
+                    "Retorna árbol de herencia con profundidad."
+                ),
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "class_id": {
+                            "type": "string",
+                            "description": "ID de la clase (ej: 'grafo:cls/a1b2c3d4')"
+                        },
+                        "max_depth": {
+                            "type": "integer",
+                            "description": "Profundidad máxima de búsqueda (default: 10)",
+                            "default": 10
+                        }
+                    },
+                    "required": ["class_id"]
+                }
             )
         ]
 
@@ -415,6 +522,12 @@ class GraphMCPTools:
                 return await self._get_statistics(arguments)
             elif tool_name == "get_tailored_guidance":
                 return await self._get_tailored_guidance(arguments)
+            elif tool_name == "find_callers":
+                return await self._find_callers(arguments)
+            elif tool_name == "find_callees":
+                return await self._find_callees(arguments)
+            elif tool_name == "find_inheritance_chain":
+                return await self._find_inheritance_chain(arguments)
             else:
                 return f"# Error en Herramienta MCP\n\n❌ **Herramienta desconocida:** `{tool_name}`"
         except Exception as e:
@@ -422,7 +535,7 @@ class GraphMCPTools:
             return f"# Error en Herramienta MCP\n\n❌ **Error ejecutando `{tool_name}`:**\n\n```\n{str(e)}\n```\n\n**Argumentos:**\n```json\n{json.dumps(arguments, indent=2)}\n```"
 
     async def _search_code(self, args: Dict[str, Any]) -> str:
-        """Busca código en el grafo."""
+        """Busca código en el grafo versionado."""
         original_query = args["query"]
         node_type = args.get("node_type")
 
@@ -449,174 +562,334 @@ class GraphMCPTools:
                 "```"
             )
 
+        # Verificar si existe la versión
+        if not await self.nodes_service.check_version_exists(self.default_version):
+            versions = await self.nodes_service.get_available_versions()
+            return (
+                "# 🔍 Búsqueda en Grafo\n\n"
+                f"❌ **Versión {self.default_version} no disponible**\n\n"
+                f"**Versiones disponibles:** {versions}\n"
+            )
+
         # Validar: si el query tiene múltiples términos, usar solo el primero
-        # Esto previene búsquedas como "Communication ProcessMessage"
         query_parts = original_query.strip().split()
         actual_query = query_parts[0] if query_parts else original_query
-
-        # Nota si se modificó la query
         query_modified = len(query_parts) > 1
 
-        # Obtener filtros
-        class_name_filter = args.get("class_name")
-        namespace_filter = args.get("namespace")
+        # Obtener filtros adicionales
+        class_name_filter = args.get("class_name")  # Nombre de la clase contenedora
+        layer_filter = args.get("layer")  # Capa: BusinessComponents, DataAccess, etc.
+        project_filter = args.get("project")  # Proyecto completo
 
-        # Combinar class_name y namespace en un filtro de namespace compuesto
-        # class_name: busca donde el namespace TERMINA con el nombre de clase
-        # namespace: busca donde el namespace CONTIENE el valor
-        combined_namespace_filter = None
-        if class_name_filter and namespace_filter:
-            # Ambos: namespace debe contener namespace_filter Y terminar en class_name
-            combined_namespace_filter = f"{namespace_filter}.*{class_name_filter}"
-        elif class_name_filter:
-            # Solo class_name: namespace debe terminar en class_name
-            combined_namespace_filter = class_name_filter
-        elif namespace_filter:
-            # Solo namespace: namespace debe contener el valor
-            combined_namespace_filter = namespace_filter
-
-        request = SearchNodesRequest(
-            query=actual_query,
-            nodeType=node_type,
-            project=args.get("project"),
-            namespace=combined_namespace_filter,
+        # Usar NodesQueryService para búsqueda en colección versionada
+        # exact_first=True: primero busca coincidencia exacta, si no hay, hace búsqueda like
+        results = await self.nodes_service.search_nodes(
             version=self.default_version,
-            limit=args.get("limit", 10)
+            query=actual_query,
+            node_type=node_type,
+            solution=None,
+            project=project_filter,
+            limit=args.get("limit", 30),
+            exact_first=True
         )
 
-        results = await self.graph_service.search_nodes(request)
+        # Filtrar por class_name (nombre de la clase contenedora)
+        # Extrae la clase del fullName: "Namespace.ClassName.MethodName" -> "ClassName"
+        if class_name_filter and results:
+            def matches_class(r):
+                full_name = r.get("fullName", "") or ""
+                # fullName format: Namespace.ClassName.MethodName
+                parts = full_name.rsplit(".", 2)
+                if len(parts) >= 2:
+                    containing_class = parts[-2]
+                    return class_name_filter.lower() == containing_class.lower()
+                return False
+
+            filtered = [r for r in results if matches_class(r)]
+            if filtered:
+                results = filtered
+                logger.info(f"Filtered by class_name '{class_name_filter}': {len(results)} results")
+
+        # Filtrar por layer (capa de arquitectura)
+        if layer_filter and results:
+            filtered = [r for r in results if
+                layer_filter.lower() in (r.get("namespace", "") or "").lower() or
+                layer_filter.lower() in (r.get("project", "") or "").lower()
+            ]
+            if filtered:
+                results = filtered
+                logger.info(f"Filtered by layer '{layer_filter}': {len(results)} results")
 
         # Construir string de filtros aplicados
         filters_applied = [f"Tipo: `{node_type}`"]
         if class_name_filter:
             filters_applied.append(f"Clase: `{class_name_filter}`")
-        if namespace_filter:
-            filters_applied.append(f"Namespace: `{namespace_filter}`")
-        if args.get("project"):
-            filters_applied.append(f"Proyecto: `{args.get('project')}`")
+        if layer_filter:
+            filters_applied.append(f"Capa: `{layer_filter}`")
+        if project_filter:
+            filters_applied.append(f"Proyecto: `{project_filter}`")
         filters_str = " | ".join(filters_applied)
 
         if not results:
             msg = f"# Búsqueda en Grafo de Código BASE de ICBanking\n\n"
+            msg += f"**Versión:** `{self.default_version}`\n\n"
             if query_modified:
                 msg += f"⚠️ **Query modificada:** Recibí `{original_query}` pero busqué solo `{actual_query}`\n\n"
             msg += f"❌ No se encontraron resultados para: **{actual_query}**\n\n"
             msg += f"**Filtros aplicados:** {filters_str}\n\n"
-            msg += f"**Nota:** El grafo contiene SOLO el código base de ICBanking. "
-            msg += f"Si buscas una clase Extended de Tailored, estas NO están en el grafo."
+            msg += f"**Nota:** El grafo contiene SOLO el código base de ICBanking."
             return msg
 
-        # Consolidar resultados: agrupar clase + interfaz relacionadas
-        consolidated = self._consolidate_search_results(results, node_type)
+        # Detectar si los resultados son exactos o parciales (por el nombre)
+        is_exact = all(r.get("name", "").lower() == actual_query.lower() for r in results)
+        display_results = results
 
-        # Detectar si los resultados son exactos o parciales
-        exact_matches = []
-        partial_matches = []
-        for item in consolidated:
-            node = item['primary']
-            # Verificar si el nombre es exacto (case-insensitive)
-            if node.Name.lower() == actual_query.lower():
-                exact_matches.append(item)
+        # Log para debug
+        logger.info(f"search_code: found={len(results)}, exact={is_exact}, query='{actual_query}'")
+        for r in results[:10]:
+            logger.info(f"  - {r.get('name')} | {r.get('project')} | {r.get('namespace')}")
+
+        # Separar implementaciones de interfaces para mostrar más claramente
+        # Priorizar clases concretas sobre interfaces
+        implementations = []
+        interfaces = []
+        for r in display_results:
+            # Detectar si es una interfaz por el proyecto o namespace
+            project = r.get("project", "") or ""
+            namespace = r.get("namespace", "") or ""
+            is_interface = (
+                "Interface" in project or
+                ".Interfaces" in namespace or
+                project.endswith(".Interfaces")
+            )
+            if is_interface:
+                interfaces.append(r)
             else:
-                partial_matches.append(item)
+                implementations.append(r)
 
-        # Si hay matches exactos, mostrar solo esos
-        if exact_matches:
-            consolidated = exact_matches
-            is_partial = False
-        else:
-            is_partial = True
+        # Mostrar primero implementaciones, luego interfaces
+        display_results = implementations + interfaces
 
         # Formatear resultados en Markdown
         md = f"# 🔍 Resultados de Búsqueda\n\n"
+        md += f"**Versión:** `{self.default_version}`\n\n"
 
         if query_modified:
             md += f"⚠️ **Query modificada:** Recibí `{original_query}` pero busqué solo `{actual_query}`\n\n"
             md += "---\n\n"
 
         md += f"**Búsqueda:** `{actual_query}` | **Tipo:** `{node_type}`  \n"
-        if class_name_filter:
-            md += f"**Clase:** `{class_name_filter}`  \n"
-        if namespace_filter:
-            md += f"**Namespace:** `{namespace_filter}`  \n"
 
-        if is_partial:
-            md += f"⚠️ **Sin coincidencias exactas** - mostrando resultados parciales\n"
+        if is_exact:
+            md += f"✅ **Coincidencias exactas:** {len(display_results)}\n"
+        else:
+            md += f"⚠️ **Sin coincidencias exactas** - mostrando {len(display_results)} resultados parciales\n"
 
-        md += f"**Resultados:** {len(consolidated)}\n\n"
-        md += "---\n\n"
+        md += f"**Desglose:** {len(implementations)} implementaciones, {len(interfaces)} interfaces\n\n"
 
-        for i, item in enumerate(consolidated, 1):
-            node = item['primary']
-            interface_info = item.get('interface')
+        if len(display_results) > 1:
+            # Mostrar tabla resumen para fácil selección
+            md += "## Resumen de Resultados\n\n"
+            md += "| # | Nombre | Clase | Capa | Tipo |\n"
+            md += "|---|--------|-------|------|------|\n"
 
-            # Extraer className para métodos
-            # Prioridad: ContainingType > último segmento del Namespace
+            for i, node in enumerate(display_results, 1):
+                node_name = node.get("name", "N/A")
+                node_fullname = node.get("fullName", node_name)
+                node_project = node.get("project", "N/A")
+                node_layer = node.get("layer", "")
+                namespace = node.get("namespace", "") or ""
+
+                # Extraer clase contenedora
+                class_name = ""
+                if node_fullname:
+                    parts = node_fullname.rsplit(".", 2)
+                    if len(parts) >= 2:
+                        class_name = parts[-2]
+
+                # Detectar la capa desde el proyecto o namespace
+                layer_info = node_layer
+                if not layer_info:
+                    if "DataAccess" in node_project or "DataAccess" in namespace:
+                        layer_info = "DataAccess"
+                    elif "BusinessComponents" in node_project or "BusinessComponents" in namespace:
+                        layer_info = "BusinessComponents"
+                    elif "BusinessEntities" in node_project or "BusinessEntities" in namespace:
+                        layer_info = "BusinessEntities"
+                    elif "ServiceAgent" in node_project or "ServiceAgent" in namespace:
+                        layer_info = "ServiceAgents"
+                    elif "Interface" in node_project or ".Interfaces" in namespace:
+                        layer_info = "Interfaces"
+                    else:
+                        layer_info = node_project.split(".")[-1] if node_project else "N/A"
+
+                # Detectar si es interfaz
+                is_iface = node in interfaces
+                type_label = "📋 Interface" if is_iface else "🏗️ Impl"
+
+                md += f"| **{i}** | `{node_name}` | `{class_name}` | `{layer_info}` | {type_label} |\n"
+
+            md += "\n---\n\n"
+
+        md += "## Detalles de cada resultado\n\n"
+
+        for i, node in enumerate(display_results, 1):
+            node_name = node.get("name", "N/A")
+            node_type_val = node.get("type", node.get("kind", "N/A"))
+            node_project = node.get("project", "N/A")
+            node_namespace = node.get("namespace", "")
+            node_fullname = node.get("fullName", node_name)
+            node_source = node.get("source", {})
+            node_id = node.get("id", "")
+            node_layer = node.get("layer", "")
+
+            # Extraer clase contenedora para métodos desde fullName
             class_name = None
-            containing_type_full = None
-            if node.Type == "Method":
-                if hasattr(node, 'ContainingType') and node.ContainingType:
-                    # ContainingType tiene el nombre completo: "Namespace.ClassName"
-                    containing_type_full = node.ContainingType
-                    parts = node.ContainingType.rsplit('.', 1)
-                    class_name = parts[-1] if parts else node.ContainingType
-                elif node.Namespace:
-                    # Fallback: último segmento del namespace
-                    parts = node.Namespace.rsplit('.', 1)
-                    if len(parts) > 1:
-                        class_name = parts[-1]
+            if node_fullname:
+                # fullName tiene formato: Namespace.ClassName.MethodName
+                parts = node_fullname.rsplit(".", 2)
+                if len(parts) >= 2:
+                    class_name = parts[-2]
 
-            md += f"## {i}. {node.Name}\n\n"
+            md += f"### {i}. {node_name}"
+            if class_name:
+                md += f" (en `{class_name}`)"
+            md += "\n\n"
+
             md += f"| Campo | Valor |\n"
             md += f"|-------|-------|\n"
+            md += f"| **ID** | `{node_id}` |\n"
 
-            if node.Type == "Method" and class_name:
-                # Para métodos, mostrar la clase contenedora
+            if class_name:
                 is_interface = class_name.startswith('I') and len(class_name) > 1 and class_name[1].isupper()
                 if is_interface:
                     md += f"| **Clase/Interfaz** | `{class_name}` (Interface) |\n"
                 else:
                     md += f"| **Clase** | `{class_name}` |\n"
-                if containing_type_full:
-                    md += f"| **ContainingType** | `{containing_type_full}` |\n"
-                    if interface_info:
-                        iface_class = interface_info.Namespace.rsplit('.', 1)[-1] if interface_info.Namespace else 'I' + class_name
-                        md += f"| **Implementa** | `{iface_class}` |\n"
-            else:
-                md += f"| **Tipo** | `{node.Type}` |\n"
 
-            md += f"| **Proyecto** | `{node.Project}` |\n"
-            md += f"| **Namespace** | `{node.Namespace}` |\n"
+            md += f"| **Tipo** | `{node_type_val}` |\n"
+            md += f"| **Proyecto** | `{node_project}` |\n"
 
-            if node.Location and isinstance(node.Location, dict):
-                relative_path = node.Location.get('RelativePath', node.Location.get('AbsolutePath', ''))
-                if relative_path:
-                    md += f"| **Ubicación** | `{relative_path}` |\n"
+            if node_layer:
+                md += f"| **Layer** | `{node_layer}` |\n"
+
+            if node_namespace:
+                md += f"| **Namespace** | `{node_namespace}` |\n"
+            if node_fullname and node_fullname != node_name:
+                md += f"| **FullName** | `{node_fullname}` |\n"
+
+            if node_source and isinstance(node_source, dict):
+                file_path = node_source.get('file', '')
+                if file_path:
+                    md += f"| **Ubicación** | `{file_path}` |\n"
 
             md += "\n"
 
-            # Guía para siguiente paso
-            md += f"**➡️ Siguiente paso - `get_code_context`:**\n"
+        # Instrucciones finales
+        md += "---\n\n"
+        if len(display_results) > 1:
+            md += "**¿Cuál deseas analizar?** Indica el número (1, 2, 3...) o la capa (DataAccess, BusinessComponents).\n"
+        else:
+            md += f"**➡️ Siguiente paso - usa este ID para `find_callers`, `find_callees`, o `find_inheritance_chain`:**\n"
             md += f"```json\n"
             md += f"{{\n"
-            if node.Type == "Method" and class_name:
-                # Para métodos, usar la clase (no interfaz) si está disponible
-                target_class = class_name
-                if class_name.startswith('I') and len(class_name) > 1 and class_name[1].isupper():
-                    # Es interfaz, buscar si hay clase correspondiente
-                    target_class = class_name[1:]  # Quitar la I
-                md += f'  "className": "{target_class}",\n'
-                md += f'  "methodName": "{node.Name}",\n'
-            elif node.Type == "Class" or node.Type == "Interface":
-                md += f'  "className": "{node.Name}",\n'
-            else:
-                md += f'  "className": "{node.Name}",\n'
-            md += f'  "namespace": "{node.Namespace}",\n'
-            md += f'  "project": "{node.Project}"\n'
+            md += f'  "target_id": "{display_results[0].get("id", "")}"\n'
             md += f"}}\n"
-            md += f"```\n\n"
+            md += f"```\n"
 
         return md
+
+    async def _get_source_info_batch(self, node_ids: list) -> dict:
+        """
+        Fetch source info (file, line) for multiple node IDs in batch.
+        Returns dict: {node_id: {'file': path, 'line': number}}
+        """
+        if not node_ids:
+            return {}
+
+        try:
+            collection = self.nodes_service._get_collection(self.default_version)
+            result = {}
+
+            # Query all nodes in one go
+            cursor = collection.find(
+                {"_id": {"$in": node_ids}},
+                {"_id": 1, "source": 1}
+            )
+
+            async for doc in cursor:
+                node_id = doc.get("_id", "")
+                source = doc.get("source", {})
+                if source:
+                    result[node_id] = {
+                        'file': source.get('file', ''),
+                        'line': source.get('range', {}).get('start', 0)
+                    }
+
+            return result
+        except Exception as e:
+            logger.warning(f"Error fetching source info batch: {e}")
+            return {}
+
+    def _format_file_link(self, file_path: str, line: int = None) -> str:
+        """
+        Format a file path as a clickable link with line number.
+        Returns: [filename](path/to/file.cs:line) or empty string if no path.
+        """
+        if not file_path:
+            return ""
+
+        # Extract just the filename for display
+        import os
+        filename = os.path.basename(file_path)
+
+        # Format with line number if available
+        if line and line > 0:
+            return f"[{filename}:{line}]({file_path}:{line})"
+        else:
+            return f"[{filename}]({file_path})"
+
+    def _format_name_as_link(self, name: str, file_path: str = None, line: int = None) -> str:
+        """
+        Format a name as a clickable link to the file:line.
+        If no file info, returns the name as-is.
+        Returns: [Name](path/to/file.cs:line) or Name
+        """
+        if not file_path:
+            return name
+
+        # Format with line number if available
+        if line and line > 0:
+            return f"[{name}]({file_path}:{line})"
+        else:
+            return f"[{name}]({file_path})"
+
+    def _parse_grafo_id(self, grafo_id: str) -> tuple:
+        """
+        Parse a grafo ID to extract project and class/name.
+
+        Format: grafo:{kind}/{project}/{fullName}
+        Example: grafo:class/BackOffice.BusinessEntities/Infocorp.BackOffice.BusinessEntities.Communication.BOMessage
+
+        Returns: (project, fullName)
+        """
+        if not grafo_id or not grafo_id.startswith('grafo:'):
+            return ("", grafo_id)
+
+        # Remove 'grafo:' prefix
+        rest = grafo_id[6:]  # After 'grafo:'
+
+        # Split by '/' - format is {kind}/{project}/{fullName}
+        parts = rest.split('/', 2)  # Max 3 parts
+
+        if len(parts) >= 3:
+            # Has project: kind/project/fullName
+            return (parts[1], parts[2])
+        elif len(parts) == 2:
+            # No project (structural nodes): kind/name
+            return ("", parts[1])
+        else:
+            return ("", rest)
 
     def _consolidate_search_results(self, results, node_type: str) -> list:
         """
@@ -705,703 +978,763 @@ class GraphMCPTools:
         return consolidated
 
     async def _get_code_context(self, args: Dict[str, Any]) -> str:
-        """Obtiene contexto de código."""
-        request = CodeContextRequest(
-            className=args["className"],
-            methodName=args.get("methodName"),
-            namespace=args.get("namespace"),
-            relativePath=args.get("relativePath"),
-            absolutePath=args.get("absolutePath"),
-            projectName=args.get("projectName"),
-            version=self.default_version,
-            includeRelated=args.get("includeRelated", True),
-            maxDepth=args.get("maxDepth", 2)
-        )
+        """Obtiene contexto de código desde la colección versionada."""
+        class_name = args["className"]
+        method_name = args.get("methodName")
+        namespace = args.get("namespace")
+        project = args.get("project")
 
-        result = await self.graph_service.get_code_context(request)
+        try:
+            # Verificar si existe la versión
+            if not await self.nodes_service.check_version_exists(self.default_version):
+                versions = await self.nodes_service.get_available_versions()
+                return (
+                    "# Contexto de Código\n\n"
+                    f"❌ **Versión {self.default_version} no disponible**\n\n"
+                    f"**Versiones disponibles:** {versions}\n"
+                )
 
-        if not result.found:
-            md = f"# Contexto de Código BASE de ICBanking\n\n"
-            md += f"❌ **No se encontró:** `{args['className']}`\n\n"
-            md += (
-                f"**Nota:** El grafo contiene SOLO el código base de ICBanking. "
-                f"Si buscas una clase Extended de Tailored, estas NO están en el grafo. "
-                f"Busca la clase base sin el sufijo 'Extended'.\n\n"
+            # Buscar el elemento principal usando todos los filtros disponibles
+            search_query = method_name if method_name else class_name
+            results = await self.nodes_service.search_nodes(
+                version=self.default_version,
+                query=search_query,
+                node_type="Method" if method_name else "Class",
+                project=project,
+                limit=50
             )
 
-            if result.suggestions:
-                md += "## Sugerencias\n\n"
-                for suggestion in result.suggestions:
-                    md += f"- {suggestion}\n"
+            # Filtrar por namespace si se proporcionó
+            if namespace and results:
+                filtered = [r for r in results if namespace.lower() in (r.get("namespace", "") or "").lower()]
+                if filtered:
+                    results = filtered
 
-            return md
+            # Filtrar por proyecto si se proporcionó
+            if project and results:
+                filtered = [r for r in results if project.lower() in (r.get("project", "") or "").lower()]
+                if filtered:
+                    results = filtered
 
-        # Formatear en Markdown
-        md = f"# Contexto de Código BASE de ICBanking\n\n"
+            # PRIORIZAR MATCH EXACTO: filtrar por nombre exacto primero
+            if results:
+                exact_matches = [r for r in results if r.get("name", "").lower() == search_query.lower()]
+                if exact_matches:
+                    results = exact_matches
 
-        # Elemento principal
-        if result.mainElement:
-            elem = result.mainElement
-            md += f"## 📦 Elemento Principal: {elem.Name}\n\n"
-            md += f"- **Tipo:** `{elem.Type}`\n"
-            md += f"- **Namespace:** `{elem.Namespace}`\n"
-            md += f"- **Proyecto:** `{elem.Project}`\n"
+            if not results:
+                md = f"# Contexto de Código BASE de ICBanking\n\n"
+                md += f"❌ **No se encontró:** `{class_name}`\n\n"
+                md += (
+                    f"**Nota:** El grafo contiene SOLO el código base de ICBanking. "
+                    f"Si buscas una clase Extended de Tailored, estas NO están en el grafo.\n"
+                )
+                return md
 
-            if elem.Location and isinstance(elem.Location, dict):
-                relative_path = elem.Location.get('RelativePath', elem.Location.get('AbsolutePath', 'N/A'))
-                if relative_path and relative_path != 'N/A':
-                    md += f"- **Ubicación:** `{relative_path}`\n"
+            # Tomar el mejor resultado
+            target = results[0]
+            target_id = target.get("id", "")
 
-            if elem.Attributes:
-                md += f"- **Atributos:**\n"
-                for key, value in elem.Attributes.items():
-                    md += f"  - {key}: `{value}`\n"
+            # Obtener nodo completo con todas las relaciones
+            node = await self.nodes_service.get_node_by_id(self.default_version, target_id)
+            if not node:
+                node = target
+
+            # Formatear en Markdown
+            md = f"# Contexto de Código BASE de ICBanking\n\n"
+            md += f"**Versión:** `{self.default_version}`\n\n"
+
+            # Elemento principal
+            md += f"## 📦 Elemento Principal: {node.get('name', 'N/A')}\n\n"
+            md += f"- **ID:** `{target_id}`\n"
+            md += f"- **Tipo:** `{node.get('kind', 'N/A')}`\n"
+            if node.get('namespace'):
+                md += f"- **Namespace:** `{node.get('namespace')}`\n"
+            md += f"- **Proyecto:** `{node.get('project', 'N/A')}`\n"
+
+            if node.get('source'):
+                source = node['source']
+                if source.get('file'):
+                    md += f"- **Ubicación:** `{source.get('file')}`\n"
+
+            # Atributos
+            attrs = []
+            if node.get('accessibility'):
+                attrs.append(node['accessibility'])
+            if node.get('isAbstract'):
+                attrs.append('abstract')
+            if node.get('isStatic'):
+                attrs.append('static')
+            if node.get('isSealed'):
+                attrs.append('sealed')
+            if attrs:
+                md += f"- **Atributos:** {', '.join(attrs)}\n"
 
             md += "\n---\n\n"
 
-        # Información del proyecto
-        if result.projectInfo:
-            proj = result.projectInfo
-            md += f"## 📂 Información del Proyecto\n\n"
-            md += f"- **Nombre:** `{proj.ProjectName}`\n"
-            if hasattr(proj, 'Layer') and proj.Layer:
-                md += f"- **Layer:** `{proj.Layer}`\n"
-            md += "\n"
-
-        # Elementos relacionados - Agrupar por tipo de relación
-        if result.edges and result.mainElement:
+            # Relaciones embebidas en el nodo
             md += f"## 🔗 Relaciones en el Grafo\n\n"
 
-            # Agrupar edges por tipo de relación
-            relations_by_type = {}
-            main_id = result.mainElement.Id
+            has_relations = False
 
-            for edge in result.edges:
-                rel_type = edge.Relationship
-
-                # Determinar si es entrante o saliente
-                if edge.Source == main_id:
-                    # Saliente: este elemento -> otro
-                    direction = "outgoing"
-                    other_id = edge.Target
-                else:
-                    # Entrante: otro -> este elemento
-                    direction = "incoming"
-                    other_id = edge.Source
-
-                # Buscar el elemento relacionado
-                related = next((r for r in result.relatedElements if r.Id == other_id), None)
-                if not related:
-                    continue
-
-                # Crear key única para agrupar
-                key = f"{rel_type}_{direction}"
-                if key not in relations_by_type:
-                    relations_by_type[key] = {
-                        'type': rel_type,
-                        'direction': direction,
-                        'elements': []
-                    }
-
-                relations_by_type[key]['elements'].append({
-                    'name': related.Name,
-                    'node_type': related.Type,
-                    'namespace': related.Namespace,
-                    'project': related.Project
-                })
-
-            # Ordenar por prioridad: herencia/implementación primero
-            priority_order = ['Inherits', 'Implements', 'Contains', 'Calls', 'Uses', 'References']
-
-            def sort_key(key):
-                rel_type = key.split('_')[0]
-                try:
-                    return priority_order.index(rel_type)
-                except ValueError:
-                    return len(priority_order)
-
-            # Formatear cada grupo ordenado
-            for key in sorted(relations_by_type.keys(), key=sort_key):
-                group = relations_by_type[key]
-                rel_type = group['type']
-                direction = group['direction']
-                elements = group['elements']
-
-                # Determinar emoji e título según tipo y dirección
-                if rel_type == 'Inherits':
-                    if direction == 'outgoing':
-                        title = f"🔼 Hereda de ({len(elements)})"
-                    else:
-                        title = f"🔽 Clases que heredan de {result.mainElement.Name} ({len(elements)})"
-                elif rel_type == 'Implements':
-                    if direction == 'outgoing':
-                        title = f"✅ Implementa ({len(elements)})"
-                    else:
-                        title = f"📋 Clases que implementan {result.mainElement.Name} ({len(elements)})"
-                elif rel_type == 'Calls':
-                    if direction == 'outgoing':
-                        title = f"➡️ Llama a ({len(elements)})"
-                    else:
-                        title = f"⬅️ Es llamado por ({len(elements)})"
-                elif rel_type == 'Uses':
-                    if direction == 'outgoing':
-                        title = f"📦 Usa ({len(elements)})"
-                    else:
-                        title = f"📥 Es usado por ({len(elements)})"
-                elif rel_type == 'Contains':
-                    if direction == 'outgoing':
-                        title = f"📁 Contiene ({len(elements)})"
-                    else:
-                        title = f"📂 Contenido en ({len(elements)})"
-                else:
-                    title = f"🔗 {rel_type} {'→' if direction == 'outgoing' else '←'} ({len(elements)})"
-
-                md += f"### {title}\n\n"
-                md += f"| Nombre | Tipo | Namespace |\n"
-                md += f"|--------|------|----------|\n"
-                for elem in elements[:15]:  # Limitar a 15 para no saturar
-                    md += f"| `{elem['name']}` | {elem['node_type']} | {elem['namespace'][:50]}{'...' if len(elem['namespace']) > 50 else ''} |\n"
-
-                if len(elements) > 15:
-                    md += f"\n_... y {len(elements) - 15} elementos más_\n"
+            # Hereda de (outgoing inherits)
+            if node.get('inherits'):
+                has_relations = True
+                md += f"### 🔼 Hereda de ({len(node['inherits'])})\n\n"
+                for ref_id in node['inherits'][:10]:
+                    md += f"- `{ref_id}`\n"
+                if len(node['inherits']) > 10:
+                    md += f"_... y {len(node['inherits']) - 10} más_\n"
                 md += "\n"
 
+            # Implementa (outgoing implements)
+            if node.get('implements'):
+                has_relations = True
+                md += f"### ✅ Implementa ({len(node['implements'])})\n\n"
+                for ref_id in node['implements'][:10]:
+                    md += f"- `{ref_id}`\n"
+                if len(node['implements']) > 10:
+                    md += f"_... y {len(node['implements']) - 10} más_\n"
+                md += "\n"
+
+            # Buscar CALLERS (quién llama a este método) - consulta inversa
+            collection = self.nodes_service._get_collection(self.default_version)
+            callers = []
+            async for doc in collection.find({"calls": target_id}).limit(20):
+                callers.append(self.nodes_service._normalize_node(doc))
+
+            # Obtener source info para callers
+            caller_ids = [c.get('id') for c in callers]
+            source_info = await self._get_source_info_batch(caller_ids)
+
+            # Llamado por (incoming calls) - quién invoca este método
+            if callers:
+                has_relations = True
+                # Separar clases de interfaces
+                caller_classes = []
+                caller_interfaces = []
+                for caller in callers:
+                    proj = caller.get('project', '') or ''
+                    ns = caller.get('namespace', '') or ''
+                    if 'Interface' in proj or '.Interfaces' in ns:
+                        caller_interfaces.append(caller)
+                    else:
+                        caller_classes.append(caller)
+
+                md += f"### ⬅️ Llamado por ({len(callers)})\n\n"
+
+                if caller_classes:
+                    md += "**Clases:**\n\n"
+                    md += "| Clase/Método | Línea |\n"
+                    md += "|-------------|-------|\n"
+                    for caller in caller_classes[:10]:
+                        caller_id = caller.get('id', '')
+                        name = caller.get('fullName') or caller.get('name', 'N/A')
+                        src = source_info.get(caller_id, {})
+                        name_display = self._format_name_as_link(name, src.get('file'))
+                        line_display = src.get('line', '') if src.get('line') else ''
+                        md += f"| {name_display} | {line_display} |\n"
+                    if len(caller_classes) > 10:
+                        md += f"\n_... y {len(caller_classes) - 10} clases más_\n"
+                    md += "\n"
+
+                if caller_interfaces:
+                    md += "**Interfaces:**\n\n"
+                    md += "| Interface/Método | Línea |\n"
+                    md += "|-----------------|-------|\n"
+                    for caller in caller_interfaces[:5]:
+                        caller_id = caller.get('id', '')
+                        name = caller.get('fullName') or caller.get('name', 'N/A')
+                        src = source_info.get(caller_id, {})
+                        name_display = self._format_name_as_link(name, src.get('file'))
+                        line_display = src.get('line', '') if src.get('line') else ''
+                        md += f"| {name_display} | {line_display} |\n"
+                    if len(caller_interfaces) > 5:
+                        md += f"\n_... y {len(caller_interfaces) - 5} interfaces más_\n"
+                    md += "\n"
+
+            # Llama a (outgoing calls) - a quién llama este método
+            if node.get('calls'):
+                has_relations = True
+                outgoing_ids = node['calls'][:20]
+                outgoing_source_info = await self._get_source_info_batch(outgoing_ids)
+
+                # Separar clases de interfaces
+                call_classes = []
+                call_interfaces = []
+                for ref_id in outgoing_ids:
+                    if 'Interface' in ref_id or '/I' in ref_id.split('/')[-1][:2]:
+                        call_interfaces.append(ref_id)
+                    else:
+                        call_classes.append(ref_id)
+
+                md += f"### ➡️ Llama a ({len(node['calls'])})\n\n"
+
+                if call_classes:
+                    md += "**Clases:**\n\n"
+                    md += "| Clase/Método | Línea |\n"
+                    md += "|-------------|-------|\n"
+                    for ref_id in call_classes[:10]:
+                        proj, name = self._parse_grafo_id(ref_id)
+                        src = outgoing_source_info.get(ref_id, {})
+                        name_display = self._format_name_as_link(name, src.get('file'))
+                        line_display = src.get('line', '') if src.get('line') else ''
+                        md += f"| {name_display} | {line_display} |\n"
+                    if len(call_classes) > 10:
+                        md += f"\n_... y {len(call_classes) - 10} clases más_\n"
+                    md += "\n"
+
+                if call_interfaces:
+                    md += "**Interfaces:**\n\n"
+                    md += "| Interface/Método | Línea |\n"
+                    md += "|-----------------|-------|\n"
+                    for ref_id in call_interfaces[:5]:
+                        proj, name = self._parse_grafo_id(ref_id)
+                        src = outgoing_source_info.get(ref_id, {})
+                        name_display = self._format_name_as_link(name, src.get('file'))
+                        line_display = src.get('line', '') if src.get('line') else ''
+                        md += f"| {name_display} | {line_display} |\n"
+                    if len(call_interfaces) > 5:
+                        md += f"\n_... y {len(call_interfaces) - 5} interfaces más_\n"
+                    md += "\n"
+
+                if len(node['calls']) > 20:
+                    md += f"_... y {len(node['calls']) - 20} más en total_\n\n"
+
+            # Usa (outgoing uses) - tipos/clases que usa
+            if node.get('uses'):
+                has_relations = True
+                uses_ids = node['uses'][:10]
+                uses_source_info = await self._get_source_info_batch(uses_ids)
+
+                md += f"### 📦 Usa ({len(node['uses'])})\n\n"
+                md += "| Clase | Línea |\n"
+                md += "|-------|-------|\n"
+                for ref_id in uses_ids:
+                    proj, name = self._parse_grafo_id(ref_id)
+                    src = uses_source_info.get(ref_id, {})
+                    name_display = self._format_name_as_link(name, src.get('file'))
+                    line_display = src.get('line', '') if src.get('line') else ''
+                    md += f"| {name_display} | {line_display} |\n"
+                md += "\n"
+                if len(node['uses']) > 10:
+                    md += f"_... y {len(node['uses']) - 10} más_\n\n"
+
+            # Contiene (outgoing contains)
+            if node.get('contains'):
+                has_relations = True
+                md += f"### 📁 Contiene ({len(node['contains'])})\n\n"
+                for ref_id in node['contains'][:20]:
+                    _, name = self._parse_grafo_id(ref_id)
+                    md += f"- `{name}`\n"
+                if len(node['contains']) > 20:
+                    md += f"_... y {len(node['contains']) - 20} más_\n"
+                md += "\n"
+
+            # Contenido en - mostrar ruta del archivo si es un file
+            if node.get('containedIn'):
+                has_relations = True
+                contained_in = node['containedIn']
+                md += f"### 📂 Contenido en\n\n"
+                # Si es un archivo, mostrar la ubicación del source
+                if contained_in.startswith('grafo:file/'):
+                    # Usar la ubicación del source del nodo actual
+                    if node.get('source') and node['source'].get('file'):
+                        md += f"- `{node['source']['file']}`\n\n"
+                    else:
+                        # Extraer nombre del archivo del ID
+                        file_name = contained_in.replace('grafo:file/', '')
+                        md += f"- `{file_name}`\n\n"
+                else:
+                    _, name = self._parse_grafo_id(contained_in)
+                    md += f"- `{name}`\n\n"
+
+            if not has_relations:
+                md += "_No se encontraron relaciones directas para este elemento._\n\n"
+
             # Resumen
+            total_incoming = len(callers)
+            total_outgoing = (
+                len(node.get('calls', [])) +
+                len(node.get('uses', []))
+            )
             md += f"---\n\n"
-            md += f"**📊 Resumen:** {len(result.relatedElements)} elementos relacionados, {len(result.edges)} conexiones\n"
+            md += f"**📊 Resumen:** {total_incoming} llamadas entrantes, {total_outgoing} dependencias salientes\n"
 
-        elif result.relatedElements:
-            # Hay elementos pero no edges (caso raro)
-            md += f"## 🔗 Elementos Relacionados ({len(result.relatedElements)})\n\n"
-            md += "_No se encontraron conexiones directas en el grafo._\n"
+            return md
 
-        return md
+        except Exception as e:
+            logger.error(f"Error getting code context: {e}", exc_info=True)
+            return f"# Contexto de Código\n\n❌ Error: {str(e)}"
 
     async def _list_projects(self, args: Dict[str, Any]) -> str:
-        """Lista proyectos disponibles."""
-        request = SearchProjectsRequest(
-            query=args.get("query"),
-            version=self.default_version,
-            limit=args.get("limit", 50)
-        )
+        """Lista proyectos disponibles en la colección versionada."""
+        try:
+            # Verificar si existe la versión
+            if not await self.nodes_service.check_version_exists(self.default_version):
+                versions = await self.nodes_service.get_available_versions()
+                return (
+                    "# Proyectos en el Grafo\n\n"
+                    f"❌ **Versión {self.default_version} no disponible**\n\n"
+                    f"**Versiones disponibles:** {versions}\n"
+                )
 
-        results = await self.graph_service.search_projects(request)
+            # Agregar proyectos desde la colección de nodos
+            collection = self.nodes_service._get_collection(self.default_version)
+            query_filter = args.get("query")
 
-        if not results:
-            return "# Proyectos Código BASE de ICBanking en el Grafo\n\n❌ No se encontraron proyectos"
+            pipeline = [
+                {"$group": {
+                    "_id": "$project",
+                    "count": {"$sum": 1},
+                    "solutions": {"$addToSet": "$solution"}
+                }},
+                {"$sort": {"_id": 1}},
+                {"$limit": args.get("limit", 50)}
+            ]
 
-        # Formatear en Markdown
-        md = "# Proyectos Código BASE de ICBanking en el Grafo\n\n"
-        md += f"**Total de proyectos encontrados:** {len(results)}\n\n"
-        md += "---\n\n"
+            if query_filter:
+                pipeline.insert(0, {"$match": {"project": {"$regex": query_filter, "$options": "i"}}})
 
-        for i, project in enumerate(results, 1):
-            if isinstance(project, dict):
-                name = project.get("projectName", "N/A")
-                namespace = project.get("namespace", "N/A")
-                node_count = len(project.get("nodes", []))
-                edge_count = len(project.get("edges", []))
+            projects = []
+            async for doc in collection.aggregate(pipeline):
+                if doc["_id"]:  # Skip None projects
+                    projects.append({
+                        "name": doc["_id"],
+                        "nodeCount": doc["count"],
+                        "solutions": doc["solutions"]
+                    })
 
-                md += f"## {i}. {name}\n\n"
-                md += f"- **Namespace:** `{namespace}`\n"
-                md += f"- **Elementos:** {node_count} nodos\n"
-                md += f"- **Conexiones:** {edge_count} relaciones\n"
-            else:
-                md += f"## {i}. {project.ProjectName}\n\n"
-                if hasattr(project, 'Layer') and project.Layer:
-                    md += f"- **Layer:** `{project.Layer}`\n"
-                md += f"- **Elementos:** {project.NodeCount} nodos\n"
-                md += f"- **Conexiones:** {project.EdgeCount} relaciones\n"
+            if not projects:
+                return "# Proyectos Código BASE de ICBanking en el Grafo\n\n❌ No se encontraron proyectos"
 
-            md += "\n"
+            # Formatear en Markdown
+            md = "# Proyectos Código BASE de ICBanking en el Grafo\n\n"
+            md += f"**Versión:** `{self.default_version}`\n"
+            md += f"**Total de proyectos encontrados:** {len(projects)}\n\n"
+            md += "---\n\n"
 
-        return md
+            for i, project in enumerate(projects, 1):
+                md += f"## {i}. {project['name']}\n\n"
+                md += f"- **Elementos:** {project['nodeCount']} nodos\n"
+                if project['solutions']:
+                    md += f"- **Soluciones:** {', '.join(filter(None, project['solutions']))}\n"
+                md += "\n"
+
+            return md
+
+        except Exception as e:
+            logger.error(f"Error listing projects: {e}", exc_info=True)
+            return f"# Proyectos en el Grafo\n\n❌ Error: {str(e)}"
 
     async def _get_project_structure(self, args: Dict[str, Any]) -> str:
-        """Obtiene estructura de un proyecto."""
+        """Obtiene estructura de un proyecto desde la colección versionada."""
         project_id = args["project_id"]
-        node_type = args.get("node_type")
+        filter_type = args.get("node_type")
 
-        nodes = await self.graph_service.get_nodes_by_project(project_id, node_type)
+        try:
+            # Verificar si existe la versión
+            if not await self.nodes_service.check_version_exists(self.default_version):
+                versions = await self.nodes_service.get_available_versions()
+                return (
+                    "# Estructura de Proyecto\n\n"
+                    f"❌ **Versión {self.default_version} no disponible**\n\n"
+                    f"**Versiones disponibles:** {versions}\n"
+                )
 
-        if not nodes:
-            return f"# Estructura de Proyecto - Grafo Código BASE de ICBanking\n\n❌ No se encontraron elementos en el proyecto: **`{project_id}`**"
+            # Usar NodesQueryService para obtener nodos del proyecto
+            nodes = await self.nodes_service.get_nodes_by_project(
+                version=self.default_version,
+                project=project_id,
+                node_type=filter_type,
+                limit=1000
+            )
 
-        # Agrupar por tipo
-        by_type = {}
-        for node in nodes:
-            node_type = node.Type
-            if node_type not in by_type:
-                by_type[node_type] = []
-            by_type[node_type].append(node)
+            if not nodes:
+                return f"# Estructura de Proyecto - Grafo Código BASE de ICBanking\n\n❌ No se encontraron elementos en el proyecto: **`{project_id}`**"
 
-        # Formatear en Markdown
-        md = f"# Estructura de Proyecto - Grafo Código BASE de ICBanking\n\n"
-        md += f"**Proyecto:** `{project_id}`  \n"
-        md += f"**Total de elementos:** {len(nodes)}\n\n"
-        md += "---\n\n"
+            # Agrupar por tipo (kind)
+            by_type = {}
+            for node in nodes:
+                node_kind = node.get("kind", node.get("type", "unknown"))
+                if node_kind not in by_type:
+                    by_type[node_kind] = []
+                by_type[node_kind].append(node)
 
-        for tipo, elementos in sorted(by_type.items()):
-            md += f"## {tipo}s ({len(elementos)})\n\n"
+            # Formatear en Markdown
+            md = f"# Estructura de Proyecto - Grafo Código BASE de ICBanking\n\n"
+            md += f"**Versión:** `{self.default_version}`\n"
+            md += f"**Proyecto:** `{project_id}`  \n"
+            md += f"**Total de elementos:** {len(nodes)}\n\n"
+            md += "---\n\n"
 
-            for elem in elementos[:20]:  # Limitar a 20 por tipo para no saturar
-                md += f"### `{elem.Name}`\n\n"
-                md += f"- **Namespace:** `{elem.Namespace}`\n"
+            for tipo, elementos in sorted(by_type.items()):
+                md += f"## {tipo}s ({len(elementos)})\n\n"
 
-                if elem.Attributes:
+                for elem in elementos[:20]:  # Limitar a 20 por tipo
+                    elem_name = elem.get("name", "N/A")
+                    elem_namespace = elem.get("namespace", "")
+                    elem_id = elem.get("id", "")
+
+                    md += f"### `{elem_name}`\n\n"
+                    md += f"- **ID:** `{elem_id}`\n"
+                    if elem_namespace:
+                        md += f"- **Namespace:** `{elem_namespace}`\n"
+
+                    # Mostrar atributos relevantes
                     attrs = []
-                    for key, value in elem.Attributes.items():
-                        if value and str(value).lower() not in ['false', 'none', '']:
-                            attrs.append(f"`{key}`")
+                    if elem.get("isAbstract"):
+                        attrs.append("`abstract`")
+                    if elem.get("isStatic"):
+                        attrs.append("`static`")
+                    if elem.get("isSealed"):
+                        attrs.append("`sealed`")
+                    if elem.get("accessibility"):
+                        attrs.append(f"`{elem.get('accessibility')}`")
                     if attrs:
                         md += f"- **Atributos:** {', '.join(attrs)}\n"
 
-                md += "\n"
+                    md += "\n"
 
-            if len(elementos) > 20:
-                md += f"_... y {len(elementos) - 20} elementos más de tipo {tipo}_\n\n"
+                if len(elementos) > 20:
+                    md += f"_... y {len(elementos) - 20} elementos más de tipo {tipo}_\n\n"
 
-        return md
+            return md
+
+        except Exception as e:
+            logger.error(f"Error getting project structure: {e}", exc_info=True)
+            return f"# Estructura de Proyecto\n\n❌ Error: {str(e)}"
 
     async def _find_implementations(self, args: Dict[str, Any]) -> str:
-        """Encuentra implementaciones de una interfaz o herencias."""
+        """Encuentra implementaciones de una interfaz o herencias usando colección versionada."""
         interface_name = args["interface_or_class"]
-        namespace = args.get("namespace")
 
-        # Buscar la interfaz/clase - buscar más resultados para filtrar mejor
-        search_request = SearchNodesRequest(
-            query=interface_name,
-            nodeType=None,
-            namespace=namespace,
-            version=self.default_version,
-            limit=20  # Aumentar límite para tener más opciones
-        )
+        try:
+            # Verificar si existe la versión
+            if not await self.nodes_service.check_version_exists(self.default_version):
+                versions = await self.nodes_service.get_available_versions()
+                return (
+                    "# Implementaciones y Herencias\n\n"
+                    f"❌ **Versión {self.default_version} no disponible**\n\n"
+                    f"**Versiones disponibles:** {versions}\n"
+                )
 
-        all_results = await self.graph_service.search_nodes(search_request)
+            # Buscar la interfaz/clase primero
+            all_results = await self.nodes_service.search_nodes(
+                version=self.default_version,
+                query=interface_name,
+                node_type=None,
+                limit=20
+            )
 
-        if not all_results:
-            return f"# Implementaciones y Herencias - Grafo Código BASE de ICBanking\n\n❌ No se encontró: **`{interface_name}`**"
+            if not all_results:
+                return f"# Implementaciones y Herencias - Grafo Código BASE de ICBanking\n\n❌ No se encontró: **`{interface_name}`**"
 
-        # Filtrar y priorizar: preferir Interface/Class sobre File
-        # Ordenar por prioridad: Interface > Class > otros tipos
-        def priority(node):
-            if node.Type == "Interface":
-                return 0
-            elif node.Type == "Class":
-                return 1
-            elif node.Type in ["Struct", "Enum"]:
-                return 2
-            else:  # File y otros
-                return 3
+            # Priorizar: Interface > Class > otros
+            def priority(node):
+                kind = node.get("kind", "").lower()
+                if kind == "interface":
+                    return 0
+                elif kind == "class":
+                    return 1
+                elif kind in ["struct", "enum"]:
+                    return 2
+                else:
+                    return 3
 
-        filtered_results = [n for n in all_results if n.Type != "File"]
+            filtered_results = [n for n in all_results if n.get("kind", "").lower() not in ["file", "project"]]
+            if not filtered_results:
+                filtered_results = all_results
 
-        if not filtered_results:
-            # Si solo hay archivos, usar el primero de all_results
-            filtered_results = all_results
+            filtered_results.sort(key=priority)
+            target = filtered_results[0]
+            target_id = target.get("id", "")
+            target_kind = target.get("kind", "")
 
-        # Ordenar por prioridad
-        filtered_results.sort(key=priority)
-        target = filtered_results[0]
+            # Usar NodesQueryService para encontrar implementaciones
+            if target_kind.lower() == "interface":
+                result = await self.nodes_service.find_implementations(
+                    version=self.default_version,
+                    interface_id=target_id
+                )
+                implementations_list = result.get("implementations", [])
+            else:
+                # Para clases, buscar en la cadena de herencia
+                result = await self.nodes_service.find_inheritance_chain(
+                    version=self.default_version,
+                    class_id=target_id,
+                    max_depth=10
+                )
+                implementations_list = [d.get("node", {}) for d in result.get("descendants", [])]
 
-        # Buscar implementaciones usando contexto
-        context_request = CodeContextRequest(
-            className=target.Name,
-            namespace=target.Namespace,
-            projectName=target.Project,
-            version=self.default_version,
-            includeRelated=True,
-            maxDepth=2
-        )
+            # Formatear en Markdown
+            md = f"# Implementaciones y Herencias - Grafo Código BASE de ICBanking\n\n"
+            md += f"**Versión:** `{self.default_version}`\n\n"
+            md += f"## 🎯 Elemento Base\n\n"
+            md += f"- **ID:** `{target_id}`\n"
+            md += f"- **Nombre:** `{target.get('name', 'N/A')}`\n"
+            md += f"- **Tipo:** `{target_kind}`\n"
+            md += f"- **Namespace:** `{target.get('namespace') or '(global)'}`\n"
+            md += f"- **Proyecto:** `{target.get('project', 'N/A')}`\n\n"
 
-        context = await self.graph_service.get_code_context(context_request)
+            if len(all_results) > 1:
+                md += f"_Se encontraron {len(all_results)} coincidencias, seleccionando el de tipo {target_kind}_\n\n"
 
-        # Filtrar solo implementaciones/herencias de los edges
-        # IMPORTANTE: Si target es una Interface/Class base:
-        # - Implementaciones: edge.Target == target.Id y edge.Relationship == "Implements"
-        # - Herencias: edge.Target == target.Id y edge.Relationship == "Inherits"
-        # El SOURCE es quien implementa/hereda
-        implementations = []
+            md += "---\n\n"
 
-        def extract_info_from_id(node_id: str) -> dict:
-            """Extrae nombre y namespace de un ID de nodo (ej: component:Namespace.ClassName)"""
-            # IDs tienen formato: "component:Full.Namespace.ClassName" o "file:Project:File.cs"
-            if ":" in node_id:
-                parts = node_id.split(":", 1)
-                if len(parts) > 1:
-                    full_name = parts[1]
-                    name_parts = full_name.rsplit(".", 1)
-                    name = name_parts[-1] if name_parts else full_name
-                    namespace = name_parts[0] if len(name_parts) > 1 else ""
-                    # Determinar tipo basado en convención de nombres
-                    node_type = "Interface" if name.startswith("I") and len(name) > 1 and name[1].isupper() else "Class"
-                    return {"name": name, "namespace": namespace, "type": node_type, "full_name": full_name}
-            return None
+            if not implementations_list:
+                md += f"❌ **No se encontraron implementaciones o herencias** de este elemento.\n\n"
+                if target_kind.lower() == "interface":
+                    md += "_Tip: Verifica que existan clases que implementen esta interfaz._"
+                else:
+                    md += "_Tip: Verifica que existan clases que hereden de esta clase base._"
+                return md
 
-        if context.edges and context.mainElement:
-            target_id = context.mainElement.Id
+            relationship_type = "Implementaciones" if target_kind.lower() == "interface" else "Herencias"
+            md += f"## 🏗️ {relationship_type} Encontradas ({len(implementations_list)})\n\n"
 
-            for edge in context.edges:
-                # Solo procesar si la relación es Implements o Inherits
-                if edge.Relationship not in ["Implements", "Inherits"]:
-                    continue
+            for impl in implementations_list[:30]:  # Limitar a 30
+                impl_name = impl.get("name", "N/A")
+                impl_id = impl.get("id", "")
+                impl_namespace = impl.get("namespace", "")
+                impl_project = impl.get("project", "N/A")
+                impl_kind = impl.get("kind", "class")
 
-                # Verificar si el target del edge es nuestro elemento
-                # (significa que alguien implementa/hereda de nosotros)
-                if edge.Target == target_id:
-                    # El Source es quien implementa/hereda
-                    implementer = next(
-                        (node for node in context.relatedElements if node.Id == edge.Source),
-                        None
-                    )
-                    if implementer and implementer.Type != "File":
-                        implementations.append({
-                            "name": implementer.Name,
-                            "namespace": implementer.Namespace,
-                            "type": implementer.Type,
-                            "relationship": edge.Relationship,
-                            "project": implementer.Project
-                        })
-                    elif not implementer:
-                        # Nodo no encontrado en relatedElements (puede estar en otro proyecto)
-                        # Extraer info del ID del edge
-                        info = extract_info_from_id(edge.Source)
-                        if info:
-                            implementations.append({
-                                "name": info["name"],
-                                "namespace": info["namespace"],
-                                "type": info["type"],
-                                "relationship": edge.Relationship,
-                                "project": "(otro proyecto)"
-                            })
+                md += f"### `{impl_name}`\n\n"
+                md += f"- **ID:** `{impl_id}`\n"
+                md += f"- **Tipo:** `{impl_kind}`\n"
+                if impl_namespace:
+                    md += f"- **Namespace:** `{impl_namespace}`\n"
+                md += f"- **Proyecto:** `{impl_project}`\n\n"
 
-                # También verificar el caso inverso (si nosotros heredamos/implementamos)
-                elif edge.Source == target_id:
-                    parent = next(
-                        (node for node in context.relatedElements if node.Id == edge.Target),
-                        None
-                    )
-                    if parent and parent.Type != "File":
-                        # En este caso, el target hereda/implementa a parent
-                        # Lo marcamos de forma diferente
-                        implementations.append({
-                            "name": parent.Name,
-                            "namespace": parent.Namespace,
-                            "type": parent.Type,
-                            "relationship": f"{edge.Relationship} (base)",
-                            "project": parent.Project
-                        })
-                    elif not parent:
-                        # Nodo padre no encontrado (puede estar en otro proyecto)
-                        info = extract_info_from_id(edge.Target)
-                        if info:
-                            implementations.append({
-                                "name": info["name"],
-                                "namespace": info["namespace"],
-                                "type": info["type"],
-                                "relationship": f"{edge.Relationship} (base)",
-                                "project": "(otro proyecto)"
-                            })
+            if len(implementations_list) > 30:
+                md += f"_... y {len(implementations_list) - 30} más_\n\n"
 
-        # Formatear en Markdown
-        md = f"# Implementaciones y Herencias - Grafo Código BASE de ICBanking\n\n"
-        md += f"## 🎯 Elemento Base\n\n"
-        md += f"- **Nombre:** `{target.Name}`\n"
-        md += f"- **Tipo:** `{target.Type}`\n"
-        md += f"- **Namespace:** `{target.Namespace or '(global)'}`\n"
-        md += f"- **Proyecto:** `{target.Project}`\n\n"
+            md += "---\n\n"
+            md += f"## 📊 Resumen\n\n"
+            md += f"- **Total de {relationship_type.lower()}:** {len(implementations_list)}\n\n"
+            md += f"**💡 Análisis de Impacto:** Modificar `{target.get('name')}` afectará a **{len(implementations_list)} elementos**."
 
-        # Info de debug
-        if len(all_results) > 1:
-            md += f"_ℹ️ Se encontraron {len(all_results)} coincidencias, seleccionando la de tipo {target.Type}_\n\n"
-
-        md += "---\n\n"
-
-        if not context.edges:
-            md += f"⚠️ **No se encontraron relaciones** en el grafo para este elemento.\n\n"
-            md += f"- Total de elementos relacionados: {len(context.relatedElements)}\n"
-            md += f"- Total de relaciones (edges): 0\n\n"
-            md += "_El elemento existe en el grafo pero no tiene relaciones de herencia o implementación registradas._"
             return md
 
-        if not implementations:
-            md += f"❌ **No se encontraron implementaciones o herencias** de este elemento.\n\n"
-            md += f"**Información de debug:**\n"
-            md += f"- Total de relaciones en contexto: {len(context.edges)}\n"
-            md += f"- Elementos relacionados: {len(context.relatedElements)}\n"
-            md += f"- Tipos de relaciones encontradas: {set(e.Relationship for e in context.edges)}\n\n"
-            md += "_Tip: Verifica que el elemento sea una interfaz o clase base que otras clases implementen/hereden._"
-            return md
-
-        md += f"## 🏗️ Implementaciones y Herencias Encontradas ({len(implementations)})\n\n"
-
-        # Agrupar por tipo de relación
-        implements = [i for i in implementations if 'Implements' in i['relationship']]
-        inherits = [i for i in implementations if 'Inherits' in i['relationship']]
-
-        if implements:
-            md += f"### ✅ Implementaciones ({len(implements)})\n\n"
-            md += f"Clases que implementan `{target.Name}`:\n\n"
-            for impl in implements:
-                md += f"#### `{impl['name']}`\n\n"
-                md += f"- **Tipo:** `{impl['type']}`\n"
-                md += f"- **Namespace:** `{impl['namespace'] or '(global)'}`\n"
-                md += f"- **Proyecto:** `{impl['project']}`\n"
-                md += f"- **Relación:** {impl['relationship']}\n\n"
-
-        if inherits:
-            md += f"### 🔗 Herencias ({len(inherits)})\n\n"
-            md += f"Clases que heredan de `{target.Name}`:\n\n"
-            for inh in inherits:
-                md += f"#### `{inh['name']}`\n\n"
-                md += f"- **Tipo:** `{inh['type']}`\n"
-                md += f"- **Namespace:** `{inh['namespace'] or '(global)'}`\n"
-                md += f"- **Proyecto:** `{inh['project']}`\n"
-                md += f"- **Relación:** {inh['relationship']}\n\n"
-
-        md += "---\n\n"
-        md += f"## 📊 Resumen\n\n"
-        md += f"- **Total de implementaciones/herencias:** {len(implementations)}\n"
-        md += f"- **Relaciones totales analizadas:** {len(context.edges)}\n"
-        md += f"- **Elementos relacionados:** {len(context.relatedElements)}\n\n"
-        md += f"**💡 Análisis de Impacto:** Modificar `{target.Name}` afectará a **{len(implementations)} elementos** en el grafo de Código BASE de ICBanking."
-
-        return md
+        except Exception as e:
+            logger.error(f"Error finding implementations: {e}", exc_info=True)
+            return f"# Implementaciones y Herencias\n\n❌ Error: {str(e)}"
 
     async def _analyze_impact(self, args: Dict[str, Any]) -> str:
-        """Genera un análisis de impacto detallado."""
-        # Usar get_code_context internamente
-        request = CodeContextRequest(
-            className=args["className"],
-            methodName=args.get("methodName"),
-            namespace=args.get("namespace"),
-            projectName=args.get("project"),
-            version=self.default_version,
-            includeRelated=True,
-            maxDepth=3  # Mayor profundidad para análisis de impacto
-        )
+        """Genera un análisis de impacto detallado usando la colección versionada."""
+        class_name = args["className"]
 
-        context = await self.graph_service.get_code_context(request)
+        try:
+            # Verificar si existe la versión
+            if not await self.nodes_service.check_version_exists(self.default_version):
+                versions = await self.nodes_service.get_available_versions()
+                return (
+                    "# 📊 Análisis de Impacto\n\n"
+                    f"❌ **Versión {self.default_version} no disponible**\n\n"
+                    f"**Versiones disponibles:** {versions}\n"
+                )
 
-        if not context.found:
+            # Buscar el elemento
+            results = await self.nodes_service.search_nodes(
+                version=self.default_version,
+                query=class_name,
+                node_type=None,
+                limit=10
+            )
+
+            if not results:
+                return f"# 📊 Análisis de Impacto\n\n❌ **No se encontró:** `{class_name}`"
+
+            # Tomar el primer resultado
+            target = results[0]
+            target_id = target.get("id", "")
+            target_name = target.get("name", "N/A")
+            target_kind = target.get("kind", "")
+
+            # Obtener datos completos del nodo
+            target_full = await self.nodes_service.get_node_by_id(self.default_version, target_id)
+            if not target_full:
+                target_full = target
+
+            collection = self.nodes_service._get_collection(self.default_version)
+
+            # Dependencias salientes (lo que este nodo usa/llama)
+            outgoing_calls = target_full.get("calls", [])
+            outgoing_via = target_full.get("callsVia", [])
+            outgoing_implements = target_full.get("implements", [])
+            outgoing_inherits = target_full.get("inherits", [])
+            outgoing_uses = target_full.get("uses", [])
+
+            # Dependencias entrantes (quien depende de este nodo)
+            incoming_callers = []
+            incoming_implementers = []
+            incoming_inheritors = []
+
+            # Buscar nodos que llaman a este
+            async for doc in collection.find({"calls": target_id}):
+                incoming_callers.append(self.nodes_service._normalize_node(doc))
+
+            # Buscar nodos que implementan esta interfaz
+            async for doc in collection.find({"implements": target_id}):
+                incoming_implementers.append(self.nodes_service._normalize_node(doc))
+
+            # Buscar nodos que heredan de esta clase
+            async for doc in collection.find({"inherits": target_id}):
+                incoming_inheritors.append(self.nodes_service._normalize_node(doc))
+
+            # Calcular proyectos afectados
+            affected_projects = set()
+            for node in incoming_callers + incoming_implementers + incoming_inheritors:
+                if node.get("project"):
+                    affected_projects.add(node["project"])
+
+            # Determinar nivel de impacto
+            total_incoming = len(incoming_callers) + len(incoming_implementers) + len(incoming_inheritors)
+            impact_level = "🟢 LOW"
+            if total_incoming > 10 or len(incoming_implementers) > 0 or len(incoming_inheritors) > 0:
+                impact_level = "🔴 HIGH"
+            elif total_incoming > 5:
+                impact_level = "🟡 MEDIUM"
+
+            # Formatear en Markdown
             md = f"# 📊 Análisis de Impacto - Grafo Código BASE de ICBanking\n\n"
-            md += f"❌ **No se encontró el elemento:** `{args['className']}`\n\n"
+            md += f"**Versión:** `{self.default_version}`\n\n"
 
-            if context.suggestions:
-                md += "## Sugerencias\n\n"
-                for suggestion in context.suggestions:
-                    md += f"- {suggestion}\n"
+            # Elemento analizado
+            md += f"## 🎯 Elemento Analizado\n\n"
+            md += f"- **ID:** `{target_id}`\n"
+            md += f"- **Nombre:** `{target_name}`\n"
+            md += f"- **Tipo:** `{target_kind}`\n"
+            md += f"- **Namespace:** `{target_full.get('namespace', '')}`\n"
+            md += f"- **Proyecto:** `{target_full.get('project', 'N/A')}`\n\n"
+
+            # Nivel de impacto
+            md += f"## ⚠️ Nivel de Impacto: {impact_level}\n\n"
+
+            # Resumen ejecutivo
+            md += f"### 📈 Resumen Ejecutivo\n\n"
+            md += f"| Métrica | Cantidad |\n"
+            md += f"|---------|----------|\n"
+            md += f"| Callers (quien llama) | **{len(incoming_callers)}** |\n"
+            md += f"| Implementadores | **{len(incoming_implementers)}** |\n"
+            md += f"| Herederos | **{len(incoming_inheritors)}** |\n"
+            md += f"| Llamadas salientes | **{len(outgoing_calls)}** |\n"
+            md += f"| Proyectos afectados | **{len(affected_projects)}** |\n\n"
+
+            md += "---\n\n"
+
+            # Dependencias entrantes
+            if incoming_callers:
+                md += f"## ⬅️ Callers ({len(incoming_callers)})\n\n"
+                md += f"**Métodos que llaman a `{target_name}`:**\n\n"
+                for caller in incoming_callers[:15]:
+                    md += f"- `{caller.get('name')}` ({caller.get('kind')}) - `{caller.get('project', 'N/A')}`\n"
+                if len(incoming_callers) > 15:
+                    md += f"\n_... y {len(incoming_callers) - 15} más_\n"
+                md += "\n---\n\n"
+
+            if incoming_implementers:
+                md += f"## 🏗️ Implementadores ({len(incoming_implementers)})\n\n"
+                md += f"**⚠️ IMPACTO ALTO** - Clases que implementan `{target_name}`:\n\n"
+                for impl in incoming_implementers[:15]:
+                    md += f"- `{impl.get('name')}` - `{impl.get('project', 'N/A')}`\n"
+                md += "\n---\n\n"
+
+            if incoming_inheritors:
+                md += f"## 🔗 Herederos ({len(incoming_inheritors)})\n\n"
+                md += f"**⚠️ IMPACTO ALTO** - Clases que heredan de `{target_name}`:\n\n"
+                for inh in incoming_inheritors[:15]:
+                    md += f"- `{inh.get('name')}` - `{inh.get('project', 'N/A')}`\n"
+                md += "\n---\n\n"
+
+            # Dependencias salientes
+            if outgoing_calls:
+                md += f"## ➡️ Llamadas Salientes ({len(outgoing_calls)})\n\n"
+                for call_id in outgoing_calls[:10]:
+                    md += f"- `{call_id}`\n"
+                if len(outgoing_calls) > 10:
+                    md += f"\n_... y {len(outgoing_calls) - 10} más_\n"
+                md += "\n---\n\n"
+
+            # Proyectos afectados
+            if affected_projects:
+                md += f"## 📦 Proyectos Afectados ({len(affected_projects)})\n\n"
+                for project in sorted(affected_projects):
+                    md += f"- `{project}`\n"
+                md += "\n---\n\n"
+
+            # Recomendaciones
+            md += f"## 💡 Recomendaciones\n\n"
+            if impact_level == "🔴 HIGH":
+                md += f"⚠️ **ALTO IMPACTO** - Procede con precaución:\n\n"
+                md += f"- ✅ Revisa **TODAS** las {total_incoming} dependencias antes de hacer cambios\n"
+                if incoming_implementers or incoming_inheritors:
+                    md += f"- ✅ Cambios de firma serán breaking changes\n"
+                md += f"- ✅ Coordina con los {len(affected_projects)} proyectos afectados\n"
+            elif impact_level == "🟡 MEDIUM":
+                md += f"⚡ **IMPACTO MEDIO** - Revisión recomendada:\n\n"
+                md += f"- ✅ Revisa las {total_incoming} dependencias\n"
+            else:
+                md += f"✅ **BAJO IMPACTO** - Cambios manejables\n"
 
             return md
 
-        # Analizar el impacto basándose en los edges
-        impact_report = {
-            "element": {
-                "name": context.mainElement.Name,
-                "type": context.mainElement.Type,
-                "namespace": context.mainElement.Namespace,
-                "project": context.mainElement.Project
-            },
-            "impactSummary": {
-                "totalRelatedElements": len(context.relatedElements),
-                "totalRelationships": len(context.edges)
-            },
-            "dependsOnThis": [],  # Elementos que dependen de este (llamadas entrantes)
-            "thisUses": [],  # Elementos que este usa (llamadas salientes)
-            "inheritanceImpact": [],  # Impacto en herencias/implementaciones
-            "affectedProjects": set()
-        }
-
-        # Analizar cada edge para categorizar el impacto
-        for edge in context.edges:
-            relationship_type = edge.Relationship
-
-            # Encontrar el nodo relacionado
-            if edge.Source == context.mainElement.Id:
-                # Este elemento es la fuente -> usa/llama a target
-                target_node = next(
-                    (node for node in context.relatedElements if node.Id == edge.Target),
-                    None
-                )
-                if target_node:
-                    impact_report["thisUses"].append({
-                        "name": target_node.Name,
-                        "type": target_node.Type,
-                        "relationship": relationship_type,
-                        "project": target_node.Project
-                    })
-                    impact_report["affectedProjects"].add(target_node.Project)
-            else:
-                # Este elemento es el target -> otros dependen de él
-                source_node = next(
-                    (node for node in context.relatedElements if node.Id == edge.Source),
-                    None
-                )
-                if source_node:
-                    if relationship_type in ["Inherits", "Implements"]:
-                        impact_report["inheritanceImpact"].append({
-                            "name": source_node.Name,
-                            "type": source_node.Type,
-                            "relationship": relationship_type,
-                            "project": source_node.Project,
-                            "impact": "HIGH - Changes to interface/base class will affect this implementation"
-                        })
-                    else:
-                        impact_report["dependsOnThis"].append({
-                            "name": source_node.Name,
-                            "type": source_node.Type,
-                            "relationship": relationship_type,
-                            "project": source_node.Project
-                        })
-                    impact_report["affectedProjects"].add(source_node.Project)
-
-        # Convertir set a lista
-        affected_projects = sorted(list(impact_report["affectedProjects"]))
-
-        # Generar resumen de impacto
-        impact_level = "🟢 LOW"
-        if len(impact_report["dependsOnThis"]) > 10 or len(impact_report["inheritanceImpact"]) > 0:
-            impact_level = "🔴 HIGH"
-        elif len(impact_report["dependsOnThis"]) > 5:
-            impact_level = "🟡 MEDIUM"
-
-        # Formatear en Markdown
-        md = f"# 📊 Análisis de Impacto - Grafo Código BASE de ICBanking\n\n"
-
-        # Elemento analizado
-        md += f"## 🎯 Elemento Analizado\n\n"
-        md += f"- **Nombre:** `{context.mainElement.Name}`\n"
-        md += f"- **Tipo:** `{context.mainElement.Type}`\n"
-        md += f"- **Namespace:** `{context.mainElement.Namespace}`\n"
-        md += f"- **Proyecto:** `{context.mainElement.Project}`\n\n"
-
-        # Nivel de impacto
-        md += f"## ⚠️ Nivel de Impacto: {impact_level}\n\n"
-
-        # Resumen ejecutivo
-        md += f"### 📈 Resumen Ejecutivo\n\n"
-        md += f"| Métrica | Cantidad |\n"
-        md += f"|---------|----------|\n"
-        md += f"| Dependencias entrantes | **{len(impact_report['dependsOnThis'])}** |\n"
-        md += f"| Dependencias salientes | **{len(impact_report['thisUses'])}** |\n"
-        md += f"| Herencias/Implementaciones | **{len(impact_report['inheritanceImpact'])}** |\n"
-        md += f"| Proyectos afectados | **{len(affected_projects)}** |\n"
-        md += f"| Total elementos relacionados | **{len(context.relatedElements)}** |\n"
-        md += f"| Total conexiones en grafo | **{len(context.edges)}** |\n\n"
-
-        md += "---\n\n"
-
-        # Dependencias entrantes (quién depende de esto)
-        if impact_report["dependsOnThis"]:
-            md += f"## ⬅️ Dependencias Entrantes ({len(impact_report['dependsOnThis'])})\n\n"
-            md += f"**Elementos que DEPENDEN de `{context.mainElement.Name}`** - Se romperán si cambias este código:\n\n"
-
-            for dep in impact_report["dependsOnThis"]:
-                md += f"### `{dep['name']}`\n\n"
-                md += f"- **Tipo:** `{dep['type']}`\n"
-                md += f"- **Relación:** {dep['relationship']}\n"
-                md += f"- **Proyecto:** `{dep['project']}`\n\n"
-
-            md += "---\n\n"
-
-        # Herencias e implementaciones
-        if impact_report["inheritanceImpact"]:
-            md += f"## 🏗️ Impacto en Herencias e Implementaciones ({len(impact_report['inheritanceImpact'])})\n\n"
-            md += f"**⚠️ IMPACTO ALTO** - Cambios en `{context.mainElement.Name}` afectarán estas implementaciones:\n\n"
-
-            for inh in impact_report["inheritanceImpact"]:
-                md += f"### `{inh['name']}`\n\n"
-                md += f"- **Tipo:** `{inh['type']}`\n"
-                md += f"- **Relación:** {inh['relationship']}\n"
-                md += f"- **Proyecto:** `{inh['project']}`\n"
-                md += f"- **⚠️ Impacto:** {inh['impact']}\n\n"
-
-            md += "---\n\n"
-
-        # Dependencias salientes (qué usa esto)
-        if impact_report["thisUses"]:
-            md += f"## ➡️ Dependencias Salientes ({len(impact_report['thisUses'])})\n\n"
-            md += f"**Elementos que `{context.mainElement.Name}` USA:**\n\n"
-
-            for use in impact_report["thisUses"]:
-                md += f"- **{use['name']}** (`{use['type']}`) - {use['relationship']} - Proyecto: `{use['project']}`\n"
-
-            md += "\n---\n\n"
-
-        # Proyectos afectados
-        if affected_projects:
-            md += f"## 📦 Proyectos Código BASE de ICBanking Afectados ({len(affected_projects)})\n\n"
-
-            for project in affected_projects:
-                md += f"- `{project}`\n"
-
-            md += "\n---\n\n"
-
-        # Recomendaciones
-        md += f"## 💡 Recomendaciones\n\n"
-
-        if impact_level == "🔴 HIGH":
-            md += f"⚠️ **ALTO IMPACTO** - Procede con precaución:\n\n"
-            md += f"- ✅ Revisa **TODAS** las {len(impact_report['dependsOnThis'])} dependencias antes de hacer cambios\n"
-            if impact_report["inheritanceImpact"]:
-                md += f"- ✅ **{len(impact_report['inheritanceImpact'])}** implementaciones heredan de este elemento - cualquier cambio de firma será un breaking change\n"
-            md += f"- ✅ Considera crear tests de regresión para los elementos dependientes\n"
-            md += f"- ✅ Coordina cambios con los equipos responsables de los {len(affected_projects)} proyectos afectados\n"
-            md += f"- ✅ Documenta todos los cambios en la interfaz/contrato\n"
-        elif impact_level == "🟡 MEDIUM":
-            md += f"⚡ **IMPACTO MEDIO** - Revisión recomendada:\n\n"
-            md += f"- ✅ Revisa las {len(impact_report['dependsOnThis'])} dependencias principales\n"
-            md += f"- ✅ Ejecuta tests de los proyectos afectados: {', '.join(affected_projects)}\n"
-            md += f"- ✅ Considera el impacto en los equipos dependientes\n"
-        else:
-            md += f"✅ **BAJO IMPACTO** - Cambios manejables:\n\n"
-            md += f"- El impacto parece limitado\n"
-            md += f"- Ejecuta tests básicos en el proyecto actual\n"
-            md += f"- Revisa las pocas dependencias identificadas\n"
-
-        return md
+        except Exception as e:
+            logger.error(f"Error analyzing impact: {e}", exc_info=True)
+            return f"# 📊 Análisis de Impacto\n\n❌ Error: {str(e)}"
 
     async def _get_statistics(self, args: Dict[str, Any]) -> str:
-        """Obtiene estadísticas del grafo."""
-        stats = await self.graph_service.get_statistics()
+        """Obtiene estadísticas del grafo versionado."""
+        try:
+            # Verificar si existe la versión
+            if not await self.nodes_service.check_version_exists(self.default_version):
+                versions = await self.nodes_service.get_available_versions()
+                return (
+                    "# 📊 Estadísticas del Grafo\n\n"
+                    f"❌ **Versión {self.default_version} no disponible**\n\n"
+                    f"**Versiones disponibles:** {versions}\n"
+                )
 
-        # Formatear en Markdown
-        md = "# 📊 Estadísticas del Grafo Código BASE de ICBanking\n\n"
+            stats = await self.nodes_service.get_statistics(self.default_version)
 
-        if isinstance(stats, dict):
-            # Información general
-            md += "## Resumen General\n\n"
+            # Formatear en Markdown
+            md = "# 📊 Estadísticas del Grafo Código BASE de ICBanking\n\n"
+            md += f"**Versión:** `{self.default_version}`  \n"
+            md += f"**Colección:** `nodes_{self.default_version.replace('.', '_')}`\n\n"
 
-            if "totalProjects" in stats:
-                md += f"- **Total de Proyectos:** {stats['totalProjects']}\n"
-            if "totalNodes" in stats:
-                md += f"- **Total de Nodos (Elementos):** {stats['totalNodes']}\n"
-            if "totalEdges" in stats:
-                md += f"- **Total de Relaciones (Edges):** {stats['totalEdges']}\n"
+            if isinstance(stats, dict):
+                # Información general
+                md += "## Resumen General\n\n"
 
-            md += "\n"
-
-            # Distribución por tipos
-            if "nodesByType" in stats and stats["nodesByType"]:
-                md += "## 📦 Distribución de Elementos por Tipo\n\n"
-                md += "| Tipo | Cantidad |\n"
-                md += "|------|----------|\n"
-
-                for node_type, count in sorted(stats["nodesByType"].items(), key=lambda x: x[1], reverse=True):
-                    md += f"| {node_type} | **{count}** |\n"
+                if "totalProjects" in stats:
+                    md += f"- **Total de Proyectos:** {stats['totalProjects']}\n"
+                if "totalSolutions" in stats:
+                    md += f"- **Total de Soluciones:** {stats['totalSolutions']}\n"
+                if "totalNodes" in stats:
+                    md += f"- **Total de Nodos (Elementos):** {stats['totalNodes']}\n"
 
                 md += "\n"
 
-            # Otros stats que puedan existir
-            for key, value in stats.items():
-                if key not in ["totalProjects", "totalNodes", "totalEdges", "nodesByType"]:
-                    if isinstance(value, (int, float, str)):
-                        md += f"- **{key}:** {value}\n"
+                # Distribución por tipos
+                if "nodesByType" in stats and stats["nodesByType"]:
+                    md += "## 📦 Distribución de Elementos por Tipo\n\n"
+                    md += "| Tipo | Cantidad |\n"
+                    md += "|------|----------|\n"
 
-        else:
-            md += f"```\n{stats}\n```\n"
+                    for node_type, count in sorted(stats["nodesByType"].items(), key=lambda x: x[1], reverse=True):
+                        md += f"| {node_type} | **{count}** |\n"
 
-        return md
+                    md += "\n"
+
+            else:
+                md += f"```\n{stats}\n```\n"
+
+            return md
+
+        except Exception as e:
+            logger.error(f"Error getting statistics: {e}", exc_info=True)
+            return f"# 📊 Estadísticas del Grafo\n\n❌ Error: {str(e)}"
 
     async def _get_tailored_guidance(self, args: Dict[str, Any]) -> str:
         """
@@ -1413,3 +1746,229 @@ class GraphMCPTools:
         # Agregar versión del grafo a los argumentos
         args_with_version = {**args, "version": self.default_version}
         return await self.tailored_guidance.get_tailored_guidance(args_with_version)
+
+    async def _find_callers(self, args: Dict[str, Any]) -> str:
+        """
+        Encuentra todos los métodos que llaman a un método específico.
+        Usa colecciones versionadas (nodes_{version}).
+        """
+        try:
+            # Verificar si existe la versión
+            if not await self.nodes_service.check_version_exists(self.default_version):
+                versions = await self.nodes_service.get_available_versions()
+                return (
+                    "# 🔍 Find Callers\n\n"
+                    f"❌ **Versión {self.default_version} no disponible**\n\n"
+                    "No se encontró la colección de nodos para esta versión.\n\n"
+                    "**Versiones disponibles:**\n"
+                    f"```\n{versions}\n```\n\n"
+                    "**Para indexar:**\n"
+                    "```bash\n"
+                    "cd Grafo/IndexerDb\n"
+                    f"dotnet run --all --version {self.default_version}\n"
+                    "```"
+                )
+
+            result = await self.nodes_service.find_callers(
+                version=self.default_version,
+                target_id=args["target_id"],
+                max_depth=args.get("max_depth", 3),
+                include_indirect=args.get("include_indirect", True)
+            )
+
+            if not result.get("found"):
+                return f"# 🔍 Find Callers\n\n❌ {result.get('message', 'Nodo no encontrado')}"
+
+            # Formatear resultado
+            md = "# 🔍 Find Callers - Análisis de Impacto\n\n"
+            md += f"## 🎯 Método Objetivo\n\n"
+
+            target = result.get("target", {})
+            md += f"- **ID:** `{target.get('id', 'N/A')}`\n"
+            md += f"- **Nombre:** `{target.get('name', 'N/A')}`\n"
+            md += f"- **Tipo:** `{target.get('type', 'N/A')}`\n"
+            md += f"- **Proyecto:** `{target.get('project', 'N/A')}`\n\n"
+
+            callers = result.get("callers", [])
+            indirect = result.get("indirectCallers", [])
+            total = result.get("totalCallers", 0)
+
+            md += f"## 📊 Resumen\n\n"
+            md += f"- **Callers directos:** {len(callers)}\n"
+            md += f"- **Callers indirectos:** {len(indirect)}\n"
+            md += f"- **Total:** {total}\n\n"
+
+            if callers:
+                md += "## ⬅️ Callers Directos\n\n"
+                md += "| Nombre | Tipo | Profundidad | Proyecto |\n"
+                md += "|--------|------|-------------|----------|\n"
+                for c in callers[:20]:
+                    node = c.get("node", {})
+                    md += f"| `{node.get('name', 'N/A')}` | {node.get('type', 'N/A')} | {c.get('depth', 0)} | {node.get('project', 'N/A')} |\n"
+                if len(callers) > 20:
+                    md += f"\n_... y {len(callers) - 20} más_\n"
+
+            if indirect:
+                md += "\n## 🔗 Callers Indirectos (via interfaces)\n\n"
+                md += "| Nombre | Tipo | Profundidad | Proyecto |\n"
+                md += "|--------|------|-------------|----------|\n"
+                for c in indirect[:20]:
+                    node = c.get("node", {})
+                    md += f"| `{node.get('name', 'N/A')}` | {node.get('type', 'N/A')} | {c.get('depth', 0)} | {node.get('project', 'N/A')} |\n"
+
+            return md
+
+        except Exception as e:
+            logger.error(f"Error in find_callers: {e}", exc_info=True)
+            return f"# 🔍 Find Callers\n\n❌ Error: {str(e)}"
+
+    async def _find_callees(self, args: Dict[str, Any]) -> str:
+        """
+        Encuentra todos los métodos llamados por un método específico.
+        Usa colecciones versionadas (nodes_{version}).
+        """
+        try:
+            # Verificar si existe la versión
+            if not await self.nodes_service.check_version_exists(self.default_version):
+                versions = await self.nodes_service.get_available_versions()
+                return (
+                    "# ➡️ Find Callees\n\n"
+                    f"❌ **Versión {self.default_version} no disponible**\n\n"
+                    "No se encontró la colección de nodos para esta versión.\n\n"
+                    "**Versiones disponibles:**\n"
+                    f"```\n{versions}\n```\n\n"
+                    "**Para indexar:**\n"
+                    "```bash\n"
+                    "cd Grafo/IndexerDb\n"
+                    f"dotnet run --all --version {self.default_version}\n"
+                    "```"
+                )
+
+            result = await self.nodes_service.find_callees(
+                version=self.default_version,
+                source_id=args["source_id"],
+                max_depth=args.get("max_depth", 3),
+                include_via_interface=args.get("include_via_interface", True)
+            )
+
+            if not result.get("found"):
+                return f"# ➡️ Find Callees\n\n❌ {result.get('message', 'Nodo no encontrado')}"
+
+            # Formatear resultado
+            md = "# ➡️ Find Callees - Análisis de Dependencias\n\n"
+            md += f"## 🎯 Método Origen\n\n"
+
+            source = result.get("source", {})
+            md += f"- **ID:** `{source.get('id', 'N/A')}`\n"
+            md += f"- **Nombre:** `{source.get('name', 'N/A')}`\n"
+            md += f"- **Tipo:** `{source.get('type', 'N/A')}`\n"
+            md += f"- **Proyecto:** `{source.get('project', 'N/A')}`\n\n"
+
+            callees = result.get("callees", [])
+            via_interface = result.get("viaInterface", [])
+            total = result.get("totalCallees", 0)
+
+            md += f"## 📊 Resumen\n\n"
+            md += f"- **Callees directos:** {len(callees)}\n"
+            md += f"- **Callees via interface:** {len(via_interface)}\n"
+            md += f"- **Total:** {total}\n\n"
+
+            if callees:
+                md += "## ➡️ Métodos Llamados\n\n"
+                md += "| Nombre | Tipo | Profundidad | Proyecto |\n"
+                md += "|--------|------|-------------|----------|\n"
+                for c in callees[:20]:
+                    node = c.get("node", {})
+                    md += f"| `{node.get('name', 'N/A')}` | {node.get('type', 'N/A')} | {c.get('depth', 0)} | {node.get('project', 'N/A')} |\n"
+                if len(callees) > 20:
+                    md += f"\n_... y {len(callees) - 20} más_\n"
+
+            if via_interface:
+                md += "\n## 🔗 Llamadas via Interface\n\n"
+                md += "| Nombre | Tipo | Profundidad | Proyecto |\n"
+                md += "|--------|------|-------------|----------|\n"
+                for c in via_interface[:20]:
+                    node = c.get("node", {})
+                    md += f"| `{node.get('name', 'N/A')}` | {node.get('type', 'N/A')} | {c.get('depth', 0)} | {node.get('project', 'N/A')} |\n"
+
+            return md
+
+        except Exception as e:
+            logger.error(f"Error in find_callees: {e}", exc_info=True)
+            return f"# ➡️ Find Callees\n\n❌ Error: {str(e)}"
+
+    async def _find_inheritance_chain(self, args: Dict[str, Any]) -> str:
+        """
+        Encuentra la cadena completa de herencia de una clase.
+        Usa colecciones versionadas (nodes_{version}).
+        """
+        try:
+            # Verificar si existe la versión
+            if not await self.nodes_service.check_version_exists(self.default_version):
+                versions = await self.nodes_service.get_available_versions()
+                return (
+                    "# 🔗 Inheritance Chain\n\n"
+                    f"❌ **Versión {self.default_version} no disponible**\n\n"
+                    "No se encontró la colección de nodos para esta versión.\n\n"
+                    "**Versiones disponibles:**\n"
+                    f"```\n{versions}\n```\n\n"
+                    "**Para indexar:**\n"
+                    "```bash\n"
+                    "cd Grafo/IndexerDb\n"
+                    f"dotnet run --all --version {self.default_version}\n"
+                    "```"
+                )
+
+            result = await self.nodes_service.find_inheritance_chain(
+                version=self.default_version,
+                class_id=args["class_id"],
+                max_depth=args.get("max_depth", 10)
+            )
+
+            if not result.get("found"):
+                return f"# 🔗 Inheritance Chain\n\n❌ {result.get('message', 'Clase no encontrada')}"
+
+            # Formatear resultado
+            md = "# 🔗 Inheritance Chain - Jerarquía de Herencia\n\n"
+            md += f"## 🎯 Clase Analizada\n\n"
+
+            class_node = result.get("class", {})
+            md += f"- **ID:** `{class_node.get('id', 'N/A')}`\n"
+            md += f"- **Nombre:** `{class_node.get('name', 'N/A')}`\n"
+            md += f"- **Tipo:** `{class_node.get('type', 'N/A')}`\n"
+            md += f"- **Proyecto:** `{class_node.get('project', 'N/A')}`\n\n"
+
+            ancestors = result.get("ancestors", [])
+            descendants = result.get("descendants", [])
+
+            md += f"## 📊 Resumen\n\n"
+            md += f"- **Ancestors (clases base):** {len(ancestors)}\n"
+            md += f"- **Descendants (clases derivadas):** {len(descendants)}\n"
+            md += f"- **Profundidad en jerarquía:** {result.get('hierarchyDepth', 0)}\n\n"
+
+            if ancestors:
+                md += "## 🔼 Ancestors (Hereda de)\n\n"
+                md += "| Nombre | Tipo | Profundidad | Proyecto |\n"
+                md += "|--------|------|-------------|----------|\n"
+                for a in ancestors:
+                    node = a.get("node", {})
+                    md += f"| `{node.get('name', 'N/A')}` | {node.get('type', 'N/A')} | {a.get('depth', 0)} | {node.get('project', 'N/A')} |\n"
+
+            if descendants:
+                md += "\n## 🔽 Descendants (Heredan de esta)\n\n"
+                md += "| Nombre | Tipo | Profundidad | Proyecto |\n"
+                md += "|--------|------|-------------|----------|\n"
+                for d in descendants[:30]:
+                    node = d.get("node", {})
+                    md += f"| `{node.get('name', 'N/A')}` | {node.get('type', 'N/A')} | {d.get('depth', 0)} | {node.get('project', 'N/A')} |\n"
+                if len(descendants) > 30:
+                    md += f"\n_... y {len(descendants) - 30} más_\n"
+
+            md += "\n---\n\n"
+            md += f"**💡 Impacto:** Modificar `{class_node.get('name', 'N/A')}` afectará a **{len(descendants)} clases derivadas**."
+
+            return md
+
+        except Exception as e:
+            logger.error(f"Error in find_inheritance_chain: {e}", exc_info=True)
+            return f"# 🔗 Inheritance Chain\n\n❌ Error: {str(e)}"

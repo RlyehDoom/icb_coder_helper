@@ -125,33 +125,32 @@ export class IndexerDbHandler {
 
     try {
       const args = ['run'];
-
-      // Agregar opciones según los parámetros
       const dotnetArgs = [];
 
-      if (options.file) {
-        dotnetArgs.push('--file', options.file);
-      } else if (options.noInteractive) {
+      // --all: procesar todos los archivos
+      if (options.noInteractive) {
         dotnetArgs.push('--all');
       }
 
-      if (options.interactive) {
-        dotnetArgs.push('--interactive');
-      }
-
+      // --version: requerido
       if (options.version) {
         dotnetArgs.push('--version', options.version);
+      }
+
+      // --clean: limpiar nodos existentes
+      if (options.cleanNodes) {
+        dotnetArgs.push('--clean');
+        displayWarning('⚠️  Se limpiarán los nodos existentes de esta versión');
       }
 
       if (dotnetArgs.length > 0) {
         args.push('--', ...dotnetArgs);
       }
 
-      displayInfo(`Iniciando IndexerDb en modo ${environment}...`);
+      displayInfo(`IndexerDb v2.1 - ${environment}`);
       if (options.production) {
-        displayWarning('⚠️  Conectándose a MongoDB PRODUCTIVO (207.244.249.22:28101)');
+        displayWarning('⚠️  MongoDB PRODUCCIÓN');
       }
-      displayInfo('Presiona Ctrl+C para salir');
 
       const result = await this.systemUtils.execute('dotnet', args, {
         cwd: this.indexerDbDir,
@@ -195,35 +194,10 @@ export class IndexerDbHandler {
         name: 'mode',
         message: '¿Cómo deseas ejecutar IndexerDb?',
         choices: [
-          { name: '📋 Selección interactiva', value: 'interactive' },
-          { name: '📁 Archivo específico', value: 'file' },
-          { name: '🚀 Procesar todos los archivos', value: 'all' },
+          { name: '🚀 Procesar + exportar nodes (v2.1)', value: 'process-export' },
           { name: '🔍 Modo query interactivo', value: 'query' },
           { name: '❓ Mostrar ayuda', value: 'help' }
         ]
-      },
-      {
-        type: 'confirm',
-        name: 'useVersion',
-        message: '¿Deseas especificar una versión del grafo?',
-        default: false,
-        when: (answers) => answers.mode !== 'help' && answers.mode !== 'query'
-      },
-      {
-        type: 'input',
-        name: 'version',
-        message: 'Versión del grafo (ej: 1.0.0, 7.8.0, 7.9.2):',
-        when: (answers) => answers.useVersion,
-        validate: (input) => {
-          if (!input || input.trim() === '') {
-            return 'La versión es requerida';
-          }
-          // Validar formato semántico básico (opcional)
-          if (!/^\d+\.\d+\.\d+$/.test(input.trim())) {
-            return 'Use formato semántico: X.Y.Z (ej: 1.0.0)';
-          }
-          return true;
-        }
       }
     ]);
 
@@ -239,39 +213,21 @@ export class IndexerDbHandler {
       }
     }
 
-    const version = answers.version ? answers.version.trim() : undefined;
-
     switch (answers.mode) {
-      case 'interactive':
-        return await this.run({ production: isProduction, version });
+      case 'process-export': {
+        displayInfo('Iniciando flujo interactivo de C#...');
+        displayInfo('  1. Seleccionar carpeta de grafo');
+        displayInfo('  2. Definir versión');
+        displayInfo('  3. Procesar archivos');
 
-      case 'file': {
-        const { filePath } = await inquirer.prompt([
-          {
-            type: 'input',
-            name: 'filePath',
-            message: 'Ruta al archivo de grafo:',
-            validate: async (input) => {
-              if (!input || input.trim() === '') {
-                return 'La ruta es requerida';
-              }
-              const resolvedPath = path.resolve(input);
-              if (!(await this.systemUtils.exists(resolvedPath))) {
-                return 'El archivo no existe';
-              }
-              if (!input.endsWith('-graph.json')) {
-                return 'El archivo debe terminar en -graph.json';
-              }
-              return true;
-            }
-          }
-        ]);
-        return await this.run({ file: filePath, production: isProduction, version });
+        // Delegar todo el flujo interactivo al código C#
+        // No pasar --all para que C# muestre selección de archivos si es necesario
+        return await this.run({
+          noInteractive: false,  // Modo interactivo completo en C#
+          production: isProduction
+          // Sin version ni cleanNodes - C# lo preguntará
+        });
       }
-
-      case 'all':
-        displayInfo('Procesando todos los archivos automáticamente...');
-        return await this.run({ noInteractive: true, production: isProduction, version });
 
       case 'query':
         displayInfo('Entrando en modo query interactivo...');
@@ -288,53 +244,48 @@ export class IndexerDbHandler {
 
   async showHelp() {
     console.log('');
-    console.log(chalk.cyan('📚 IndexerDb - Ayuda'));
+    console.log(chalk.cyan('📚 IndexerDb - Ayuda (v2.1)'));
     console.log('');
-    console.log(chalk.yellow('Modos de ejecución:'));
+    console.log(chalk.yellow('Flujo principal:'));
     console.log('');
-    console.log('  1. Modo interactivo (por defecto):');
+    console.log('  1. Modo interactivo (recomendado):');
     console.log(chalk.gray('     grafo indexerdb run'));
-    console.log(chalk.gray('     - Muestra lista de archivos disponibles'));
-    console.log(chalk.gray('     - Permite seleccionar cuáles procesar'));
+    console.log(chalk.gray('     - Solicita versión del grafo'));
+    console.log(chalk.gray('     - Procesa archivos .ndjson'));
+    console.log(chalk.gray('     - Exporta directamente a colección "nodes" (v2.1)'));
     console.log('');
-    console.log('  2. Archivo específico:');
-    console.log(chalk.gray('     grafo indexerdb run --file <ruta>'));
-    console.log(chalk.gray('     - Procesa un archivo específico'));
-    console.log('');
-    console.log('  3. Procesar todos los archivos:');
-    console.log(chalk.gray('     grafo indexerdb run --no-interactive'));
-    console.log(chalk.gray('     - Procesa todos automáticamente'));
+    console.log('  2. Línea de comandos:');
+    console.log(chalk.gray('     grafo indexerdb run --all --nodes-only --version 6.7.5'));
+    console.log(chalk.gray('     - Procesa todos los archivos .ndjson'));
+    console.log(chalk.gray('     - Exporta directamente a colección "nodes"'));
     console.log('');
     console.log(chalk.yellow('Opciones:'));
     console.log('');
+    console.log('  --all               - Procesar todos los archivos');
+    console.log('  --nodes-only        - [v2.1] Exportar directamente a nodes (recomendado)');
+    console.log('  --clean-nodes       - Limpiar nodos existentes antes de exportar');
+    console.log('  --version <ver>     - Versión del grafo (requerido)');
     console.log('  --production        - Ejecutar en modo producción');
-    console.log('  --version <ver>     - Especificar versión del grafo (ej: 1.0.0, 7.8.0)');
-    console.log(chalk.gray('                        Permite almacenar múltiples versiones'));
     console.log('');
-    console.log(chalk.yellow('Ejemplos con versionado:'));
+    console.log(chalk.yellow('Ejemplos:'));
     console.log('');
-    console.log(chalk.gray('  # Indexar con versión 1.0.0'));
-    console.log(chalk.cyan('  grafo indexerdb run --no-interactive --version 1.0.0'));
+    console.log(chalk.gray('  # Desarrollo con versión 6.7.5'));
+    console.log(chalk.cyan('  grafo indexerdb run --all --nodes-only --clean-nodes --version 6.7.5'));
     console.log('');
-    console.log(chalk.gray('  # Indexar producción con versión 7.8.0'));
-    console.log(chalk.cyan('  grafo indexerdb run --no-interactive --production --version 7.8.0'));
+    console.log(chalk.gray('  # Producción con versión 7.8.0'));
+    console.log(chalk.cyan('  grafo indexerdb run --all --nodes-only --version 7.8.0 --production'));
     console.log('');
-    console.log(chalk.gray('  # Indexar desarrollo con versión 7.9.0'));
-    console.log(chalk.cyan('  grafo indexerdb run --no-interactive --version 7.9.0'));
+    console.log(chalk.yellow('Colección MongoDB:'));
+    console.log('');
+    console.log(chalk.gray('  nodes      - Nodos individuales con IDs semánticos (v2.1)'));
+    console.log(chalk.gray('               Formato: grafo:{kind}/{identifier}@v{version}'));
+    console.log(chalk.gray('               Ejemplo: grafo:class/Infocorp.Banking.Customer@v6.7.5'));
     console.log('');
     console.log(chalk.yellow('Otros comandos:'));
     console.log('');
     console.log('  build   - Compila el proyecto');
     console.log('  clean   - Limpia artefactos de compilación');
     console.log('  status  - Muestra el estado del servicio');
-    console.log('');
-    console.log(chalk.yellow('Gestión de versiones:'));
-    console.log('');
-    console.log(chalk.gray('  # Para ver o eliminar versiones de la base de datos, usa:'));
-    console.log(chalk.cyan('  grafo mongodb shell'));
-    console.log(chalk.gray('    - Ver versiones disponibles'));
-    console.log(chalk.gray('    - Eliminar versión específica (con confirmación)'));
-    console.log(chalk.gray('    - Abrir MongoDB shell (mongosh)'));
     console.log('');
   }
 
@@ -434,17 +385,17 @@ export class IndexerDbHandler {
           const graphDirs = files.filter(f => f.endsWith('GraphFiles'));
           console.log(chalk.gray('    Directorios de grafo:'), graphDirs.length > 0 ? chalk.green(graphDirs.length) : chalk.yellow('0'));
 
-          // Contar archivos de grafo
+          // Contar archivos de grafo (.ndjson)
           let totalGraphFiles = 0;
           for (const dir of graphDirs) {
             const dirPath = path.join(inputDir, dir);
             try {
               const graphFiles = await fs.readdir(dirPath);
-              totalGraphFiles += graphFiles.filter(f => f.endsWith('-graph.json')).length;
+              totalGraphFiles += graphFiles.filter(f => f.endsWith('-graph.ndjson')).length;
             } catch {}
           }
           if (totalGraphFiles > 0) {
-            console.log(chalk.gray('    Archivos de grafo:'), chalk.green(totalGraphFiles));
+            console.log(chalk.gray('    Archivos .ndjson:'), chalk.green(totalGraphFiles));
           }
         } catch (error) {
           // Ignorar errores al leer directorio

@@ -1,8 +1,8 @@
 {
   "name": "grafo-code-explorer",
   "displayName": "Grafo Code Explorer",
-  "description": "Explore C# code relationships, inheritance, and dependencies using Grafo knowledge graph",
-  "version": "0.1.0",
+  "description": "Explore C# code relationships using Grafo knowledge graph with visual graph navigation",
+  "version": "0.2.0",
   "publisher": "grafo",
   "author": {
     "name": "Jose Luis Yanez Rojas",
@@ -13,21 +13,20 @@
     "type": "git",
     "url": "https://github.com/RlyehDoom/icb_coder_helper"
   },
-  "homepage": "https://joseluisyr.com",
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": [
     "Programming Languages",
+    "Visualization",
     "Other"
   ],
   "keywords": [
     "csharp",
-    "c#",
     "code analysis",
+    "graph",
     "dependencies",
-    "inheritance",
-    "roslyn"
+    "cytoscape"
   ],
   "activationEvents": [
     "onLanguage:csharp"
@@ -40,74 +39,43 @@
         "grafo.apiUrl": {
           "type": "string",
           "default": "http://localhost:8081",
-          "description": "URL of the Grafo Query Service API"
+          "description": "Grafo Query Service API URL"
         },
         "grafo.graphVersion": {
           "type": "string",
-          "default": "",
-          "description": "Graph version to query (leave empty for all versions)"
+          "default": "6.5.0",
+          "description": "Graph version (e.g., 6.5.0)"
         },
-        "grafo.enableHover": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable hover information for methods and classes"
-        },
-        "grafo.enableCodeLens": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable CodeLens showing references and implementations"
-        },
-        "grafo.enableTreeView": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable the Relations tree view"
-        },
-        "grafo.maxRelatedItems": {
+        "grafo.maxDepth": {
           "type": "number",
-          "default": 20,
-          "description": "Maximum number of related items to show"
+          "default": 2,
+          "description": "Max depth for graph traversal"
         }
       }
     },
     "commands": [
       {
-        "command": "grafo.configureApi",
-        "title": "Grafo: Configure API Connection",
-        "icon": "$(gear)"
-      },
-      {
-        "command": "grafo.showRelations",
-        "title": "Grafo: Show Relations",
-        "icon": "$(references)"
-      },
-      {
-        "command": "grafo.findImplementations",
-        "title": "Grafo: Find Implementations"
-      },
-      {
-        "command": "grafo.showInheritanceHierarchy",
-        "title": "Grafo: Show Inheritance Hierarchy"
-      },
-      {
-        "command": "grafo.showCallers",
-        "title": "Grafo: Show Who Calls This"
-      },
-      {
-        "command": "grafo.showCallees",
-        "title": "Grafo: Show What This Calls"
-      },
-      {
-        "command": "grafo.searchCode",
-        "title": "Grafo: Search Code Elements"
-      },
-      {
-        "command": "grafo.refreshRelations",
-        "title": "Grafo: Refresh Relations",
+        "command": "grafo.refreshAll",
+        "title": "Grafo: Refresh All Views",
         "icon": "$(refresh)"
       },
       {
         "command": "grafo.checkConnection",
-        "title": "Grafo: Check API Connection"
+        "title": "Grafo: Check Connection"
+      },
+      {
+        "command": "grafo.selectVersion",
+        "title": "Grafo: Select Version",
+        "icon": "$(versions)"
+      },
+      {
+        "command": "grafo.showGraph",
+        "title": "Grafo: Show Visual Graph",
+        "icon": "$(type-hierarchy)"
+      },
+      {
+        "command": "grafo.navigateToNode",
+        "title": "Grafo: Navigate to Node"
       },
       {
         "command": "grafo.showOutput",
@@ -117,23 +85,13 @@
       {
         "command": "grafo.clearOutput",
         "title": "Grafo: Clear Output Console"
-      },
-      {
-        "command": "grafo.selectVersion",
-        "title": "Grafo: Select Graph Version",
-        "icon": "$(versions)"
-      },
-      {
-        "command": "grafo.reloadWindow",
-        "title": "Grafo: Reload Window",
-        "icon": "$(refresh)"
       }
     ],
     "viewsContainers": {
       "activitybar": [
         {
           "id": "grafo-explorer",
-          "title": "Grafo Explorer",
+          "title": "Grafo",
           "icon": "images/icon-sidebar.svg"
         }
       ]
@@ -141,49 +99,48 @@
     "views": {
       "grafo-explorer": [
         {
-          "id": "grafo.relationsView",
-          "name": "Relations",
-          "contextualTitle": "Code Relations"
+          "type": "webview",
+          "id": "grafo.graphView",
+          "name": "Graph",
+          "contextualTitle": "Visual Graph"
         },
         {
-          "id": "grafo.hierarchyView",
-          "name": "Inheritance",
-          "contextualTitle": "Inheritance Hierarchy"
+          "id": "grafo.impactView",
+          "name": "Impact Analysis",
+          "contextualTitle": "Who calls this?"
         },
         {
-          "id": "grafo.statsView",
-          "name": "Statistics",
-          "contextualTitle": "Graph Statistics"
+          "id": "grafo.dependenciesView",
+          "name": "Dependencies",
+          "contextualTitle": "What does this call?"
+        },
+        {
+          "id": "grafo.classOverviewView",
+          "name": "Class Overview",
+          "contextualTitle": "Class metrics"
+        },
+        {
+          "id": "grafo.overridableMethodsView",
+          "name": "Overridable Methods",
+          "contextualTitle": "Base class methods"
+        },
+        {
+          "id": "grafo.implementationsView",
+          "name": "Implementations",
+          "contextualTitle": "Interface implementations"
         }
       ]
     },
     "menus": {
-      "editor/context": [
-        {
-          "command": "grafo.showRelations",
-          "when": "editorLangId == csharp",
-          "group": "navigation"
-        },
-        {
-          "command": "grafo.findImplementations",
-          "when": "editorLangId == csharp",
-          "group": "navigation"
-        }
-      ],
       "view/title": [
         {
-          "command": "grafo.refreshRelations",
-          "when": "view == grafo.relationsView",
+          "command": "grafo.refreshAll",
+          "when": "view =~ /^grafo\\./",
           "group": "navigation"
         },
         {
           "command": "grafo.selectVersion",
-          "when": "view == grafo.statsView",
-          "group": "navigation"
-        },
-        {
-          "command": "grafo.refreshRelations",
-          "when": "view == grafo.statsView",
+          "when": "view == grafo.classOverviewView",
           "group": "navigation"
         }
       ]
@@ -193,19 +150,12 @@
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
-    "pretest": "npm run compile && npm run lint",
-    "lint": "eslint src --ext ts",
-    "test": "node ./out/test/runTest.js",
     "package": "vsce package --out dist/"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",
     "@types/vscode": "^1.85.0",
-    "@typescript-eslint/eslint-plugin": "^6.13.0",
-    "@typescript-eslint/parser": "^6.13.0",
     "@vscode/vsce": "^2.22.0",
-    "eslint": "^8.54.0",
-    "sharp": "^0.34.5",
     "typescript": "^5.3.0"
   },
   "dependencies": {

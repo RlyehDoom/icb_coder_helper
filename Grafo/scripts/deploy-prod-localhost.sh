@@ -151,7 +151,7 @@ if [ ! -f "$PROJECT_DIR/$ENV_FILE" ]; then
 
     cat > "$PROJECT_DIR/$ENV_FILE" <<'ENVEOF'
 # MongoDB Configuration - LOCALHOST
-MONGODB_CONNECTION_STRING=mongodb://sonata:qwertY.!1982@localhost:28101/GraphDB?authSource=admin&tls=true&tlsInsecure=true
+MONGODB_CONNECTION_STRING=mongodb://user:pass@localhost:28101/GraphDB?authSource=admin&tls=true&tlsInsecure=true
 MONGODB_DATABASE=GraphDB
 MONGODB_PROJECTS_COLLECTION=projects
 

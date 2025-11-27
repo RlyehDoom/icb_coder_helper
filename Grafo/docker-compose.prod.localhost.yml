@@ -35,14 +35,14 @@ services:
     #   - "9081:9081"
 
     environment:
-      # MongoDB Configuration - LOCALHOST
+      # MongoDB Configuration - LOCALHOST (desde .env.prod)
       # Con network_mode: host, usa localhost directamente
-      - MONGODB_CONNECTION_STRING=mongodb://sonata:qwertY.!1982@localhost:28101/GraphDB?authSource=admin&tls=true&tlsInsecure=true
+      - MONGODB_CONNECTION_STRING=${MONGODB_CONNECTION_STRING}
 
-      # Con extra_hosts (comentado)
-      # - MONGODB_CONNECTION_STRING=mongodb://sonata:qwertY.!1982@host.docker.internal:28101/GraphDB?authSource=admin&tls=true&tlsInsecure=true
+      # Con extra_hosts (comentado) - Usar MONGODB_CONNECTION_STRING_DOCKER_INTERNAL si se necesita
+      # - MONGODB_CONNECTION_STRING=${MONGODB_CONNECTION_STRING_DOCKER_INTERNAL}
 
-      - MONGODB_DATABASE=GraphDB
+      - MONGODB_DATABASE=${MONGODB_DATABASE:-GraphDB}
       - MONGODB_PROJECTS_COLLECTION=projects
 
       # TLS Configuration
@@ -98,13 +98,13 @@ services:
     #   - "9083:8082"
 
     environment:
-      # MongoDB Configuration - LOCALHOST
-      - MONGODB_CONNECTION_STRING=mongodb://sonata:qwertY.!1982@localhost:28101/GraphDB?authSource=admin&tls=true&tlsInsecure=true
+      # MongoDB Configuration - LOCALHOST (desde .env.prod)
+      - MONGODB_CONNECTION_STRING=${MONGODB_CONNECTION_STRING}
 
-      # Con extra_hosts (comentado)
-      # - MONGODB_CONNECTION_STRING=mongodb://sonata:qwertY.!1982@host.docker.internal:28101/GraphDB?authSource=admin&tls=true&tlsInsecure=true
+      # Con extra_hosts (comentado) - Usar MONGODB_CONNECTION_STRING_DOCKER_INTERNAL si se necesita
+      # - MONGODB_CONNECTION_STRING=${MONGODB_CONNECTION_STRING_DOCKER_INTERNAL}
 
-      - MONGODB_DATABASE=GraphDB
+      - MONGODB_DATABASE=${MONGODB_DATABASE:-GraphDB}
       - MONGODB_PROJECTS_COLLECTION=projects
 
       # TLS Configuration

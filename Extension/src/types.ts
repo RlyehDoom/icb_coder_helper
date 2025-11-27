@@ -1,269 +1,165 @@
 /**
- * TypeScript interfaces for Grafo API responses
+ * Grafo API v2.1 Types
+ * Schema: Versioned collections (nodes_{version})
+ * IDs: grafo:{kind}/{project}/{identifier}
  */
 
-// ============================================================================
-// Graph Node Types
-// ============================================================================
-
+// Node Types
 export interface GraphNode {
-    Id: string;
-    Name: string;
-    FullName: string;
-    Type: NodeType;
-    Project: string;
-    Namespace: string;
-    Accessibility: string;
-    IsAbstract: boolean;
-    IsStatic: boolean;
-    IsSealed: boolean;
-    Location?: NodeLocation;
-    Attributes?: NodeAttributes;
-    ContainingType?: string;
-}
-
-export type NodeType =
-    | 'Class'
-    | 'Interface'
-    | 'Method'
-    | 'Property'
-    | 'Field'
-    | 'Enum'
-    | 'Struct'
-    | 'File';
-
-export interface NodeLocation {
-    AbsolutePath?: string;
-    RelativePath?: string;
-    Line?: number;
-    Column?: number;
-}
-
-export interface NodeAttributes {
-    parameters?: MethodParameter[];
-    returnType?: string;
-    baseTypes?: string[];
-    interfaces?: string[];
-    modifiers?: string[];
-    customAttributes?: Record<string, unknown>;
-}
-
-export interface MethodParameter {
+    id: string;
     name: string;
+    fullName: string;
     type: string;
-    isOptional?: boolean;
-    defaultValue?: string;
-}
-
-// ============================================================================
-// Graph Edge Types
-// ============================================================================
-
-export interface GraphEdge {
-    Id: string;
-    Source: string;
-    Target: string;
-    Relationship: RelationshipType;
-    Strength: number;
-    Count: number;
-}
-
-export type RelationshipType =
-    | 'Inherits'
-    | 'Implements'
-    | 'Calls'
-    | 'Uses'
-    | 'Contains'
-    | 'project_reference';
-
-// ============================================================================
-// API Request Types
-// ============================================================================
-
-export interface SearchNodesRequest {
-    query: string;
-    nodeType?: NodeType;
+    kind: NodeKind;
+    language: string;
+    namespace?: string;
     project?: string;
-    namespace?: string;
-    version?: string;
-    limit?: number;
+    solution?: string;
+    layer?: LayerType;
+    accessibility?: string;
+    isAbstract?: boolean;
+    isStatic?: boolean;
+    isSealed?: boolean;
+    source?: SourceLocation;
+    containedIn?: string;
+    contains?: string[];
+    hasMember?: string[];  // Class/Interface -> Method/Property/Field (logical containment)
+    calls?: string[];
+    callsVia?: string[];
+    indirectCall?: string[];
+    implements?: string[];
+    inherits?: string[];
+    uses?: string[];
 }
 
-export interface CodeContextRequest {
-    relativePath?: string;
-    absolutePath?: string;
-    className?: string;
-    methodName?: string;
-    namespace?: string;
-    projectName?: string;
-    version?: string;
-    includeRelated?: boolean;
-    maxRelated?: number;
-    maxDepth?: number;
+export type NodeKind = 'class' | 'interface' | 'method' | 'property' | 'field' | 'enum' | 'struct' | 'file' | 'project' | 'solution' | 'layer';
+
+export type LayerType = 'presentation' | 'services' | 'business' | 'data' | 'infrastructure' | 'test';
+
+export interface SourceLocation {
+    file?: string;
+    range?: { start: number; end: number };
 }
 
-export interface GetRelatedNodesRequest {
-    nodeId: string;
-    relationshipType?: RelationshipType;
-    direction?: 'incoming' | 'outgoing' | 'both';
-    maxDepth?: number;
-}
-
-export interface ClassHierarchyRequest {
-    classId: string;
-    maxDepth?: number;
-}
-
-export interface InterfaceImplementationsRequest {
-    interfaceId: string;
-}
-
-// ============================================================================
-// API Response Types
-// ============================================================================
-
-export interface CodeContextResponse {
-    found: boolean;
-    mainElement?: GraphNode;
-    relatedElements: GraphNode[];
-    edges: GraphEdge[];
-    projectInfo?: ProjectSummary;
-    suggestions: string[];
-}
-
-export interface ProjectSummary {
-    MongoId?: string;
-    ProjectId: string;
-    ProjectName: string;
-    Layer: string;
-    NodeCount: number;
-    EdgeCount: number;
-    LastProcessed: string;
-    SourceFile: string;
-    Version?: string;
-}
-
-export interface RelatedNodesResponse {
-    sourceNode: GraphNode;
-    relatedNodes: GraphNode[];
-    edges: GraphEdge[];
-    projectId?: string;
-    totalRelated: number;
-}
-
-export interface SemanticStatsResponse {
-    relationships: {
-        Inherits: number;
-        Implements: number;
-        Calls: number;
-        Uses: number;
-        Contains: number;
-        Other: number;
-    };
-    totalSemanticEdges: number;
-    totalEdges: number;
-    nodes: {
-        classesWithNamespace: number;
-        totalClasses: number;
-        interfacesWithNamespace: number;
-        totalInterfaces: number;
-    };
-}
-
-export interface RelationshipsResponse {
-    relationshipType: RelationshipType;
+// API Responses
+export interface SearchResponse {
+    version: string;
+    query: string;
+    results: GraphNode[];
     count: number;
-    relationships: Array<{
-        source: string;
-        target: string;
-        relationship: string;
-        projectId?: string;
-        projectName?: string;
-    }>;
 }
 
-export interface ClassHierarchyResponse {
+export interface CallersResponse {
     found: boolean;
-    class?: {
-        id: string;
-        name: string;
-        fullName: string;
-        namespace: string;
-        isAbstract: boolean;
-        isSealed: boolean;
-    };
-    ancestors: Array<{
-        id: string;
-        name: string;
-        fullName: string;
-        namespace: string;
-        depth: number;
-    }>;
-    descendants: Array<{
-        id: string;
-        name: string;
-        fullName: string;
-        namespace: string;
-    }>;
-    hierarchyDepth: number;
-    message?: string;
+    target: GraphNode;
+    version: string;
+    callers: Array<{ node: GraphNode; depth: number }>;
+    indirectCallers: Array<{ node: GraphNode; depth: number }>;
+    totalCallers: number;
 }
 
-export interface InterfaceImplementationsResponse {
+export interface CalleesResponse {
     found: boolean;
-    interface?: {
-        id: string;
-        name: string;
-        fullName: string;
-        namespace: string;
-    };
-    implementations: Array<{
-        id: string;
-        name: string;
-        fullName: string;
-        namespace: string;
-        projectId?: string;
-        isAbstract: boolean;
-    }>;
-    implementationCount: number;
-    message?: string;
+    source: GraphNode;
+    version: string;
+    callees: Array<{ node: GraphNode; depth: number }>;
+    viaInterface: Array<{ node: GraphNode; depth: number }>;
+    totalCallees: number;
 }
 
-export interface HealthCheckResponse {
+export interface ImplementationsResponse {
+    found: boolean;
+    interface: GraphNode;
+    version: string;
+    implementations: GraphNode[];
+    count: number;
+}
+
+export interface InheritanceResponse {
+    found: boolean;
+    class: GraphNode;
+    version: string;
+    ancestors: Array<{ node: GraphNode; depth: number }>;
+    descendants: Array<{ node: GraphNode; depth: number }>;
+}
+
+export interface VersionsResponse {
+    versions: string[];
+    default: string;
+    count: number;
+}
+
+export interface HealthResponse {
     status: 'healthy' | 'degraded';
     service: string;
     version: string;
     mongodb: 'connected' | 'disconnected';
 }
 
-export interface GraphStatisticsResponse {
-    totalProjects: number;
+export interface StatsResponse {
+    version: string;
     totalNodes: number;
-    totalEdges: number;
+    totalProjects: number;
+    totalSolutions: number;
     nodesByType: Record<string, number>;
-    edgesByType: Record<string, number>;
-    projectsByLayer: Record<string, number>;
-    versions?: string[];
 }
 
-// ============================================================================
+export interface SemanticStatsResponse {
+    version: string;
+    relationships: {
+        Inherits: number;
+        Implements: number;
+        Calls: number;
+        CallsVia: number;
+        Uses: number;
+        Contains: number;
+    };
+    totalSemanticEdges: number;
+    nodes: {
+        totalClasses: number;
+        totalInterfaces: number;
+    };
+}
+
 // Extension Types
-// ============================================================================
-
-export interface GrafoConfig {
-    apiUrl: string;
-    graphVersion: string;
-    enableHover: boolean;
-    enableCodeLens: boolean;
-    enableTreeView: boolean;
-    maxRelatedItems: number;
+export interface CurrentContext {
+    filePath: string;
+    className?: string;
+    methodName?: string;
+    namespace?: string;
+    baseClass?: string;
+    isExtendedClass: boolean;
+    node?: GraphNode;
 }
 
-export interface ElementInfo {
-    name: string;
-    type: NodeType;
-    namespace?: string;
-    className?: string;
-    line: number;
-    column: number;
+export interface LayerStats {
+    layer: LayerType;
+    count: number;
+    nodes: GraphNode[];
+}
+
+// Graph Visualization
+export interface CytoscapeNode {
+    data: {
+        id: string;
+        label: string;
+        type: NodeKind;
+        layer?: LayerType;
+        project?: string;
+        isCurrent?: boolean;
+    };
+}
+
+export interface CytoscapeEdge {
+    data: {
+        id: string;
+        source: string;
+        target: string;
+        type: 'calls' | 'callsVia' | 'implements' | 'inherits' | 'uses';
+    };
+}
+
+export interface CytoscapeData {
+    nodes: CytoscapeNode[];
+    edges: CytoscapeEdge[];
 }

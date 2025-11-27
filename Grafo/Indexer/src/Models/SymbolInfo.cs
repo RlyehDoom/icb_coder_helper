@@ -60,7 +60,7 @@ namespace RoslynIndexer.Models
         public string InvocationExpression { get; set; } = "";
         public string File { get; set; } = "";
         public int Line { get; set; }
-        
+
         // Semantic model enhancements
         public string TargetMethod { get; set; } = "";
         public string TargetType { get; set; } = "";
@@ -69,6 +69,25 @@ namespace RoslynIndexer.Models
         public bool IsAbstract { get; set; }
         public bool IsOverride { get; set; }
         public bool IsPropertyAccess { get; set; }
+
+        // Interface/Unity call tracking
+        /// <summary>
+        /// True if the method being called belongs to an interface type.
+        /// Used to track indirect calls through dependency injection (Unity, etc.)
+        /// </summary>
+        public bool IsInterfaceCall { get; set; }
+
+        /// <summary>
+        /// The full name of the interface type when IsInterfaceCall is true.
+        /// Example: "MyNamespace.IMyService"
+        /// </summary>
+        public string? InterfaceType { get; set; }
+
+        /// <summary>
+        /// The name of the interface method being called.
+        /// Example: "DoSomething" when calling IMyService.DoSomething()
+        /// </summary>
+        public string? InterfaceMethod { get; set; }
     }
 
     public class TypeUsageInfo

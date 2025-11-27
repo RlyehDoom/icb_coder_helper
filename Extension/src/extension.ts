@@ -1,580 +1,189 @@
+/**
+ * Grafo Code Explorer Extension
+ * 6 Widgets: Graph, Impact, Dependencies, ClassOverview, LayerMap, Implementations
+ */
 import * as vscode from 'vscode';
-import { initializeGrafoClient, disposeGrafoClient, getGrafoClient } from './api/grafoClient';
-import { getConfig, onConfigChanged, isHoverEnabled, isCodeLensEnabled, isTreeViewEnabled, getGraphVersion } from './config';
-import { GrafoConfig } from './types';
-import { GrafoHoverProvider } from './providers/hoverProvider';
-import { GrafoCodeLensProvider } from './providers/codeLensProvider';
-import { RelationsTreeProvider, HierarchyTreeProvider, StatsTreeProvider } from './views/relationsTreeView';
+import { initClient, getClient } from './api/grafoClient';
+import { GraphNode, CurrentContext } from './types';
 import { logger } from './logger';
+import {
+    ImpactProvider,
+    DependenciesProvider,
+    ClassOverviewProvider,
+    OverridableMethodsProvider,
+    ImplementationsProvider
+} from './views/treeProviders';
+import { GraphViewProvider } from './views/graphViewProvider';
 
-const FIRST_RUN_KEY = 'grafo.firstRunComplete';
-const CONFIG_VERSION_KEY = 'grafo.configVersion';
-const CURRENT_CONFIG_VERSION = 1;
+// Providers
+let impactProvider: ImpactProvider;
+let dependenciesProvider: DependenciesProvider;
+let classOverviewProvider: ClassOverviewProvider;
+let overridableMethodsProvider: OverridableMethodsProvider;
+let implementationsProvider: ImplementationsProvider;
+let graphViewProvider: GraphViewProvider;
 
-let hoverDisposable: vscode.Disposable | undefined;
-let codeLensDisposable: vscode.Disposable | undefined;
-let codeLensProvider: GrafoCodeLensProvider | undefined;
-let relationsProvider: RelationsTreeProvider;
-let hierarchyProvider: HierarchyTreeProvider;
-let statsProvider: StatsTreeProvider;
-let mainStatusBarItem: vscode.StatusBarItem;
+// Status bar
+let statusBar: vscode.StatusBarItem;
+
+// Current context
+let currentContext: CurrentContext | null = null;
+let debounceTimer: NodeJS.Timeout | undefined;
 
 export async function activate(context: vscode.ExtensionContext) {
-    logger.info('='.repeat(60));
-    logger.info('Grafo Code Explorer - Extension Activated');
-    logger.info('='.repeat(60));
+    logger.separator('Extension Activation');
+    logger.info('Grafo Code Explorer v0.2.0 activating...');
 
-    // Check for first run or configuration update needed
-    const isFirstRun = !context.globalState.get<boolean>(FIRST_RUN_KEY);
-    const configVersion = context.globalState.get<number>(CONFIG_VERSION_KEY) || 0;
+    // Get configuration
+    const config = vscode.workspace.getConfiguration('grafo');
+    const apiUrl = config.get<string>('apiUrl', 'http://localhost:8081');
+    const version = config.get<string>('graphVersion', '6.5.0');
 
-    logger.info(`First run: ${isFirstRun}, Config version: ${configVersion}`);
-
-    if (isFirstRun || configVersion < CURRENT_CONFIG_VERSION) {
-        logger.info('Prompting for initial configuration...');
-        await promptForConfiguration(context);
-    }
+    logger.info(`Config: API=${apiUrl}, Version=${version}`);
 
     // Initialize API client
-    const config = getConfig();
-    logger.info('Loading configuration:');
-    logger.info(`  API URL: ${config.apiUrl}`);
-    logger.info(`  Graph Version: ${config.graphVersion || '(all versions)'}`);
-    logger.info(`  Hover Enabled: ${config.enableHover}`);
-    logger.info(`  CodeLens Enabled: ${config.enableCodeLens}`);
-    logger.info(`  TreeView Enabled: ${config.enableTreeView}`);
+    initClient(apiUrl, version);
 
-    initializeGrafoClient({
-        baseUrl: config.apiUrl,
-        version: config.graphVersion,
-    });
-
-    // Initialize tree view providers
-    relationsProvider = new RelationsTreeProvider();
-    hierarchyProvider = new HierarchyTreeProvider();
-    statsProvider = new StatsTreeProvider();
+    // Initialize providers
+    impactProvider = new ImpactProvider();
+    dependenciesProvider = new DependenciesProvider();
+    classOverviewProvider = new ClassOverviewProvider();
+    overridableMethodsProvider = new OverridableMethodsProvider();
+    implementationsProvider = new ImplementationsProvider();
+    graphViewProvider = new GraphViewProvider(context.extensionUri);
 
     // Register tree views
-    if (isTreeViewEnabled()) {
-        context.subscriptions.push(
-            vscode.window.registerTreeDataProvider('grafo.relationsView', relationsProvider),
-            vscode.window.registerTreeDataProvider('grafo.hierarchyView', hierarchyProvider),
-            vscode.window.registerTreeDataProvider('grafo.statsView', statsProvider)
-        );
-
-        // Load initial stats
-        statsProvider.loadStats();
-
-        // Auto-load hierarchy when active editor changes
-        context.subscriptions.push(
-            vscode.window.onDidChangeActiveTextEditor((editor) => {
-                if (editor && editor.document.languageId === 'csharp') {
-                    autoLoadClassHierarchy(editor.document);
-                }
-            })
-        );
-
-        // Auto-load relations when selection changes (user clicks on something)
-        context.subscriptions.push(
-            vscode.window.onDidChangeTextEditorSelection((event) => {
-                if (event.textEditor.document.languageId === 'csharp' && event.selections.length > 0) {
-                    // Debounce to avoid too many API calls
-                    autoLoadRelationsDebounced(event.textEditor, relationsProvider, hierarchyProvider);
-                }
-            })
-        );
-
-        // Auto-load for current editor on startup
-        if (vscode.window.activeTextEditor?.document.languageId === 'csharp') {
-            autoLoadClassHierarchy(vscode.window.activeTextEditor.document);
-        }
-    }
-
-    // Register providers based on configuration
-    registerProviders(context);
-
-    // Listen for configuration changes
     context.subscriptions.push(
-        onConfigChanged((newConfig) => {
-            logger.info('Configuration changed');
-            logger.info(`  New API URL: ${newConfig.apiUrl}`);
-            logger.info(`  New Version: ${newConfig.graphVersion || '(all versions)'}`);
+        vscode.window.registerTreeDataProvider('grafo.impactView', impactProvider),
+        vscode.window.registerTreeDataProvider('grafo.dependenciesView', dependenciesProvider),
+        vscode.window.registerTreeDataProvider('grafo.classOverviewView', classOverviewProvider),
+        vscode.window.registerTreeDataProvider('grafo.overridableMethodsView', overridableMethodsProvider),
+        vscode.window.registerTreeDataProvider('grafo.implementationsView', implementationsProvider)
+    );
 
-            // Reinitialize API client with new config
-            disposeGrafoClient();
-            initializeGrafoClient({
-                baseUrl: newConfig.apiUrl,
-                version: newConfig.graphVersion,
-            });
-
-            // Re-register providers
-            registerProviders(context);
-
-            // Refresh views
-            relationsProvider.refresh();
-            statsProvider.refresh();
-
-            // Update status bar text with new version
-            updateStatusBarText(newConfig);
-
-            // Check connection
-            checkConnection(mainStatusBarItem);
-        })
+    // Register webview provider for graph
+    context.subscriptions.push(
+        vscode.window.registerWebviewViewProvider(GraphViewProvider.viewType, graphViewProvider)
     );
 
     // Register commands
     registerCommands(context);
 
-    // Status bar item
-    mainStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
-    updateStatusBarText(config);
-    mainStatusBarItem.command = 'grafo.checkConnection';
-    mainStatusBarItem.show();
-    context.subscriptions.push(mainStatusBarItem);
+    // Status bar
+    statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+    statusBar.text = `$(graph) Grafo [${version}]`;
+    statusBar.tooltip = 'Grafo Code Explorer';
+    statusBar.command = 'grafo.checkConnection';
+    statusBar.show();
+    context.subscriptions.push(statusBar);
 
-    // Check connection on startup
-    checkConnection(mainStatusBarItem);
-}
-
-async function promptForConfiguration(context: vscode.ExtensionContext): Promise<void> {
-    const config = vscode.workspace.getConfiguration('grafo');
-    const currentUrl = config.get<string>('apiUrl', 'http://localhost:8081');
-
-    // Show welcome message
-    const result = await vscode.window.showInformationMessage(
-        'Welcome to Grafo Code Explorer! Configure the API connection to get started.',
-        'Configure Now',
-        'Use Default'
+    // Listen for editor changes
+    context.subscriptions.push(
+        vscode.window.onDidChangeActiveTextEditor(onEditorChange),
+        vscode.window.onDidChangeTextEditorSelection(onSelectionChange)
     );
 
-    if (result === 'Configure Now') {
-        await configureApiUrl();
+    // Check connection
+    checkConnection();
+
+    // Load for current editor
+    if (vscode.window.activeTextEditor?.document.languageId === 'csharp') {
+        onEditorChange(vscode.window.activeTextEditor);
     }
 
-    // Mark first run as complete
-    await context.globalState.update(FIRST_RUN_KEY, true);
-    await context.globalState.update(CONFIG_VERSION_KEY, CURRENT_CONFIG_VERSION);
-}
-
-async function configureApiUrl(): Promise<boolean> {
-    const config = vscode.workspace.getConfiguration('grafo');
-    const currentUrl = config.get<string>('apiUrl', 'http://localhost:8081');
-
-    // Step 1: API URL
-    const apiUrl = await vscode.window.showInputBox({
-        prompt: 'Enter Grafo Query Service URL',
-        placeHolder: 'http://localhost:8081',
-        value: currentUrl,
-        validateInput: (value) => {
-            if (!value) {
-                return 'URL is required';
-            }
-            try {
-                new URL(value);
-                return null;
-            } catch {
-                return 'Please enter a valid URL (e.g., http://localhost:8081)';
-            }
-        },
-    });
-
-    if (!apiUrl) {
-        return false;
-    }
-
-    // Step 2: Graph Version (optional)
-    const currentVersion = config.get<string>('graphVersion', '');
-    const graphVersion = await vscode.window.showInputBox({
-        prompt: 'Enter Graph Version (optional - leave empty for all versions)',
-        placeHolder: 'e.g., 7.10.2',
-        value: currentVersion,
-    });
-
-    // Save configuration
-    await config.update('apiUrl', apiUrl, vscode.ConfigurationTarget.Global);
-    if (graphVersion !== undefined) {
-        await config.update('graphVersion', graphVersion, vscode.ConfigurationTarget.Global);
-    }
-
-    vscode.window.showInformationMessage(`Grafo configured: ${apiUrl}`);
-    return true;
-}
-
-function registerProviders(context: vscode.ExtensionContext) {
-    const csharpSelector: vscode.DocumentSelector = { language: 'csharp', scheme: 'file' };
-
-    // Dispose existing providers
-    hoverDisposable?.dispose();
-    codeLensDisposable?.dispose();
-
-    // Register hover provider
-    if (isHoverEnabled()) {
-        hoverDisposable = vscode.languages.registerHoverProvider(
-            csharpSelector,
-            new GrafoHoverProvider(context.extensionUri)
-        );
-        context.subscriptions.push(hoverDisposable);
-    }
-
-    // Register CodeLens provider
-    if (isCodeLensEnabled()) {
-        codeLensProvider = new GrafoCodeLensProvider();
-        codeLensDisposable = vscode.languages.registerCodeLensProvider(
-            csharpSelector,
-            codeLensProvider
-        );
-        context.subscriptions.push(codeLensDisposable);
-    }
+    logger.info('Extension activated successfully');
+    logger.show(); // Show output on first activation
 }
 
 function registerCommands(context: vscode.ExtensionContext) {
-    // Configure API URL command
+    // Refresh all views
     context.subscriptions.push(
-        vscode.commands.registerCommand('grafo.configureApi', async () => {
-            const configured = await configureApiUrl();
-            if (configured) {
-                // Refresh connection
-                vscode.commands.executeCommand('grafo.checkConnection');
+        vscode.commands.registerCommand('grafo.refreshAll', () => {
+            impactProvider.refresh();
+            dependenciesProvider.refresh();
+            classOverviewProvider.refresh();
+            overridableMethodsProvider.refresh();
+            implementationsProvider.refresh();
+            if (vscode.window.activeTextEditor) {
+                onEditorChange(vscode.window.activeTextEditor);
             }
         })
     );
 
-    // Show Relations command
+    // Check connection
     context.subscriptions.push(
-        vscode.commands.registerCommand('grafo.showRelations', async (element?: {
-            name: string;
-            type: 'method' | 'class' | 'interface';
-            className?: string;
-            namespace?: string;
-        }) => {
-            if (element && element.name) {
-                // Handle Extended classes - search for base class instead
-                let searchName = element.name;
-                if (element.type === 'class' && element.name.endsWith('Extended')) {
-                    const text = vscode.window.activeTextEditor?.document.getText() || '';
-                    const classMatch = text.match(/class\s+\w+Extended\s*:\s*([^{\n]+)/);
-                    if (classMatch) {
-                        const baseClass = extractBaseClassName(classMatch[1]);
-                        if (baseClass) {
-                            logger.info(`Extended class detected: ${element.name} -> searching for: ${baseClass}`);
-                            searchName = baseClass;
-                        }
-                    }
-                }
-
-                logger.info(`Show relations for element: ${searchName} (${element.type})`);
-                await relationsProvider.loadElement(
-                    searchName,
-                    element.type,
-                    element.className,
-                    element.namespace
-                );
-            } else {
-                // Try to get element from current cursor position
-                const editor = vscode.window.activeTextEditor;
-                if (!editor || editor.document.languageId !== 'csharp') {
-                    vscode.window.showWarningMessage('Please open a C# file and place cursor on a class or method');
-                    return;
-                }
-
-                const wordRange = editor.document.getWordRangeAtPosition(editor.selection.active);
-                if (!wordRange) {
-                    vscode.window.showWarningMessage('Please place cursor on a class or method name');
-                    return;
-                }
-
-                let word = editor.document.getText(wordRange);
-                if (!word || word.length < 2) {
-                    vscode.window.showWarningMessage('Please place cursor on a valid identifier');
-                    return;
-                }
-
-                // Determine if it's likely a class or method based on context
-                const line = editor.document.lineAt(editor.selection.active.line).text;
-                const isMethod = /\.\s*\w+\s*\(/.test(line) || /\b(public|private|protected|internal)\s+.*\w+\s*\(/.test(line);
-
-                // Handle Extended classes - search for base class instead
-                if (!isMethod && word.endsWith('Extended')) {
-                    const text = editor.document.getText();
-                    const classMatch = text.match(/class\s+\w+Extended\s*:\s*([^{\n]+)/);
-                    if (classMatch) {
-                        const baseClass = extractBaseClassName(classMatch[1]);
-                        if (baseClass) {
-                            logger.info(`Extended class detected: ${word} -> searching for: ${baseClass}`);
-                            word = baseClass;
-                        }
-                    }
-                }
-
-                logger.info(`Show relations for word at cursor: ${word}`);
-                await relationsProvider.loadElement(word, isMethod ? 'method' : 'class');
-            }
-
-            // Focus the relations view
-            vscode.commands.executeCommand('grafo.relationsView.focus');
-        })
+        vscode.commands.registerCommand('grafo.checkConnection', checkConnection)
     );
 
-    // Find Implementations command
+    // Select version
     context.subscriptions.push(
-        vscode.commands.registerCommand('grafo.findImplementations', async () => {
-            const editor = vscode.window.activeTextEditor;
-            if (!editor || editor.document.languageId !== 'csharp') {
-                vscode.window.showWarningMessage('Please open a C# file first');
-                return;
-            }
-
-            const word = editor.document.getText(
-                editor.document.getWordRangeAtPosition(editor.selection.active)
-            );
-
-            if (!word) {
-                vscode.window.showWarningMessage('Please place cursor on an interface or class name');
-                return;
-            }
-
-            const client = getGrafoClient();
-            if (!client) {
-                vscode.window.showErrorMessage('Grafo: Not connected to API. Run "Grafo: Configure API" first.');
-                return;
-            }
+        vscode.commands.registerCommand('grafo.selectVersion', async () => {
+            const client = getClient();
+            if (!client) return;
 
             try {
-                // Determine if it's an interface (starts with I followed by uppercase) or class
-                const isInterface = word.startsWith('I') && word.length > 1 &&
-                                    word[1] === word[1].toUpperCase() &&
-                                    word[1] !== word[1].toLowerCase();
-
-                const nodeType = isInterface ? 'Interface' : 'Class';
-                logger.info(`Finding implementations for "${word}" as ${nodeType}`);
-
-                const results = await client.searchNodes({
-                    query: word,
-                    nodeType: nodeType,
-                    limit: 1,
-                });
-
-                if (results.length === 0) {
-                    vscode.window.showInformationMessage(`No ${nodeType.toLowerCase()} found for "${word}"`);
-                    return;
-                }
-
-                // Handle both Id and id (API might return lowercase)
-                const elementId = results[0].Id || (results[0] as any).id;
-                if (!elementId) {
-                    logger.error(`${nodeType} node has no ID`, results[0]);
-                    vscode.window.showErrorMessage(`Grafo: ${nodeType} found but has no ID`);
-                    return;
-                }
-
-                const implementations = await client.getInterfaceImplementations(elementId);
-
-                if (!implementations.found || implementations.implementationCount === 0) {
-                    vscode.window.showInformationMessage(`No implementations found for "${word}"`);
-                    return;
-                }
-
-                // Show quick pick with implementations
-                const items = implementations.implementations.map(impl => ({
-                    label: impl.name,
-                    description: impl.namespace,
-                    detail: impl.isAbstract ? 'abstract' : undefined,
-                }));
-
-                const selected = await vscode.window.showQuickPick(items, {
-                    placeHolder: `${implementations.implementationCount} implementations found`,
-                });
+                const versions = await client.getVersions();
+                const selected = await vscode.window.showQuickPick(
+                    versions.versions.map(v => ({ label: v, description: v === versions.default ? 'default' : '' })),
+                    { placeHolder: 'Select graph version' }
+                );
 
                 if (selected) {
-                    // Search and open the selected implementation
-                    const searchResults = await client.searchNodes({
-                        query: selected.label,
-                        nodeType: 'Class',
-                        namespace: selected.description,
-                        limit: 1,
+                    const config = vscode.workspace.getConfiguration('grafo');
+                    await config.update('graphVersion', selected.label, vscode.ConfigurationTarget.Global);
+                    client.setVersion(selected.label);
+                    statusBar.text = `$(graph) Grafo [${selected.label}]`;
+                    vscode.commands.executeCommand('grafo.refreshAll');
+                }
+            } catch (e) {
+                vscode.window.showErrorMessage('Failed to get versions');
+            }
+        })
+    );
+
+    // Navigate to node
+    context.subscriptions.push(
+        vscode.commands.registerCommand('grafo.navigateToNode', async (node: GraphNode) => {
+            if (!node.source?.file) return;
+
+            // Try to find file in workspace
+            const workspaceFolders = vscode.workspace.workspaceFolders;
+            if (!workspaceFolders) return;
+
+            for (const folder of workspaceFolders) {
+                const filePath = vscode.Uri.joinPath(folder.uri, node.source.file);
+                try {
+                    await vscode.workspace.fs.stat(filePath);
+                    const doc = await vscode.workspace.openTextDocument(filePath);
+                    const line = node.source.range?.start || 1;
+                    await vscode.window.showTextDocument(doc, {
+                        selection: new vscode.Range(line - 1, 0, line - 1, 0)
                     });
-
-                    if (searchResults.length > 0 && searchResults[0].Location?.AbsolutePath) {
-                        const uri = vscode.Uri.file(searchResults[0].Location.AbsolutePath);
-                        const line = searchResults[0].Location.Line || 1;
-                        await vscode.window.showTextDocument(uri, {
-                            selection: new vscode.Range(line - 1, 0, line - 1, 0),
-                        });
-                    }
-                }
-            } catch (error) {
-                vscode.window.showErrorMessage(`Grafo: Error finding implementations - ${error}`);
-            }
-        })
-    );
-
-    // Show Inheritance Hierarchy command
-    context.subscriptions.push(
-        vscode.commands.registerCommand('grafo.showInheritanceHierarchy', async () => {
-            const editor = vscode.window.activeTextEditor;
-            if (!editor || editor.document.languageId !== 'csharp') {
-                vscode.window.showWarningMessage('Please open a C# file first');
-                return;
-            }
-
-            const word = editor.document.getText(
-                editor.document.getWordRangeAtPosition(editor.selection.active)
-            );
-
-            if (!word) {
-                vscode.window.showWarningMessage('Please place cursor on a class name');
-                return;
-            }
-
-            const client = getGrafoClient();
-            if (!client) {
-                vscode.window.showErrorMessage('Grafo: Not connected to API. Run "Grafo: Configure API" first.');
-                return;
-            }
-
-            try {
-                // Handle Extended classes
-                let searchWord = word;
-                if (word.endsWith('Extended')) {
-                    const text = editor.document.getText();
-                    const classMatch = text.match(new RegExp(`class\\s+${word}\\s*:\\s*([^{\\n]+)`));
-                    if (classMatch) {
-                        const baseClassInfo = extractBaseClassInfo(classMatch[1]);
-                        if (baseClassInfo) {
-                            logger.info(`Extended class detected: ${word} -> searching for: ${baseClassInfo.fullName}`);
-                            searchWord = baseClassInfo.namespace
-                                ? `${baseClassInfo.namespace}.${baseClassInfo.name}`
-                                : baseClassInfo.name;
-                        }
-                    }
-                }
-
-                await hierarchyProvider.loadClass(searchWord);
-            } catch (error) {
-                vscode.window.showErrorMessage(`Grafo: Error loading hierarchy - ${error}`);
-            }
-        })
-    );
-
-    // Show Callers command
-    context.subscriptions.push(
-        vscode.commands.registerCommand('grafo.showCallers', async () => {
-            const editor = vscode.window.activeTextEditor;
-            if (!editor || editor.document.languageId !== 'csharp') {
-                vscode.window.showWarningMessage('Please open a C# file first');
-                return;
-            }
-
-            const word = editor.document.getText(
-                editor.document.getWordRangeAtPosition(editor.selection.active)
-            );
-
-            if (word) {
-                await relationsProvider.loadElement(word, 'method');
-                vscode.commands.executeCommand('grafo.relationsView.focus');
-            }
-        })
-    );
-
-    // Show Callees command
-    context.subscriptions.push(
-        vscode.commands.registerCommand('grafo.showCallees', async () => {
-            const editor = vscode.window.activeTextEditor;
-            if (!editor || editor.document.languageId !== 'csharp') {
-                vscode.window.showWarningMessage('Please open a C# file first');
-                return;
-            }
-
-            const word = editor.document.getText(
-                editor.document.getWordRangeAtPosition(editor.selection.active)
-            );
-
-            if (word) {
-                await relationsProvider.loadElement(word, 'method');
-                vscode.commands.executeCommand('grafo.relationsView.focus');
-            }
-        })
-    );
-
-    // Search Code command
-    context.subscriptions.push(
-        vscode.commands.registerCommand('grafo.searchCode', async () => {
-            const query = await vscode.window.showInputBox({
-                prompt: 'Enter search query',
-                placeHolder: 'e.g., UserService, GetById, IRepository',
-            });
-
-            if (!query) {
-                return;
-            }
-
-            const client = getGrafoClient();
-            if (!client) {
-                vscode.window.showErrorMessage('Grafo: Not connected to API. Run "Grafo: Configure API" first.');
-                return;
-            }
-
-            try {
-                const results = await client.searchNodes({
-                    query,
-                    limit: 50,
-                });
-
-                if (results.length === 0) {
-                    vscode.window.showInformationMessage(`No results found for "${query}"`);
                     return;
+                } catch {
+                    // File not found in this folder, try next
                 }
-
-                const items = results.map(node => ({
-                    label: `$(${getNodeIcon(node.Type)}) ${node.Name}`,
-                    description: node.Type,
-                    detail: node.Namespace ? `${node.Namespace} | ${node.Project}` : node.Project,
-                    node,
-                }));
-
-                const selected = await vscode.window.showQuickPick(items, {
-                    placeHolder: `${results.length} results found`,
-                    matchOnDescription: true,
-                    matchOnDetail: true,
-                });
-
-                if (selected?.node.Location?.AbsolutePath) {
-                    const uri = vscode.Uri.file(selected.node.Location.AbsolutePath);
-                    const line = selected.node.Location.Line || 1;
-                    await vscode.window.showTextDocument(uri, {
-                        selection: new vscode.Range(line - 1, 0, line - 1, 0),
-                    });
-                }
-            } catch (error) {
-                vscode.window.showErrorMessage(`Grafo: Search error - ${error}`);
             }
+
+            vscode.window.showWarningMessage(`File not found: ${node.source.file}`);
         })
     );
 
-    // Refresh Relations command
+    // Show graph
     context.subscriptions.push(
-        vscode.commands.registerCommand('grafo.refreshRelations', () => {
-            relationsProvider.refresh();
-            codeLensProvider?.refresh();
-            statsProvider.refresh();
+        vscode.commands.registerCommand('grafo.showGraph', () => {
+            vscode.commands.executeCommand('grafo.graphView.focus');
         })
     );
 
-    // Check Connection command
-    context.subscriptions.push(
-        vscode.commands.registerCommand('grafo.checkConnection', async () => {
-            await checkConnection(mainStatusBarItem);
-        })
-    );
-
-    // Show Output command
+    // Show output console
     context.subscriptions.push(
         vscode.commands.registerCommand('grafo.showOutput', () => {
             logger.show();
         })
     );
 
-    // Clear Output command
+    // Clear output
     context.subscriptions.push(
         vscode.commands.registerCommand('grafo.clearOutput', () => {
             logger.clear();
@@ -582,410 +191,286 @@ function registerCommands(context: vscode.ExtensionContext) {
         })
     );
 
-    // Reload Window command
+    // Go to line (for overridable methods)
     context.subscriptions.push(
-        vscode.commands.registerCommand('grafo.reloadWindow', () => {
-            vscode.commands.executeCommand('workbench.action.reloadWindow');
-        })
-    );
-
-    // Select Version command
-    context.subscriptions.push(
-        vscode.commands.registerCommand('grafo.selectVersion', async () => {
-            const client = getGrafoClient();
-            const config = vscode.workspace.getConfiguration('grafo');
-            const currentVersion = config.get<string>('graphVersion', '');
-
-            // Try to get available versions from the API
-            let versionOptions: vscode.QuickPickItem[] = [
-                {
-                    label: '$(globe) All Versions',
-                    description: 'Query all graph versions',
-                    detail: currentVersion === '' ? '$(check) Currently selected' : undefined,
-                },
-            ];
-
-            // If connected, try to get available projects/versions
-            if (client) {
-                try {
-                    const stats = await client.getStatistics();
-                    if (stats.versions && Array.isArray(stats.versions)) {
-                        for (const version of stats.versions) {
-                            versionOptions.push({
-                                label: `$(tag) ${version}`,
-                                description: `Version ${version}`,
-                                detail: currentVersion === version ? '$(check) Currently selected' : undefined,
-                            });
-                        }
-                    }
-                } catch {
-                    // API doesn't provide versions, that's ok
-                }
+        vscode.commands.registerCommand('grafo.goToLine', (lineNumber: number) => {
+            const editor = vscode.window.activeTextEditor;
+            if (editor && lineNumber > 0) {
+                const position = new vscode.Position(lineNumber - 1, 0);
+                const range = new vscode.Range(position, position);
+                editor.selection = new vscode.Selection(position, position);
+                editor.revealRange(range, vscode.TextEditorRevealType.InCenter);
             }
-
-            // Add option to enter custom version
-            versionOptions.push({
-                label: '$(edit) Enter Custom Version...',
-                description: 'Manually enter a version string',
-            });
-
-            const selected = await vscode.window.showQuickPick(versionOptions, {
-                placeHolder: `Current version: ${currentVersion || 'all'}`,
-                title: 'Select Graph Version',
-            });
-
-            if (!selected) {
-                return;
-            }
-
-            let newVersion: string;
-
-            if (selected.label === '$(globe) All Versions') {
-                newVersion = '';
-            } else if (selected.label === '$(edit) Enter Custom Version...') {
-                const inputVersion = await vscode.window.showInputBox({
-                    prompt: 'Enter graph version',
-                    placeHolder: 'e.g., 7.10.2, v1.0, latest',
-                    value: currentVersion,
-                });
-
-                if (inputVersion === undefined) {
-                    return;
-                }
-                newVersion = inputVersion;
-            } else {
-                // Extract version from label (remove icon)
-                newVersion = selected.label.replace('$(tag) ', '');
-            }
-
-            // Save the new version
-            await config.update('graphVersion', newVersion, vscode.ConfigurationTarget.Global);
-
-            logger.info(`Graph version changed to: ${newVersion || '(all versions)'}`);
-            vscode.window.showInformationMessage(
-                `Graph version set to: ${newVersion || 'all versions'}`
-            );
         })
     );
 }
 
-async function checkConnection(statusBarItem: vscode.StatusBarItem): Promise<void> {
-    const client = getGrafoClient();
-    const config = getConfig();
-
-    logger.info('Checking connection...');
-
+async function checkConnection() {
+    const client = getClient();
     if (!client) {
-        logger.error('API client not configured');
-        statusBarItem.text = '$(error) Grafo: Not configured';
-        statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
-
-        const action = await vscode.window.showErrorMessage(
-            'Grafo: API not configured',
-            'Configure Now'
-        );
-        if (action === 'Configure Now') {
-            vscode.commands.executeCommand('grafo.configureApi');
-        }
+        statusBar.text = '$(error) Grafo: Not configured';
+        statusBar.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
         return;
     }
 
-    statusBarItem.text = '$(sync~spin) Grafo: Connecting...';
-    logger.info(`Connecting to: ${config.apiUrl}`);
+    statusBar.text = '$(sync~spin) Grafo: Connecting...';
 
     try {
         const health = await client.checkHealth();
         if (health.status === 'healthy') {
-            logger.info(`Connection successful: ${health.service} v${health.version}`);
-            statusBarItem.text = '$(check) Grafo: Connected';
-            statusBarItem.tooltip = `Connected to ${config.apiUrl}\nVersion: ${config.graphVersion || 'all'}\nService: ${health.service} v${health.version}\n\nClick to check connection`;
-            statusBarItem.backgroundColor = undefined;
-            vscode.window.showInformationMessage(
-                `Grafo: Connected to ${health.service} v${health.version}`
-            );
+            const config = vscode.workspace.getConfiguration('grafo');
+            const version = config.get<string>('graphVersion', '6.5.0');
+            statusBar.text = `$(check) Grafo [${version}]`;
+            statusBar.backgroundColor = undefined;
+            vscode.window.showInformationMessage(`Grafo: Connected (${health.service})`);
         } else {
-            logger.warn(`Service degraded: MongoDB=${health.mongodb}`);
-            statusBarItem.text = '$(warning) Grafo: Degraded';
-            statusBarItem.tooltip = `Service degraded - MongoDB: ${health.mongodb}`;
-            statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
-            vscode.window.showWarningMessage(`Grafo: Service is degraded - MongoDB: ${health.mongodb}`);
+            statusBar.text = '$(warning) Grafo: Degraded';
+            statusBar.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
         }
-    } catch (error) {
-        logger.error(`Connection failed to ${config.apiUrl}`, error);
-        statusBarItem.text = '$(error) Grafo: Disconnected';
-        statusBarItem.tooltip = `Cannot connect to ${config.apiUrl}\n\nClick to retry`;
-        statusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
-
-        const action = await vscode.window.showErrorMessage(
-            `Grafo: Cannot connect to API at ${config.apiUrl}`,
-            'Configure API',
-            'Retry',
-            'Show Logs'
-        );
-
-        if (action === 'Configure API') {
-            vscode.commands.executeCommand('grafo.configureApi');
-        } else if (action === 'Retry') {
-            checkConnection(statusBarItem);
-        } else if (action === 'Show Logs') {
-            logger.show();
-        }
+    } catch (e) {
+        statusBar.text = '$(error) Grafo: Disconnected';
+        statusBar.backgroundColor = new vscode.ThemeColor('statusBarItem.errorBackground');
+        vscode.window.showErrorMessage('Grafo: Cannot connect to API');
     }
 }
 
-function updateStatusBarText(config: GrafoConfig): void {
-    const versionText = config.graphVersion ? `v${config.graphVersion}` : 'all';
-    mainStatusBarItem.text = `$(graph) Grafo [${versionText}]`;
-    mainStatusBarItem.tooltip = `Grafo Code Explorer\nVersion: ${config.graphVersion || 'all versions'}\nClick to check connection`;
-}
-
-async function autoLoadClassHierarchy(document: vscode.TextDocument): Promise<void> {
-    const client = getGrafoClient();
-    if (!client) {
+function onEditorChange(editor: vscode.TextEditor | undefined) {
+    // If no editor or not a C# file, keep current state (don't clear)
+    // This prevents clearing when clicking on output console, terminal, etc.
+    if (!editor || editor.document.languageId !== 'csharp') {
         return;
     }
 
+    // Only reload if it's a different file
+    if (currentContext?.filePath === editor.document.uri.fsPath) {
+        return;
+    }
+
+    loadContextFromDocument(editor.document);
+}
+
+function onSelectionChange(event: vscode.TextEditorSelectionChangeEvent) {
+    if (event.textEditor.document.languageId !== 'csharp') return;
+
+    // Debounce
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+        loadContextFromSelection(event.textEditor);
+    }, 300);
+}
+
+async function loadContextFromDocument(document: vscode.TextDocument) {
     const text = document.getText();
+    const fileName = document.uri.fsPath.split(/[\\/]/).pop() || '';
 
-    // Find class definition with inheritance
-    // Pattern: class ClassName : BaseClass or class ClassName : IInterface, BaseClass
-    const classMatch = text.match(/class\s+(\w+)\s*(?::\s*([^{\n]+))?/);
+    logger.separator(`File: ${fileName}`);
 
+    // Extract all using statements for namespace resolution
+    const usingStatements: string[] = [];
+    const usingMatches = text.matchAll(/using\s+([\w.]+);/g);
+    for (const match of usingMatches) {
+        usingStatements.push(match[1]);
+    }
+    logger.debug(`Found ${usingStatements.length} using statements`);
+
+    // Extract class info
+    const classMatch = text.match(/class\s+(\w+)(?:\s*:\s*([^{\n]+))?/);
     if (!classMatch) {
-        hierarchyProvider.clear();
+        logger.debug('No class found in file');
+        clearAllProviders();
         return;
     }
 
-    let className = classMatch[1];
+    const className = classMatch[1];
     const inheritance = classMatch[2];
-    let searchNamespace: string | undefined;
 
-    // If class name ends with "Extended", it's a Tailored customization
-    // Search for the base class instead (the one it inherits from)
+    // Check if it's an Extended class (ICBanking pattern)
+    let targetClassName = className;
+    let baseClassFullName: string | undefined;
+    let isExtendedClass = false;
+
     if (className.endsWith('Extended') && inheritance) {
-        const baseClassInfo = extractBaseClassInfo(inheritance);
-        if (baseClassInfo) {
-            logger.info(`Detected Tailored Extended class: ${className} -> searching for base: ${baseClassInfo.fullName}`);
-            className = baseClassInfo.name;
-            searchNamespace = baseClassInfo.namespace;
+        isExtendedClass = true;
+        const baseClass = extractBaseClass(inheritance);
+        if (baseClass) {
+            targetClassName = baseClass.simpleName;
+
+            if (baseClass.fullName.includes('.')) {
+                // Already fully qualified (e.g., Infocorp.Framework.BusinessComponents.Common)
+                baseClassFullName = baseClass.fullName;
+            }
+            // If simple name, we'll resolve using 'using' statements during search
+
+            logger.info(`Extended class detected: ${className} → base: ${baseClass.fullName}`);
         }
+    } else {
+        logger.context('Class', className);
     }
 
-    if (!inheritance && !className.endsWith('Extended')) {
-        // Class without inheritance, clear the view
-        hierarchyProvider.clear();
-        return;
+    // Extract namespace
+    const namespaceMatch = text.match(/namespace\s+([\w.]+)/);
+    const namespace = namespaceMatch?.[1];
+    if (namespace) {
+        logger.context('Namespace', namespace);
     }
 
-    logger.info(`Auto-loading hierarchy for class: ${className}${searchNamespace ? ` in namespace ${searchNamespace}` : ''}`);
+    // Find the class in the graph
+    const client = getClient();
+    if (!client) return;
 
     try {
-        // Pass namespace:className format to loadClass, which will use getCodeContext
-        const classId = searchNamespace ? `${searchNamespace}.${className}` : className;
-        await hierarchyProvider.loadClass(classId);
-    } catch (error) {
-        logger.debug(`Error auto-loading hierarchy: ${error}`);
+        let node: GraphNode | null = null;
+
+        if (baseClassFullName) {
+            // Direct fully qualified name (e.g., Infocorp.Framework.BusinessComponents.Common)
+            logger.debug(`Searching for class: ${baseClassFullName}`);
+            node = await client.findByName(baseClassFullName, 'class');
+        } else if (isExtendedClass && usingStatements.length > 0) {
+            // Simple name with using statements - search all and filter by namespace
+            logger.debug(`Searching for class: ${targetClassName} (will filter by using statements)`);
+            const results = await client.searchNodes(targetClassName, 'class', undefined, 30);
+
+            // Find the one whose namespace matches a using statement
+            for (const candidate of results) {
+                if (candidate.name === targetClassName && candidate.namespace) {
+                    // Check if namespace matches any using statement
+                    const matchingUsing = usingStatements.find(ns =>
+                        candidate.namespace === ns ||
+                        candidate.namespace?.startsWith(ns + '.')
+                    );
+                    if (matchingUsing) {
+                        logger.debug(`Found match: ${candidate.namespace}.${candidate.name} (using: ${matchingUsing})`);
+                        node = candidate;
+                        break;
+                    }
+                }
+            }
+
+            if (!node && results.length > 0) {
+                logger.debug(`No namespace match, using first result`);
+                node = results[0];
+            }
+        } else {
+            // Simple class name without Extended pattern
+            logger.debug(`Searching for class: ${targetClassName}`);
+            node = await client.findByName(targetClassName, 'class');
+        }
+        if (node) {
+            logger.info(`Found in graph: ${node.id}`);
+            logger.widget('ClassOverview', 'Loading', node.name);
+            logger.widget('OverridableMethods', 'Loading', node.name);
+            logger.widget('Graph', 'Loading', node.name);
+
+            currentContext = {
+                filePath: document.uri.fsPath,
+                className: targetClassName,
+                namespace,
+                baseClass: isExtendedClass ? targetClassName : undefined,
+                isExtendedClass,
+                node
+            };
+
+            // Load widgets
+            classOverviewProvider.loadForClass(node);
+            overridableMethodsProvider.loadForClass(node, document);
+            graphViewProvider.loadForNode(node);
+
+            if (node.kind === 'interface') {
+                logger.widget('Implementations', 'Loading', node.name);
+                implementationsProvider.loadForInterface(node);
+            }
+        } else {
+            logger.warn(`Class not found in graph: ${targetClassName}`);
+        }
+    } catch (e: any) {
+        logger.error('Error loading context', e);
     }
 }
 
-/**
- * Extract the base class info from inheritance declaration
- * Handles: "BaseClass", "IInterface, BaseClass", "Namespace.BaseClass"
- * Returns both the simple name and the full qualified name if available
- */
-function extractBaseClassInfo(inheritance: string): { name: string; fullName: string; namespace?: string } | null {
-    // Split by comma to handle multiple inheritance (interfaces + class)
+async function loadContextFromSelection(editor: vscode.TextEditor) {
+    const position = editor.selection.active;
+    const line = editor.document.lineAt(position.line).text;
+
+    // Check if cursor is on a method
+    const methodMatch = line.match(/(?:public|private|protected|internal)\s+(?:static\s+)?(?:override\s+)?(?:virtual\s+)?(?:async\s+)?[\w<>\[\]]+\s+(\w+)\s*\(/);
+
+    if (methodMatch) {
+        const methodName = methodMatch[1];
+        logger.separator(`Method: ${methodName}`);
+
+        const client = getClient();
+        if (!client) return;
+
+        try {
+            const node = await client.findByName(methodName, 'method', currentContext?.className);
+            if (node) {
+                logger.info(`Found method: ${node.id}`);
+                logger.widget('Impact', 'Loading', methodName);
+                logger.widget('Dependencies', 'Loading', methodName);
+                logger.widget('Graph', 'Loading', methodName);
+
+                impactProvider.loadForNode(node);
+                dependenciesProvider.loadForNode(node);
+                graphViewProvider.loadForNode(node);
+            } else {
+                logger.warn(`Method not found in graph: ${methodName}`);
+            }
+        } catch (e: any) {
+            logger.error('Error loading method context', e);
+        }
+        return;
+    }
+
+    // Check if cursor is on an interface reference
+    const wordRange = editor.document.getWordRangeAtPosition(position);
+    if (wordRange) {
+        const word = editor.document.getText(wordRange);
+        if (word.startsWith('I') && word.length > 1 && word[1] === word[1].toUpperCase()) {
+            logger.debug(`Interface detected: ${word}`);
+
+            const client = getClient();
+            if (!client) return;
+
+            try {
+                const node = await client.findByName(word, 'interface');
+                if (node) {
+                    logger.widget('Implementations', 'Loading', word);
+                    implementationsProvider.loadForInterface(node);
+                }
+            } catch (e) {
+                // Ignore
+            }
+        }
+    }
+}
+
+function extractBaseClass(inheritance: string): { fullName: string; simpleName: string } | null {
     const parts = inheritance.split(',').map(p => p.trim());
 
     for (const part of parts) {
+        const simpleName = part.split('.').pop() || part;
         // Skip interfaces (start with I followed by uppercase)
-        const simpleName = part.split('.').pop() || part; // Get last part after dot
         if (simpleName && !simpleName.match(/^I[A-Z]/)) {
-            // Extract namespace if the part has dots
-            const dotIndex = part.lastIndexOf('.');
-            const namespace = dotIndex > 0 ? part.substring(0, dotIndex) : undefined;
-
             return {
-                name: simpleName,
-                fullName: part,
-                namespace: namespace,
+                fullName: part,      // e.g., "Infocorp.Framework.BusinessComponents.Common"
+                simpleName: simpleName // e.g., "Common"
             };
         }
-    }
-
-    // If all parts look like interfaces, return the first one anyway
-    if (parts.length > 0) {
-        const part = parts[0].trim();
-        const simpleName = part.split('.').pop() || part;
-        const dotIndex = part.lastIndexOf('.');
-        const namespace = dotIndex > 0 ? part.substring(0, dotIndex) : undefined;
-
-        return {
-            name: simpleName,
-            fullName: part,
-            namespace: namespace,
-        };
     }
 
     return null;
 }
 
-// Legacy function for backward compatibility
-function extractBaseClassName(inheritance: string): string | null {
-    const info = extractBaseClassInfo(inheritance);
-    return info?.name || null;
-}
-
-function getNodeIcon(type: string): string {
-    switch (type) {
-        case 'Class': return 'symbol-class';
-        case 'Interface': return 'symbol-interface';
-        case 'Method': return 'symbol-method';
-        case 'Property': return 'symbol-property';
-        case 'Field': return 'symbol-field';
-        case 'Enum': return 'symbol-enum';
-        case 'Struct': return 'symbol-struct';
-        default: return 'symbol-misc';
-    }
-}
-
-// Debounce timer for auto-load relations
-let autoLoadRelationsTimer: NodeJS.Timeout | undefined;
-let lastAutoLoadWord: string | undefined;
-
-/**
- * Auto-load relations when user clicks on a class, method, or interface
- * Uses debouncing to avoid too many API calls
- */
-function autoLoadRelationsDebounced(
-    editor: vscode.TextEditor,
-    relationsProvider: RelationsTreeProvider,
-    hierarchyProvider: HierarchyTreeProvider
-): void {
-    // Clear any pending timer
-    if (autoLoadRelationsTimer) {
-        clearTimeout(autoLoadRelationsTimer);
-    }
-
-    // Set a small delay to debounce rapid selection changes
-    autoLoadRelationsTimer = setTimeout(async () => {
-        const position = editor.selection.active;
-        const wordRange = editor.document.getWordRangeAtPosition(position);
-
-        if (!wordRange) {
-            return;
-        }
-
-        const word = editor.document.getText(wordRange);
-        if (!word || word.length < 2) {
-            return;
-        }
-
-        // Skip if same word as last time (user clicked on same identifier)
-        if (word === lastAutoLoadWord) {
-            return;
-        }
-
-        const line = editor.document.lineAt(position.line).text;
-        const text = editor.document.getText();
-
-        // Determine element type from context
-        let elementType: 'class' | 'method' | 'interface' | null = null;
-        let className: string | undefined;
-        let namespace: string | undefined;
-
-        // Check for override method
-        const overrideMethodPattern = new RegExp(`(public|protected|internal)\\s+override\\s+.*${word}\\s*\\(`);
-        if (overrideMethodPattern.test(line)) {
-            elementType = 'method';
-            // Find class and namespace
-            const linesBefore = getLinesBeforePosition(editor.document, position, 50);
-            className = findClassName(linesBefore);
-            namespace = findNamespace(linesBefore);
-            logger.info(`Auto-load: Override method "${word}" in class "${className}"`);
-        }
-
-        // Check for class definition
-        if (!elementType) {
-            const classDefPattern = new RegExp(`class\\s+${word}`);
-            if (classDefPattern.test(line)) {
-                elementType = 'class';
-                namespace = findNamespace(text);
-                logger.info(`Auto-load: Class definition "${word}"`);
-            }
-        }
-
-        // Check for interface definition
-        if (!elementType) {
-            const interfaceDefPattern = new RegExp(`interface\\s+${word}`);
-            if (interfaceDefPattern.test(line)) {
-                elementType = 'interface';
-                namespace = findNamespace(text);
-                logger.info(`Auto-load: Interface definition "${word}"`);
-            }
-        }
-
-        // Check for interface reference in inheritance (e.g., ": IInterface")
-        if (!elementType && word.startsWith('I') && word.length > 1 && word[1] === word[1].toUpperCase()) {
-            const inheritancePattern = new RegExp(`[:\\,]\\s*([\\w\\.]+\\s*,\\s*)*${word}(\\s*,|\\s*\\{|\\s*$|\\s*where)`);
-            if (inheritancePattern.test(line)) {
-                elementType = 'interface';
-                logger.info(`Auto-load: Interface reference "${word}"`);
-            }
-        }
-
-        // Check for base class in inheritance (e.g., ": BaseClass")
-        if (!elementType) {
-            const baseClassPattern = new RegExp(`class\\s+\\w+\\s*:\\s*(${word}|[\\w\\.]+\\.${word})\\s*[,{]?`);
-            if (baseClassPattern.test(line) && !(word.startsWith('I') && word.length > 1 && word[1] === word[1].toUpperCase())) {
-                elementType = 'class';
-                // Try to extract namespace from fully qualified name
-                const fqnMatch = line.match(new RegExp(`([\\w\\.]+)\\.${word}`));
-                namespace = fqnMatch ? fqnMatch[1] : undefined;
-                logger.info(`Auto-load: Base class reference "${word}"`);
-            }
-        }
-
-        // If no element type detected, don't auto-load
-        if (!elementType) {
-            return;
-        }
-
-        lastAutoLoadWord = word;
-
-        // Load relations
-        try {
-            await relationsProvider.loadElement(word, elementType, className, namespace);
-
-            // Also load hierarchy for classes
-            if (elementType === 'class') {
-                const classId = namespace ? `${namespace}.${word}` : word;
-                await hierarchyProvider.loadClass(classId);
-            }
-        } catch (error) {
-            logger.debug(`Auto-load error: ${error}`);
-        }
-    }, 300); // 300ms debounce
-}
-
-function getLinesBeforePosition(document: vscode.TextDocument, position: vscode.Position, maxLines: number): string {
-    const startLine = Math.max(0, position.line - maxLines);
-    const range = new vscode.Range(startLine, 0, position.line, position.character);
-    return document.getText(range);
-}
-
-function findClassName(text: string): string | undefined {
-    const classMatch = text.match(/class\s+(\w+)/);
-    return classMatch?.[1];
-}
-
-function findNamespace(text: string): string | undefined {
-    const namespaceMatch = text.match(/namespace\s+([\w.]+)/);
-    return namespaceMatch?.[1];
+function clearAllProviders() {
+    currentContext = null;
+    impactProvider.clear();
+    dependenciesProvider.clear();
+    classOverviewProvider.clear();
+    overridableMethodsProvider.clear();
+    implementationsProvider.clear();
+    graphViewProvider.clear();
 }
 
 export function deactivate() {
-    disposeGrafoClient();
-    hoverDisposable?.dispose();
-    codeLensDisposable?.dispose();
+    console.log('Grafo Code Explorer deactivated');
 }

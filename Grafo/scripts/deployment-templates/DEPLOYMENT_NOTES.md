@@ -32,7 +32,7 @@ mongo_network=$(docker inspect $mongo_container --format '{{range $k,$v := .Netw
 # Connection details:
 MONGODB_HOST="<container-name>"  # e.g., "mongodb-prod"
 MONGODB_PORT="27017"              # Internal MongoDB port
-MONGODB_CONNECTION_STRING="mongodb://sonata:password@<container-name>:27017/GraphDB?..."
+MONGODB_CONNECTION_STRING="mongodb://user:pass@<container-name>:27017/GraphDB?..."
 
 # Docker Compose:
 services:
@@ -54,7 +54,7 @@ services:
 # Connection details:
 MONGODB_HOST="172.17.0.1"         # Docker gateway IP (auto-detected)
 MONGODB_PORT="28101"              # Host-exposed port
-MONGODB_CONNECTION_STRING="mongodb://sonata:password@172.17.0.1:28101/GraphDB?..."
+MONGODB_CONNECTION_STRING="mongodb://user:pass@172.17.0.1:28101/GraphDB?..."
 
 # Docker Compose:
 services:
@@ -278,7 +278,7 @@ MongoDB:
 
 3. **Test MongoDB connection from host:**
    ```bash
-   mongosh "mongodb://sonata:qwertY.!1982@localhost:28101/GraphDB?authSource=admin&tls=true&tlsAllowInvalidCertificates=true"
+   mongosh "mongodb://user:pass@localhost:28101/GraphDB?authSource=admin&tls=true&tlsAllowInvalidCertificates=true"
    ```
 
 4. **Check container networks:**

@@ -12,7 +12,7 @@ from .config import (
     validate_config, display_config
 )
 from .services import MongoDBService, GraphQueryService, get_mongodb_service
-from .routes import projects, nodes, edges, context, semantic
+from .routes import projects, nodes, edges, context, semantic, graph_traversal
 
 # Configurar logging
 logging.basicConfig(
@@ -91,13 +91,13 @@ def setup_dependencies():
     """Configura las dependencies de FastAPI usando override."""
     # Override the get_graph_service dependency en cada router
     from . import routes
-    
-    # Override para cada router
+
+    # Override para cada router (excepto nodes que usa v2.1 con su propio servicio)
     app.dependency_overrides[routes.projects.get_graph_service] = get_graph_service
-    app.dependency_overrides[routes.nodes.get_graph_service] = get_graph_service
+    # routes.nodes ahora usa NodesQueryService directamente (v2.1)
     app.dependency_overrides[routes.edges.get_graph_service] = get_graph_service
     app.dependency_overrides[routes.context.get_graph_service] = get_graph_service
-    app.dependency_overrides[routes.semantic.get_graph_service] = get_graph_service
+    # routes.semantic ahora usa NodesQueryService directamente (v2.1)
 
 
 # Registrar routers
@@ -106,6 +106,7 @@ app.include_router(nodes.router, prefix="/api")
 app.include_router(edges.router, prefix="/api")
 app.include_router(context.router, prefix="/api")
 app.include_router(semantic.router, prefix="/api")
+app.include_router(graph_traversal.router)  # Graph traversal routes (v2.1)
 
 # Configurar dependencies después de registrar routers
 setup_dependencies()

@@ -1,89 +1,96 @@
+/**
+ * Grafo Logger - Output Channel for debugging
+ */
 import * as vscode from 'vscode';
 
-class Logger {
-    private outputChannel: vscode.OutputChannel;
-    private static instance: Logger;
+class GrafoLogger {
+    private channel: vscode.OutputChannel;
+    private startTime: number = Date.now();
 
-    private constructor() {
-        this.outputChannel = vscode.window.createOutputChannel('Grafo Code Explorer');
+    constructor() {
+        this.channel = vscode.window.createOutputChannel('Grafo Explorer');
     }
 
-    static getInstance(): Logger {
-        if (!Logger.instance) {
-            Logger.instance = new Logger();
-        }
-        return Logger.instance;
-    }
-
-    private getTimestamp(): string {
+    private timestamp(): string {
         const now = new Date();
-        return now.toLocaleTimeString('en-US', { hour12: false });
+        return now.toLocaleTimeString('en-US', { hour12: false }) + '.' +
+               String(now.getMilliseconds()).padStart(3, '0');
     }
 
-    info(message: string, ...args: unknown[]): void {
-        const formattedMessage = this.formatMessage('INFO', message, args);
-        this.outputChannel.appendLine(formattedMessage);
-        console.log(formattedMessage);
+    private elapsed(): string {
+        return `+${Date.now() - this.startTime}ms`;
     }
 
-    warn(message: string, ...args: unknown[]): void {
-        const formattedMessage = this.formatMessage('WARN', message, args);
-        this.outputChannel.appendLine(formattedMessage);
-        console.warn(formattedMessage);
+    show() {
+        this.channel.show();
     }
 
-    error(message: string, error?: unknown, ...args: unknown[]): void {
-        const formattedMessage = this.formatMessage('ERROR', message, args);
-        this.outputChannel.appendLine(formattedMessage);
+    clear() {
+        this.channel.clear();
+        this.startTime = Date.now();
+    }
+
+    // General logging
+    info(message: string) {
+        this.channel.appendLine(`[${this.timestamp()}] INFO  ${message}`);
+    }
+
+    warn(message: string) {
+        this.channel.appendLine(`[${this.timestamp()}] WARN  ${message}`);
+    }
+
+    error(message: string, error?: any) {
+        this.channel.appendLine(`[${this.timestamp()}] ERROR ${message}`);
         if (error) {
-            if (error instanceof Error) {
-                this.outputChannel.appendLine(`  Stack: ${error.stack}`);
-            } else {
-                this.outputChannel.appendLine(`  Details: ${JSON.stringify(error)}`);
-            }
+            this.channel.appendLine(`         ${error.message || error}`);
         }
-        console.error(formattedMessage, error);
     }
 
-    debug(message: string, ...args: unknown[]): void {
-        const formattedMessage = this.formatMessage('DEBUG', message, args);
-        this.outputChannel.appendLine(formattedMessage);
-        console.debug(formattedMessage);
+    debug(message: string) {
+        this.channel.appendLine(`[${this.timestamp()}] DEBUG ${message}`);
     }
 
-    api(method: string, url: string, status?: number, duration?: number): void {
-        const statusText = status ? ` [${status}]` : '';
-        const durationText = duration ? ` (${duration}ms)` : '';
-        const message = `${method} ${url}${statusText}${durationText}`;
-        const formattedMessage = this.formatMessage('API', message, []);
-        this.outputChannel.appendLine(formattedMessage);
+    // API specific logging
+    apiRequest(method: string, url: string) {
+        this.startTime = Date.now();
+        this.channel.appendLine(`[${this.timestamp()}] ► API ${method} ${url}`);
     }
 
-    private formatMessage(level: string, message: string, args: unknown[]): string {
-        const timestamp = this.getTimestamp();
-        let formattedMessage = `[${timestamp}] [${level}] ${message}`;
-
-        if (args.length > 0) {
-            const argsStr = args.map(arg =>
-                typeof arg === 'object' ? JSON.stringify(arg) : String(arg)
-            ).join(' ');
-            formattedMessage += ` ${argsStr}`;
+    apiResponse(status: number, duration: number, resultInfo?: string) {
+        const statusIcon = status >= 200 && status < 300 ? '✓' : '✗';
+        let line = `[${this.timestamp()}] ◄ ${statusIcon} ${status} (${duration}ms)`;
+        if (resultInfo) {
+            line += ` - ${resultInfo}`;
         }
-
-        return formattedMessage;
+        this.channel.appendLine(line);
     }
 
-    show(): void {
-        this.outputChannel.show();
+    apiError(error: any) {
+        this.channel.appendLine(`[${this.timestamp()}] ◄ ✗ ERROR: ${error.message || error}`);
     }
 
-    clear(): void {
-        this.outputChannel.clear();
+    // Widget logging
+    widget(name: string, action: string, details?: string) {
+        let line = `[${this.timestamp()}] [${name}] ${action}`;
+        if (details) {
+            line += ` - ${details}`;
+        }
+        this.channel.appendLine(line);
     }
 
-    dispose(): void {
-        this.outputChannel.dispose();
+    // Context logging
+    context(type: string, value: string) {
+        this.channel.appendLine(`[${this.timestamp()}] CONTEXT ${type}: ${value}`);
+    }
+
+    // Separator for clarity
+    separator(title?: string) {
+        if (title) {
+            this.channel.appendLine(`\n${'─'.repeat(20)} ${title} ${'─'.repeat(20)}`);
+        } else {
+            this.channel.appendLine('─'.repeat(50));
+        }
     }
 }
 
-export const logger = Logger.getInstance();
+export const logger = new GrafoLogger();

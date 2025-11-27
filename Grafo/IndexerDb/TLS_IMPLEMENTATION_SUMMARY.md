@@ -132,7 +132,7 @@ ls ../Certs/prod/client.pem
 
 # 2. Configurar .env solo con connection string (con tls=true)
 cat > .env << 'EOF'
-MongoDB__ConnectionString=mongodb://sonata:qwertY.!1982@207.244.249.22:28101/GraphDB?authSource=admin&tls=true&tlsAllowInvalidCertificates=true&tlsAllowInvalidHostnames=true
+MongoDB__ConnectionString=mongodb://user:pass@207.244.249.22:28101/GraphDB?authSource=admin&tls=true&tlsAllowInvalidCertificates=true&tlsAllowInvalidHostnames=true
 MongoDB__DatabaseName=GraphDB
 EOF
 

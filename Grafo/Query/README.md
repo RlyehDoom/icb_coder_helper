@@ -390,7 +390,7 @@ Para desplegar en producción con MongoDB remoto y TLS:
 2. **Configura las variables de entorno en `.env.production`:**
    ```bash
    # MongoDB - PRODUCCIÓN (optimized connection string)
-   MONGODB_CONNECTION_STRING=mongodb://sonata:qwertY.!1982@207.244.249.22:28101/GraphDB?authSource=admin&tls=true&tlsAllowInvalidCertificates=true&tlsAllowInvalidHostnames=true
+   MONGODB_CONNECTION_STRING=mongodb://user:pass@207.244.249.22:28101/GraphDB?authSource=admin&tls=true&tlsAllowInvalidCertificates=true&tlsAllowInvalidHostnames=true
    MONGODB_DATABASE=GraphDB
    MONGODB_PROJECTS_COLLECTION=projects
 

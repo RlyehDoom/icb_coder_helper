@@ -43,6 +43,19 @@ namespace RoslynIndexer.Configuration
 
         [Option("progress", Required = false, Default = false, HelpText = "Show progress indicator")]
         public bool ShowProgress { get; set; }
+
+        // MongoDB Direct Export Options (v2.1)
+        [Option("output-mongodb", Required = false, Default = false, HelpText = "Export directly to MongoDB instead of files")]
+        public bool OutputMongoDB { get; set; }
+
+        [Option("mongodb-connection", Required = false, HelpText = "MongoDB connection string (default: mongodb://localhost:27019/)")]
+        public string? MongoDbConnection { get; set; }
+
+        [Option("mongodb-database", Required = false, Default = "GraphDB", HelpText = "MongoDB database name")]
+        public string MongoDbDatabase { get; set; } = "GraphDB";
+
+        [Option("mongodb-clean", Required = false, Default = false, HelpText = "Delete existing data for this solution before importing")]
+        public bool MongoDbClean { get; set; }
     }
 
     public class BatchConfiguration

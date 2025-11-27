@@ -200,21 +200,33 @@ export class QueryHandler {
   }
 
   async restart() {
-    displayProgressStart('Reiniciando Query Service');
+    await this.init();
+
+    displayProgressStart('Reiniciando Query Service (stop → build → run)');
 
     try {
-      const result = await this.systemUtils.execute('docker-compose', ['-f', this.dockerComposePath, '-p', this.projectName, 'restart', this.serviceName], {
-        cwd: process.cwd()
-      });
+      // 1. Stop
+      displayInfo('Deteniendo servicio...');
+      await this.stop();
 
-      if (result.success) {
-        displayProgressEnd('Query Service reiniciado exitosamente');
-        displaySuccess(`✓ Servicio disponible en: http://localhost:${this.port}`);
-        return true;
-      } else {
-        displayProgressEnd('Error al reiniciar Query Service', false);
+      // 2. Build
+      displayInfo('Reconstruyendo imagen...');
+      const buildSuccess = await this.build();
+      if (!buildSuccess) {
+        displayProgressEnd('Error al reconstruir Query Service', false);
         return false;
       }
+
+      // 3. Run
+      displayInfo('Iniciando servicio...');
+      const runSuccess = await this.run({ detached: true });
+      if (!runSuccess) {
+        displayProgressEnd('Error al iniciar Query Service', false);
+        return false;
+      }
+
+      displayProgressEnd('Query Service reiniciado exitosamente');
+      return true;
     } catch (error) {
       displayError(`Error al reiniciar el servicio: ${error.error || error.message}`);
       return false;

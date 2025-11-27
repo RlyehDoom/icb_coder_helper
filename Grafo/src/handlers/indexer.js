@@ -468,21 +468,23 @@ export class IndexerHandler {
     await this.init();
 
     let solutionPath;
+    let isInteractiveMode = false;
 
     // Check if solution is provided or needs auto-discovery
     if (options.solution) {
       solutionPath = path.resolve(options.solution);
-      
+
       if (!(await this.systemUtils.exists(solutionPath))) {
         displayError(`Archivo de solución no encontrado: ${solutionPath}`);
         return false;
       }
-      
+
       displayInfo(`Usando solución especificada: ${solutionPath}`);
     } else {
-      // Auto-discover solution
+      // Auto-discover solution (interactive mode)
+      isInteractiveMode = true;
       displayInfo('No se especificó solución, buscando automáticamente...');
-      
+
       solutionPath = await this.autoDiscoverSolution();
       if (!solutionPath) {
         displayError('No se pudo encontrar una solución para analizar');
@@ -569,23 +571,56 @@ export class IndexerHandler {
         args.push('--output-format', options.format);
       }
 
+      // MongoDB Direct Export (v2.1)
+      if (options.outputMongodb) {
+        args.push('--output-mongodb');
+        displayInfo('🗄️  Modo MongoDB Direct Export habilitado');
+
+        if (options.mongodbConnection) {
+          args.push('--mongodb-connection', options.mongodbConnection);
+          displayInfo(`   Connection: ${options.mongodbConnection}`);
+        }
+
+        if (options.mongodbDatabase) {
+          args.push('--mongodb-database', options.mongodbDatabase);
+          displayInfo(`   Database: ${options.mongodbDatabase}`);
+        }
+
+        if (options.mongodbClean) {
+          args.push('--mongodb-clean');
+          displayWarning('   ⚠️ Se limpiará la data existente de esta solución');
+        }
+      }
+
       const result = await this.systemUtils.execute('dotnet', args, {
         cwd: this.indexerDir
       });
 
       if (result.success) {
         displayProgressEnd('Análisis completado exitosamente');
-        displaySuccess(`Resultados guardados en: ${outputDir}`);
 
-        // Mostrar archivos generados
-        const outputInfo = await this.systemUtils.getDirectoryInfo(outputDir);
-        if (outputInfo.exists && outputInfo.fileCount > 0) {
-          displayInfo('Archivos generados:');
-          outputInfo.files.forEach(file => {
-            console.log(`  📄 ${file}`);
-          });
+        if (options.outputMongodb) {
+          // MongoDB export success message
+          displaySuccess(`Datos exportados a MongoDB: ${options.mongodbDatabase || 'GraphDB'}`);
+          console.log('');
+          displayInfo('📊 Para consultar los datos:');
+          console.log('   • REST API: GET /api/graph/statistics');
+          console.log('   • MCP Tools: find_callers, find_callees, find_inheritance_chain');
+          console.log('   • MongoDB Shell: grafo mongodb shell');
+        } else {
+          // File export success message
+          displaySuccess(`Resultados guardados en: ${outputDir}`);
+
+          // Mostrar archivos generados
+          const outputInfo = await this.systemUtils.getDirectoryInfo(outputDir);
+          if (outputInfo.exists && outputInfo.fileCount > 0) {
+            displayInfo('Archivos generados:');
+            outputInfo.files.forEach(file => {
+              console.log(`  📄 ${file}`);
+            });
+          }
         }
-        
+
         return true;
       } else {
         displayProgressEnd('Error durante el análisis', false);

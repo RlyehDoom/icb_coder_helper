@@ -286,12 +286,22 @@ export class MCPHandler {
   }
 
   /**
-   * Reinicia el MCP Server
+   * Reinicia el MCP Server (stop → build → start)
    */
   async restart() {
-    console.log(chalk.blue('\n🔄 Reiniciando MCP Server\n'));
+    console.log(chalk.blue('\n🔄 Reiniciando MCP Server (stop → build → start)\n'));
+
+    // 1. Stop
+    console.log(chalk.gray('  Deteniendo servicio...'));
     await this.stop();
     await this.systemUtils.wait(2000);
+
+    // 2. Build
+    console.log(chalk.gray('  Reconstruyendo imagen...'));
+    await this.build();
+
+    // 3. Start
+    console.log(chalk.gray('  Iniciando servicio...'));
     await this.start();
   }
 

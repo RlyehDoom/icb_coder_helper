@@ -282,7 +282,7 @@ namespace RoslynIndexer.Walkers
             {
                 var symbolInfo = _semanticModel.GetSymbolInfo(node);
                 var methodSymbol = symbolInfo.Symbol as IMethodSymbol;
-                
+
                 if (methodSymbol != null)
                 {
                     // Skip system methods unless verbose
@@ -303,12 +303,40 @@ namespace RoslynIndexer.Walkers
                             IsAbstract = methodSymbol.IsAbstract,
                             IsOverride = methodSymbol.IsOverride
                         };
-                        
+
+                        // Detect interface method calls (for Unity/DI indirect call tracking)
+                        // This enables tracking calls through dependency injection
+                        if (methodSymbol.ContainingType?.TypeKind == TypeKind.Interface)
+                        {
+                            invocationInfo.IsInterfaceCall = true;
+                            invocationInfo.InterfaceType = GetFullyQualifiedName(methodSymbol.ContainingType);
+                            invocationInfo.InterfaceMethod = methodSymbol.Name;
+                        }
+                        // Also check if calling a method that's an explicit interface implementation
+                        else if (methodSymbol.ExplicitInterfaceImplementations.Length > 0)
+                        {
+                            var interfaceMethod = methodSymbol.ExplicitInterfaceImplementations[0];
+                            invocationInfo.IsInterfaceCall = true;
+                            invocationInfo.InterfaceType = GetFullyQualifiedName(interfaceMethod.ContainingType);
+                            invocationInfo.InterfaceMethod = interfaceMethod.Name;
+                        }
+                        // Check if the receiver type is an interface (field/parameter declared as interface)
+                        else if (node.Expression is MemberAccessExpressionSyntax memberAccess)
+                        {
+                            var receiverTypeInfo = _semanticModel.GetTypeInfo(memberAccess.Expression);
+                            if (receiverTypeInfo.Type?.TypeKind == TypeKind.Interface)
+                            {
+                                invocationInfo.IsInterfaceCall = true;
+                                invocationInfo.InterfaceType = GetFullyQualifiedName(receiverTypeInfo.Type);
+                                invocationInfo.InterfaceMethod = methodSymbol.Name;
+                            }
+                        }
+
                         MethodInvocations.Add(invocationInfo);
                     }
                 }
             }
-            
+
             base.VisitInvocationExpression(node);
         }
 

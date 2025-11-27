@@ -1,0 +1,186 @@
+{
+	"info": {
+		"_postman_id": "grafo-api-v21",
+		"name": "Grafo API v2.1",
+		"description": "API tests for Grafo Query Service v2.1.\n\nBase URL: http://localhost:8081\nRoutes: /api/v1/... (nodes) and /api/graph/... (traversal)",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+	},
+	"variable": [
+		{"key": "baseUrl", "value": "http://localhost:8081", "type": "string"},
+		{"key": "version", "value": "6.5.0", "type": "string"}
+	],
+	"item": [
+		{
+			"name": "Health & Info",
+			"item": [
+				{
+					"name": "Health Check",
+					"event": [{"listen": "test", "script": {"exec": [
+						"pm.test('Status 200', () => pm.response.to.have.status(200));",
+						"pm.test('Status healthy', () => pm.expect(pm.response.json().status).to.eql('healthy'));",
+						"pm.test('MongoDB connected', () => pm.expect(pm.response.json().mongodb).to.eql('connected'));"
+					], "type": "text/javascript"}}],
+					"request": {"method": "GET", "url": "{{baseUrl}}/health"}
+				},
+				{
+					"name": "List Versions",
+					"event": [{"listen": "test", "script": {"exec": [
+						"pm.test('Status 200', () => pm.response.to.have.status(200));",
+						"pm.test('Has versions', () => pm.expect(pm.response.json().versions).to.be.an('array'));",
+						"var json = pm.response.json();",
+						"if (json.versions && json.versions.length > 0) {",
+						"    pm.collectionVariables.set('version', json.versions[0]);",
+						"}"
+					], "type": "text/javascript"}}],
+					"request": {"method": "GET", "url": "{{baseUrl}}/api/v1/versions"}
+				},
+				{
+					"name": "Version Stats",
+					"event": [{"listen": "test", "script": {"exec": [
+						"pm.test('Status 200', () => pm.response.to.have.status(200));",
+						"pm.test('Has totalNodes', () => pm.expect(pm.response.json().totalNodes).to.be.a('number'));"
+					], "type": "text/javascript"}}],
+					"request": {"method": "GET", "url": "{{baseUrl}}/api/v1/versions/{{version}}/stats"}
+				}
+			]
+		},
+		{
+			"name": "Node Search",
+			"item": [
+				{
+					"name": "Search by Name",
+					"event": [{"listen": "test", "script": {"exec": [
+						"pm.test('Status 200', () => pm.response.to.have.status(200));",
+						"pm.test('Has results', () => pm.expect(pm.response.json().results).to.be.an('array'));",
+						"var json = pm.response.json();",
+						"if (json.results && json.results.length > 0) {",
+						"    pm.collectionVariables.set('nodeId', json.results[0].id);",
+						"}"
+					], "type": "text/javascript"}}],
+					"request": {"method": "GET", "url": "{{baseUrl}}/api/v1/nodes/{{version}}/search?q=Communication&limit=10"}
+				},
+				{
+					"name": "Search Methods",
+					"event": [{"listen": "test", "script": {"exec": [
+						"pm.test('Status 200', () => pm.response.to.have.status(200));",
+						"var json = pm.response.json();",
+						"if (json.results && json.results.length > 0) {",
+						"    pm.collectionVariables.set('methodId', json.results[0].id);",
+						"    pm.test('All methods', () => json.results.forEach(n => pm.expect(n.kind).to.eql('method')));",
+						"}"
+					], "type": "text/javascript"}}],
+					"request": {"method": "GET", "url": "{{baseUrl}}/api/v1/nodes/{{version}}/search?q=Insert&type=method&limit=10"}
+				},
+				{
+					"name": "Search Classes",
+					"event": [{"listen": "test", "script": {"exec": [
+						"pm.test('Status 200', () => pm.response.to.have.status(200));",
+						"var json = pm.response.json();",
+						"if (json.results && json.results.length > 0) {",
+						"    pm.collectionVariables.set('classId', json.results[0].id);",
+						"    pm.test('All classes', () => json.results.forEach(n => pm.expect(n.kind).to.eql('class')));",
+						"}"
+					], "type": "text/javascript"}}],
+					"request": {"method": "GET", "url": "{{baseUrl}}/api/v1/nodes/{{version}}/search?q=Service&type=class&limit=10"}
+				},
+				{
+					"name": "Search Interfaces",
+					"event": [{"listen": "test", "script": {"exec": [
+						"pm.test('Status 200', () => pm.response.to.have.status(200));",
+						"var json = pm.response.json();",
+						"if (json.results && json.results.length > 0) {",
+						"    pm.collectionVariables.set('interfaceId', json.results[0].id);",
+						"    pm.test('All interfaces', () => json.results.forEach(n => pm.expect(n.kind).to.eql('interface')));",
+						"}"
+					], "type": "text/javascript"}}],
+					"request": {"method": "GET", "url": "{{baseUrl}}/api/v1/nodes/{{version}}/search?q=IService&type=interface&limit=10"}
+				},
+				{
+					"name": "Get Node by ID",
+					"event": [{"listen": "test", "script": {"exec": [
+						"pm.test('Status 200', () => pm.response.to.have.status(200));",
+						"pm.test('Has id', () => pm.expect(pm.response.json().id).to.be.a('string'));"
+					], "type": "text/javascript"}}],
+					"request": {"method": "GET", "url": "{{baseUrl}}/api/v1/nodes/{{version}}/id/{{nodeId}}"}
+				}
+			]
+		},
+		{
+			"name": "Graph Traversal",
+			"item": [
+				{
+					"name": "Find Callers",
+					"event": [{"listen": "test", "script": {"exec": [
+						"pm.test('Status 200 or 404', () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));",
+						"if (pm.response.code === 200) {",
+						"    pm.test('Has callers', () => pm.expect(pm.response.json().callers).to.be.an('array'));",
+						"}"
+					], "type": "text/javascript"}}],
+					"request": {"method": "GET", "url": "{{baseUrl}}/api/v1/graph/{{version}}/callers/{{methodId}}?max_depth=3"}
+				},
+				{
+					"name": "Find Callees",
+					"event": [{"listen": "test", "script": {"exec": [
+						"pm.test('Status 200 or 404', () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));",
+						"if (pm.response.code === 200) {",
+						"    pm.test('Has callees', () => pm.expect(pm.response.json().callees).to.be.an('array'));",
+						"}"
+					], "type": "text/javascript"}}],
+					"request": {"method": "GET", "url": "{{baseUrl}}/api/v1/graph/{{version}}/callees/{{methodId}}?max_depth=3"}
+				},
+				{
+					"name": "Find Implementations",
+					"event": [{"listen": "test", "script": {"exec": [
+						"pm.test('Status 200 or 404', () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));",
+						"if (pm.response.code === 200) {",
+						"    pm.test('Has implementations', () => pm.expect(pm.response.json().implementations).to.be.an('array'));",
+						"}"
+					], "type": "text/javascript"}}],
+					"request": {"method": "GET", "url": "{{baseUrl}}/api/v1/graph/{{version}}/implementations/{{interfaceId}}"}
+				},
+				{
+					"name": "Find Inheritance",
+					"event": [{"listen": "test", "script": {"exec": [
+						"pm.test('Status 200 or 404', () => pm.expect(pm.response.code).to.be.oneOf([200, 404]));",
+						"if (pm.response.code === 200) {",
+						"    pm.test('Has ancestors', () => pm.expect(pm.response.json().ancestors).to.be.an('array'));",
+						"}"
+					], "type": "text/javascript"}}],
+					"request": {"method": "GET", "url": "{{baseUrl}}/api/v1/graph/{{version}}/inheritance/{{classId}}"}
+				}
+			]
+		},
+		{
+			"name": "Statistics",
+			"item": [
+				{
+					"name": "Get Stats",
+					"event": [{"listen": "test", "script": {"exec": [
+						"pm.test('Status 200', () => pm.response.to.have.status(200));",
+						"pm.test('Has totalNodes', () => pm.expect(pm.response.json().totalNodes).to.be.a('number'));"
+					], "type": "text/javascript"}}],
+					"request": {"method": "GET", "url": "{{baseUrl}}/api/v1/stats/{{version}}"}
+				}
+			]
+		},
+		{
+			"name": "Error Cases",
+			"item": [
+				{
+					"name": "Invalid Version",
+					"event": [{"listen": "test", "script": {"exec": [
+						"pm.test('Status 404', () => pm.response.to.have.status(404));"
+					], "type": "text/javascript"}}],
+					"request": {"method": "GET", "url": "{{baseUrl}}/api/v1/nodes/99.99.99/search?q=test"}
+				},
+				{
+					"name": "Node Not Found",
+					"event": [{"listen": "test", "script": {"exec": [
+						"pm.test('Status 404', () => pm.response.to.have.status(404));"
+					], "type": "text/javascript"}}],
+					"request": {"method": "GET", "url": "{{baseUrl}}/api/v1/nodes/{{version}}/id/grafo:class/NonExistent"}
+				}
+			]
+		}
+	]
+}

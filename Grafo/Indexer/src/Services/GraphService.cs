@@ -149,6 +149,16 @@ namespace RoslynIndexer.Services
                 Console.WriteLine($"Created {implementationEdges.Count} interface implementation relationships");
             }
 
+            // Step 12: Create Indirect Call relationships (Unity/DI pattern)
+            // This connects interface method calls to their possible implementations
+            if (methodInvocations != null && methodInvocations.Any() &&
+                interfaceImplementations != null && interfaceImplementations.Any())
+            {
+                var indirectCallEdges = CreateIndirectCallRelationships(methodInvocations, interfaceImplementations, symbols);
+                edges.AddRange(indirectCallEdges);
+                Console.WriteLine($"Created {indirectCallEdges.Count} indirect call relationships (CallsVia + IndirectCall)");
+            }
+
             graph.Nodes = nodes;
             graph.Edges = edges;
             graph.Clusters = clusters;
@@ -164,90 +174,6 @@ namespace RoslynIndexer.Services
 
             Console.WriteLine($"Generated architectural graph: {nodes.Count} nodes, {edges.Count} edges, {clusters.Count} clusters");
             return graph;
-        }
-
-        public GraphResult GenerateStructuralOnlyGraph(GraphResult fullGraph)
-        {
-            Console.WriteLine("Generating structural-only graph (Root/Layer/Project/File only)...");
-            
-            var structuralGraph = new GraphResult
-            {
-                Metadata = new GraphMetadata
-                {
-                    GeneratedAt = fullGraph.Metadata.GeneratedAt,
-                    SolutionPath = fullGraph.Metadata.SolutionPath,
-                    ToolVersion = fullGraph.Metadata.ToolVersion
-                }
-            };
-
-            var nodes = new List<GraphNode>();
-            var edges = new List<GraphEdge>();
-            var clusters = new List<GraphCluster>();
-            var nodeIds = new HashSet<string>();
-
-            // Step 1: Include only structural node types
-            var allowedTypes = new HashSet<string> { "Solution", "Layer", "Project", "File" };
-            
-            foreach (var node in fullGraph.Nodes)
-            {
-                if (allowedTypes.Contains(node.Type))
-                {
-                    nodes.Add(node);
-                    nodeIds.Add(node.Id);
-                }
-            }
-
-            // Step 2: Include only edges between structural nodes
-            foreach (var edge in fullGraph.Edges)
-            {
-                if (nodeIds.Contains(edge.Source) && nodeIds.Contains(edge.Target))
-                {
-                    edges.Add(edge);
-                }
-            }
-
-            // Step 3: Include clusters that contain structural nodes
-            foreach (var cluster in fullGraph.Clusters)
-            {
-                // Check if cluster contains any of our structural nodes
-                if (cluster.Nodes?.Any(clusterNodeId => nodeIds.Contains(clusterNodeId)) == true)
-                {
-                    // Create a new cluster with only structural nodes
-                    var structuralClusterNodes = cluster.Nodes.Where(nodeIds.Contains).ToList();
-                    if (structuralClusterNodes.Any())
-                    {
-                        clusters.Add(new GraphCluster
-                        {
-                            Id = cluster.Id,
-                            Name = cluster.Name,
-                            Type = cluster.Type,
-                            Nodes = structuralClusterNodes,
-                            Attributes = cluster.Attributes
-                        });
-                    }
-                }
-            }
-
-            structuralGraph.Nodes = nodes;
-            structuralGraph.Edges = edges;
-            structuralGraph.Clusters = clusters;
-            structuralGraph.Statistics = new GraphStatistics
-            {
-                TotalNodes = nodes.Count,
-                TotalEdges = edges.Count,
-                TotalClusters = clusters.Count,
-                ComponentCount = nodes.Count(n => n.Type == "File"),
-                LayerCount = nodes.Count(n => n.Type == "Layer"),
-                ProjectCount = nodes.Count(n => n.Type == "Project")
-            };
-
-            Console.WriteLine($"Generated structural graph: {nodes.Count} nodes, {edges.Count} edges, {clusters.Count} clusters");
-            Console.WriteLine($"  Solution: {nodes.Count(n => n.Type == "Solution")}");
-            Console.WriteLine($"  Layers: {nodes.Count(n => n.Type == "Layer")}");
-            Console.WriteLine($"  Projects: {nodes.Count(n => n.Type == "Project")}");
-            Console.WriteLine($"  Files: {nodes.Count(n => n.Type == "File")}");
-            
-            return structuralGraph;
         }
 
         private GraphNode CreateSolutionNode(string solutionPath, string repositoryRoot)
@@ -578,11 +504,35 @@ namespace RoslynIndexer.Services
                                     Weight = 0.8
                                 }
                             });
+
+                            // Class/Interface hasMember relationship for Method/Property/Field
+                            // This enables direct lookup of methods by their parent class
+                            // Using "hasMember" to distinguish from physical "contains" (file->component)
+                            if ((symbol.Type == "Method" || symbol.Type == "Property" || symbol.Type == "Field") &&
+                                !string.IsNullOrEmpty(componentNode.ContainingType))
+                            {
+                                var containingTypeId = $"component:{componentNode.ContainingType}";
+                                edges.Add(new GraphEdge
+                                {
+                                    Id = $"hasMember-{componentNode.Id}",
+                                    Source = containingTypeId,  // Class has member Method
+                                    Target = componentNode.Id,
+                                    Relationship = "hasMember",
+                                    Strength = 1.0,
+                                    Count = 1,
+                                    Attributes = new GraphEdgeAttributes
+                                    {
+                                        Style = "solid",
+                                        Color = "#6366F1",
+                                        Weight = 1.0
+                                    }
+                                });
+                            }
                         }
                     }
                 }
             }
-            
+
             return (nodes, edges);
         }
 
@@ -1390,6 +1340,137 @@ namespace RoslynIndexer.Services
                 });
             }
 
+            return edges;
+        }
+
+        /// <summary>
+        /// Creates indirect call relationship edges for interface method calls (Unity/DI pattern).
+        /// Generates two types of edges:
+        /// 1. "CallsVia" - Shows the call goes through an interface (caller → interface method)
+        /// 2. "IndirectCall" - Shows the actual implementation that could be called (caller → implementation method)
+        /// </summary>
+        private List<GraphEdge> CreateIndirectCallRelationships(
+            List<MethodInvocationInfo> methodInvocations,
+            List<ImplementationInfo> implementations,
+            List<SymbolInfo> symbols)
+        {
+            var edges = new List<GraphEdge>();
+            var processedEdges = new HashSet<string>();
+
+            Console.WriteLine("Creating indirect call relationships for interface/Unity patterns...");
+
+            // Build lookup for interface implementations
+            // Key: InterfaceType, Value: List of implementing types
+            var implementationsByInterface = implementations
+                .GroupBy(i => i.InterfaceType)
+                .ToDictionary(g => g.Key, g => g.Select(i => i.ImplementingType).Distinct().ToList());
+
+            // Build method lookup by containing type
+            // Key: ContainingType, Value: List of methods
+            var methodsByType = symbols
+                .Where(s => s.Type == "Method" && !string.IsNullOrEmpty(s.ContainingType))
+                .GroupBy(s => s.ContainingType!)
+                .ToDictionary(g => g.Key, g => g.ToList());
+
+            // Build symbol lookup for quick access
+            var symbolLookup = symbols
+                .GroupBy(s => s.FullName)
+                .ToDictionary(g => g.Key, g => g.First());
+
+            // Filter only interface calls
+            var interfaceCalls = methodInvocations.Where(m => m.IsInterfaceCall && !string.IsNullOrEmpty(m.InterfaceType)).ToList();
+            Console.WriteLine($"  Found {interfaceCalls.Count} interface method calls to process");
+
+            int callsViaCount = 0;
+            int indirectCallCount = 0;
+
+            foreach (var call in interfaceCalls)
+            {
+                var sourceId = !string.IsNullOrEmpty(call.CallerMethod)
+                    ? $"component:{call.CallerMethod}"
+                    : $"component:{call.CallerType}";
+
+                // 1. Create "CallsVia" edge (caller → interface)
+                // This shows that the call goes through an interface abstraction
+                var interfaceTargetId = $"component:{call.InterfaceType}";
+                var callsViaEdgeKey = $"callsvia:{sourceId}->{interfaceTargetId}";
+
+                if (!processedEdges.Contains(callsViaEdgeKey))
+                {
+                    processedEdges.Add(callsViaEdgeKey);
+                    edges.Add(new GraphEdge
+                    {
+                        Id = $"callsvia-{Guid.NewGuid().ToString().Substring(0, 8)}",
+                        Source = sourceId,
+                        Target = interfaceTargetId,
+                        Relationship = "CallsVia",
+                        Strength = 0.75,
+                        Count = 1,
+                        Attributes = new GraphEdgeAttributes
+                        {
+                            Style = "dashed",
+                            Color = "#F59E0B", // Orange - indicates interface abstraction
+                            Weight = 0.9
+                        }
+                    });
+                    callsViaCount++;
+                }
+
+                // 2. Create "IndirectCall" edges to each possible implementation
+                // This shows all the concrete implementations that could be called at runtime
+                if (implementationsByInterface.TryGetValue(call.InterfaceType!, out var implementingTypes))
+                {
+                    foreach (var implementingType in implementingTypes)
+                    {
+                        // Try to find the specific method in the implementing class
+                        string targetMethodFullName = "";
+
+                        if (!string.IsNullOrEmpty(call.InterfaceMethod) &&
+                            methodsByType.TryGetValue(implementingType, out var typeMethods))
+                        {
+                            // Find the method with the same name in the implementing type
+                            var matchingMethod = typeMethods.FirstOrDefault(m =>
+                                m.Name == call.InterfaceMethod ||
+                                m.Name.EndsWith("." + call.InterfaceMethod)); // Handle explicit implementations
+
+                            if (matchingMethod != null)
+                            {
+                                targetMethodFullName = matchingMethod.FullName;
+                            }
+                        }
+
+                        // If we found the specific method, link to it; otherwise link to the class
+                        var implementationTargetId = !string.IsNullOrEmpty(targetMethodFullName)
+                            ? $"component:{targetMethodFullName}"
+                            : $"component:{implementingType}";
+
+                        var indirectEdgeKey = $"indirect:{sourceId}->{implementationTargetId}";
+
+                        if (!processedEdges.Contains(indirectEdgeKey))
+                        {
+                            processedEdges.Add(indirectEdgeKey);
+                            edges.Add(new GraphEdge
+                            {
+                                Id = $"indirect-{Guid.NewGuid().ToString().Substring(0, 8)}",
+                                Source = sourceId,
+                                Target = implementationTargetId,
+                                Relationship = "IndirectCall",
+                                Strength = 0.6,
+                                Count = 1,
+                                Attributes = new GraphEdgeAttributes
+                                {
+                                    Style = "dotted",
+                                    Color = "#8B5CF6", // Purple - indicates possible runtime call
+                                    Weight = 0.7
+                                }
+                            });
+                            indirectCallCount++;
+                        }
+                    }
+                }
+            }
+
+            Console.WriteLine($"  Created {callsViaCount} CallsVia edges and {indirectCallCount} IndirectCall edges");
             return edges;
         }
     }

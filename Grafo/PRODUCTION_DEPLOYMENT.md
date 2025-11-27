@@ -153,7 +153,7 @@ El archivo `.env.prod` contiene las credenciales y configuración productiva:
 
 ```bash
 # MongoDB - PRODUCCIÓN (optimized connection string)
-MONGODB_CONNECTION_STRING=mongodb://sonata:qwertY.!1982@207.244.249.22:28101/GraphDB?authSource=admin&tls=true&tlsAllowInvalidCertificates=true&tlsAllowInvalidHostnames=true
+MONGODB_CONNECTION_STRING=mongodb://user:pass@207.244.249.22:28101/GraphDB?authSource=admin&tls=true&tlsAllowInvalidCertificates=true&tlsAllowInvalidHostnames=true
 MONGODB_DATABASE=GraphDB
 MONGODB_TLS_CERT_FILE=/app/certs/client.pem
 
@@ -209,7 +209,7 @@ El archivo `IndexerDb/appsettings.Production.json` contiene la configuración pr
 ```json
 {
   "MongoDB": {
-    "ConnectionString": "mongodb://sonata:qwertY.!1982@207.244.249.22:28101/GraphDB?authSource=admin&tls=true&tlsAllowInvalidCertificates=true&tlsAllowInvalidHostnames=true",
+    "ConnectionString": "mongodb://user:pass@207.244.249.22:28101/GraphDB?authSource=admin&tls=true&tlsAllowInvalidCertificates=true&tlsAllowInvalidHostnames=true",
     "DatabaseName": "GraphDB",
     "CollectionName": "projects",
     "TlsCertificateFile": "../Certs/prod/client.pem",
@@ -517,7 +517,7 @@ docker volume rm mongodb-certs
    openssl s_client -connect 207.244.249.22:28101 -cert Certs/prod/client.pem
 
    # O con mongosh
-   mongosh "mongodb://sonata:qwertY.!1982@207.244.249.22:28101/?tls=true" \
+   mongosh "mongodb://user:pass@207.244.249.22:28101/?tls=true" \
      --tlsCertificateKeyFile Certs/prod/client.pem
    ```
 

@@ -91,6 +91,10 @@ program
   .option('--format <format>', 'Formato de salida (json, xml)', 'json')
   .option('--filter-types <types>', 'Filtrar tipos de símbolos (separados por coma)')
   .option('--exclude-projects <regex>', 'Excluir proyectos que coincidan con regex')
+  .option('--output-mongodb', 'Exportar directamente a MongoDB (v2.1)')
+  .option('--mongodb-connection <string>', 'Connection string de MongoDB', 'mongodb://localhost:27019/')
+  .option('--mongodb-database <name>', 'Nombre de base de datos MongoDB', 'GraphDB')
+  .option('--mongodb-clean', 'Limpiar datos existentes de la solución antes de importar')
   .action(async (action, options) => {
     displayBanner('GRAFO - Indexer');
     
@@ -125,6 +129,32 @@ program
         console.log('  list-solutions - Lista todas las soluciones disponibles en Grafo/Repo/Cloned/');
         console.log('  run      - Ejecuta el indexer con opciones interactivas');
         console.log('  status   - Muestra el estado del indexer');
+        console.log('');
+        console.log(chalk.yellow('Opciones para analyze:'));
+        console.log('  -s, --solution <path>        - Ruta al archivo .sln');
+        console.log('  -o, --output <path>          - Directorio de salida');
+        console.log('  -v, --verbose                - Salida detallada');
+        console.log('  --filter-types <types>       - Filtrar tipos de símbolos');
+        console.log('  --exclude-projects <regex>   - Excluir proyectos por regex');
+        console.log('');
+        console.log(chalk.cyan('🗄️  MongoDB Direct Export (v2.1):'));
+        console.log('  --output-mongodb             - Exportar directamente a MongoDB');
+        console.log('  --mongodb-connection <str>   - Connection string (default: mongodb://localhost:27019/)');
+        console.log('  --mongodb-database <name>    - Database name (default: GraphDB)');
+        console.log('  --mongodb-clean              - Limpiar datos existentes antes de importar');
+        console.log('');
+        console.log(chalk.yellow('Ejemplos:'));
+        console.log(chalk.gray('  # Análisis con selección interactiva'));
+        console.log(chalk.gray('  grafo indexer analyze'));
+        console.log('');
+        console.log(chalk.gray('  # Análisis directo a archivo'));
+        console.log(chalk.gray('  grafo indexer analyze -s ./MySolution.sln'));
+        console.log('');
+        console.log(chalk.gray('  # Exportar directamente a MongoDB'));
+        console.log(chalk.gray('  grafo indexer analyze -s ./MySolution.sln --output-mongodb'));
+        console.log('');
+        console.log(chalk.gray('  # MongoDB con limpieza previa'));
+        console.log(chalk.gray('  grafo indexer analyze -s ./MySolution.sln --output-mongodb --mongodb-clean'));
     }
   });
 
@@ -138,6 +168,8 @@ program
   .option('-i, --interactive', 'Modo query interactivo')
   .option('-p, --production', 'Ejecutar en modo PRODUCCIÓN (MongoDB remoto con TLS)')
   .option('-v, --version <version>', 'Versión del grafo (ej: 1.0.0, 7.8.0, 7.9.2)')
+  .option('-n, --export-nodes', 'Exportar a colección nodes (v2.1 para graph traversal)')
+  .option('--clean-nodes', 'Limpiar nodos existentes antes de exportar')
   .action(async (action, options) => {
     displayBanner('GRAFO - IndexerDb');
 
@@ -150,13 +182,15 @@ program
         break;
       case 'run':
         // Si hay opciones de línea de comandos, ejecutar directamente
-        if (options.file || options.all || options.production !== undefined || options.version) {
+        if (options.file || options.all || options.production !== undefined || options.version || options.exportNodes) {
           await indexerDbHandler.run({
             file: options.file,
             noInteractive: options.all,
             interactive: options.interactive,
             production: options.production,
-            version: options.version
+            version: options.version,
+            exportNodes: options.exportNodes,
+            cleanNodes: options.cleanNodes
           });
         } else {
           // Modo interactivo con selección de ambiente
@@ -184,6 +218,10 @@ program
         console.log('  -p, --production      - Ejecutar en modo PRODUCCIÓN');
         console.log('  -v, --version <ver>   - Versión del grafo (ej: 1.0.0, 7.8.0)');
         console.log('');
+        console.log(chalk.cyan('🗄️  Export Nodes (v2.1):'));
+        console.log('  -n, --export-nodes    - Exportar a colección nodes (para graph traversal)');
+        console.log('  --clean-nodes         - Limpiar nodos existentes antes de exportar');
+        console.log('');
         console.log(chalk.yellow('Ejemplos:'));
         console.log(chalk.gray('  # Modo interactivo (seleccionar ambiente y modo)'));
         console.log(chalk.gray('  grafo indexerdb run'));
@@ -199,6 +237,12 @@ program
         console.log('');
         console.log(chalk.gray('  # Production: modo query interactivo'));
         console.log(chalk.gray('  grafo indexerdb run --interactive --production'));
+        console.log('');
+        console.log(chalk.gray('  # Procesar y exportar a nodes collection (v2.1)'));
+        console.log(chalk.gray('  grafo indexerdb run --all --export-nodes'));
+        console.log('');
+        console.log(chalk.gray('  # Export nodes con limpieza previa'));
+        console.log(chalk.gray('  grafo indexerdb run --all --export-nodes --clean-nodes'));
         console.log('');
         console.log(chalk.gray('  # Gestión de versiones en la base de datos'));
         console.log(chalk.gray('  grafo mongodb shell'));
