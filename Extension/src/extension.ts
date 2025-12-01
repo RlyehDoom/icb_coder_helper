@@ -118,8 +118,9 @@ export async function activate(context: vscode.ExtensionContext) {
     // Check if first run (version not configured)
     const isFirstRun = !context.globalState.get<boolean>('grafo.initialized');
 
-    if (isFirstRun || !version) {
-        logger.info('First run detected - requesting version selection...');
+    // Only prompt for version if not already configured in settings
+    if (!version) {
+        logger.info('No version configured - requesting version selection...');
         const selectedVersion = await promptInitialVersionSelection(context, apiUrl);
         if (selectedVersion) {
             version = selectedVersion;
@@ -128,6 +129,9 @@ export async function activate(context: vscode.ExtensionContext) {
             vscode.window.showWarningMessage('Grafo: No version selected. Please configure version in settings.');
             version = '6.5.0';
         }
+    } else if (isFirstRun) {
+        // Version already configured, just mark as initialized
+        await context.globalState.update('grafo.initialized', true);
     }
 
     logger.info(`Config: API=${apiUrl}, Version=${version}`);

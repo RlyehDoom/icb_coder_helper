@@ -44,10 +44,10 @@ Sidebar panels:
 
 ```bash
 # VS Code
-code --install-extension dist/grafo-code-explorer-0.1.0.vsix
+code --install-extension dist/grafo-code-explorer-0.2.0.vsix
 
 # Cursor
-cursor --install-extension dist/grafo-code-explorer-0.1.0.vsix
+cursor.cmd --install-extension dist/grafo-code-explorer-0.2.0.vsix
 ```
 
 ### Build from Source

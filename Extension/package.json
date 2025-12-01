@@ -29,7 +29,14 @@
     "cytoscape"
   ],
   "activationEvents": [
-    "onLanguage:csharp"
+    "onStartupFinished",
+    "onLanguage:csharp",
+    "onView:grafo.graphView",
+    "onView:grafo.impactView",
+    "onView:grafo.dependenciesView",
+    "onView:grafo.classOverviewView",
+    "onView:grafo.overridableMethodsView",
+    "onView:grafo.implementationsView"
   ],
   "main": "./out/extension.js",
   "contributes": {
