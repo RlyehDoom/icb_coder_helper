@@ -39,35 +39,70 @@ CERT_PATH="./Certs/prod/client.pem"
 ENV_FILE=".env.production"
 
 # MongoDB Production Configuration
-# Detect MongoDB container and its network
-detect_mongodb_config() {
-  # Try to find MongoDB container listening on port 28101
-  local mongo_container=$(docker ps --filter "publish=28101" --format "{{.Names}}" 2>/dev/null | head -n 1)
+MONGODB_HOST="207.244.249.22"
+MONGODB_PORT="28101"
+MONGODB_DATABASE="GraphDB"
+MONGODB_PROJECTS_COLLECTION="projects"
+MONGODB_USER=""
+MONGODB_PASS=""
+MONGODB_CONNECTION_STRING=""
 
-  if [ -n "$mongo_container" ]; then
-    # Found MongoDB container, get its network
-    local mongo_network=$(docker inspect "$mongo_container" --format '{{range $k,$v := .NetworkSettings.Networks}}{{$k}}{{end}}' 2>/dev/null | head -n 1)
+# Redis Configuration
+REDIS_HOST="207.244.249.22"
+REDIS_PORT="6380"
+REDIS_PASSWORD=""
 
-    if [ -n "$mongo_network" ]; then
-      echo "$mongo_container|$mongo_network"
-      return 0
+# Function to prompt for credentials
+prompt_credentials() {
+  echo ""
+  echo -e "${CYAN}╔══════════════════════════════════════════╗${NC}"
+  echo -e "${CYAN}║     MongoDB Credentials Configuration    ║${NC}"
+  echo -e "${CYAN}╚══════════════════════════════════════════╝${NC}"
+  echo ""
+
+  # Check if .env.production exists and has credentials
+  if [ -f "$ENV_FILE" ]; then
+    local existing_conn=$(grep "^MONGODB_CONNECTION_STRING=" "$ENV_FILE" 2>/dev/null | cut -d'=' -f2-)
+    if [ -n "$existing_conn" ] && [[ ! "$existing_conn" =~ "user:pass" ]]; then
+      echo -e "${GREEN}✓ Found existing credentials in $ENV_FILE${NC}"
+      echo ""
+      read -p "Use existing credentials? (Y/n): " use_existing
+      if [[ "$use_existing" != "n" && "$use_existing" != "N" ]]; then
+        MONGODB_CONNECTION_STRING="$existing_conn"
+        return 0
+      fi
     fi
   fi
 
-  # Fallback: no MongoDB container found
-  echo "|"
-  return 1
-}
+  echo -e "${YELLOW}Enter MongoDB credentials for production:${NC}"
+  echo ""
 
-# These will be set after detecting MongoDB
-MONGODB_HOST=""
-MONGODB_PORT=""
-MONGODB_CONTAINER=""
-MONGODB_NETWORK=""
-USE_MONGO_NETWORK=false
-MONGODB_CONNECTION_STRING=""
-MONGODB_DATABASE="GraphDB"
-MONGODB_PROJECTS_COLLECTION="projects"
+  read -p "MongoDB Username: " MONGODB_USER
+
+  # Read password without echo
+  read -s -p "MongoDB Password: " MONGODB_PASS
+  echo ""
+
+  if [ -z "$MONGODB_USER" ] || [ -z "$MONGODB_PASS" ]; then
+    print_error "Username and password are required"
+    exit 1
+  fi
+
+  # URL encode special characters in password
+  MONGODB_PASS_ENCODED=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$MONGODB_PASS', safe=''))" 2>/dev/null || echo "$MONGODB_PASS")
+
+  # Build connection string
+  MONGODB_CONNECTION_STRING="mongodb://${MONGODB_USER}:${MONGODB_PASS_ENCODED}@${MONGODB_HOST}:${MONGODB_PORT}/GraphDB?authSource=admin&tls=true&tlsInsecure=true"
+
+  echo ""
+  echo -e "${GREEN}✓ Credentials configured${NC}"
+
+  # Ask for Redis password (optional)
+  echo ""
+  echo -e "${CYAN}Redis Cache Configuration (optional):${NC}"
+  read -s -p "Redis Password (press Enter for none): " REDIS_PASSWORD
+  echo ""
+}
 
 # Parse arguments
 SKIP_PULL=false
@@ -134,24 +169,20 @@ check_command() {
 # Main Script
 print_header
 
+# Prompt for credentials
+prompt_credentials
+
 # MongoDB configuration - use external IP with TLS certificate (like Compass)
+echo ""
 echo -e "${BLUE}🔧 Configuración MongoDB con TLS${NC}"
 
-# Use external IP (as Compass does) with TLS certificate
-MONGODB_HOST="207.244.249.22"
-MONGODB_PORT="28101"
 MONGODB_TLS_CERT="/app/certs/client.pem"
 
 echo -e "${GREEN}  ✓ Host: ${MONGODB_HOST}${NC}"
 echo -e "${GREEN}  ✓ Puerto: ${MONGODB_PORT}${NC}"
 echo -e "${GREEN}  ✓ Certificado TLS: ${MONGODB_TLS_CERT}${NC}"
 echo -e "${YELLOW}  ℹ Usando IP externa + certificado TLS (como Compass)${NC}"
-echo -e "${YELLOW}  ℹ Python usa tlsInsecure=true + certificado${NC}"
 echo ""
-
-# Python (pymongo/motor) requiere tlsInsecure=true + certificado
-# El certificado se pasa como variable de entorno MONGODB_TLS_CERTIFICATE_KEY_FILE
-MONGODB_CONNECTION_STRING="mongodb://user:pass@${MONGODB_HOST}:${MONGODB_PORT}/GraphDB?authSource=admin&tls=true&tlsInsecure=true"
 
 echo ""
 echo -e "${YELLOW}📦 Deployment de Grafo Production usando Docker Hub${NC}"
@@ -163,11 +194,16 @@ echo ""
 echo "Puertos:"
 echo "  - Query Service: 9081"
 echo "  - MCP Server: 9083"
+echo "  - Redis Cache: $REDIS_PORT"
 echo ""
 echo "MongoDB:"
 echo "  - Host: ${MONGODB_HOST}:${MONGODB_PORT}"
 echo "  - Modo: network_mode: host (acceso directo)"
 echo "  - Database: $MONGODB_DATABASE"
+echo ""
+echo "Redis Cache:"
+echo "  - Host: $REDIS_HOST:$REDIS_PORT"
+echo "  - TTL: 86400s (24 horas)"
 echo ""
 
 # Step 1: Verificar requisitos
@@ -239,6 +275,11 @@ fi
 print_step "Paso 4/8: Creando archivo de configuración de producción..."
 
 cat > "$ENV_FILE" <<EOF
+# ============================================
+# Grafo Production Environment Configuration
+# Generated: $(date)
+# ============================================
+
 # MongoDB Production Configuration
 MONGODB_CONNECTION_STRING=$MONGODB_CONNECTION_STRING
 MONGODB_DATABASE=$MONGODB_DATABASE
@@ -248,6 +289,14 @@ MONGODB_STATES_COLLECTION=processing_states
 # TLS Configuration
 MONGODB_TLS_CERTIFICATE_KEY_FILE=/app/certs/client.pem
 MONGODB_TLS_INSECURE=true
+
+# Redis Cache Configuration
+REDIS_HOST=$REDIS_HOST
+REDIS_PORT=$REDIS_PORT
+REDIS_DB=0
+REDIS_PASSWORD=$REDIS_PASSWORD
+ENABLE_CACHE=true
+CACHE_TTL=86400
 
 # Server Configuration
 SERVER_HOST=0.0.0.0
@@ -260,10 +309,6 @@ CORS_ORIGINS=*
 # Authentication
 QUERY_API_KEY=
 ENABLE_AUTH=false
-
-# Cache
-ENABLE_CACHE=true
-CACHE_TTL=300
 
 # Logging
 LOG_LEVEL=INFO
@@ -282,46 +327,104 @@ print_success "Archivo de configuración creado: $ENV_FILE"
 # Step 5: Crear docker-compose.dockerhub.yml
 print_step "Paso 5/8: Creando docker-compose para Docker Hub..."
 
-# Generate simple docker-compose with network_mode: host
-cat > "$COMPOSE_FILE" <<'EOF'
+# Build Redis command with optional password
+REDIS_CMD="redis-server --appendonly yes --port ${REDIS_PORT}"
+if [ -n "$REDIS_PASSWORD" ]; then
+  REDIS_CMD="$REDIS_CMD --requirepass ${REDIS_PASSWORD}"
+fi
+
+# Generate docker-compose with Redis
+cat > "$COMPOSE_FILE" <<EOF
 # Docker Compose para Producción - Imágenes de Docker Hub
 # Stack: grafo-prod-dockerhub
-# Servicios: Query Service (9081), MCP Server (9083)
-# MongoDB: Acceso directo vía localhost:28101 (network_mode: host)
+# Servicios: Redis (${REDIS_PORT}), Query Service (9081), MCP Server (9083)
+# MongoDB: Acceso directo vía ${MONGODB_HOST}:${MONGODB_PORT} (network_mode: host)
+# Generated: $(date)
 
 version: '3.8'
 
 services:
   # ========================
+  # Redis Cache - PRODUCCIÓN
+  # ========================
+  redis:
+    image: redis:7-alpine
+    container_name: grafo-redis-prod
+    network_mode: host
+
+    command: ${REDIS_CMD}
+
+    # Log rotation
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "3"
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "-p", "${REDIS_PORT}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    labels:
+      - "com.grafo.service=redis"
+      - "com.grafo.version=7"
+      - "com.grafo.environment=production"
+      - "com.grafo.description=Redis cache for Grafo API - PRODUCTION"
+
+  # ========================
   # Query Service (REST API) - PRODUCCIÓN
   # ========================
   query-service:
-    image: ${DOCKER_REPO_QUERY}:${DOCKER_TAG}
+    image: \${DOCKER_REPO_QUERY}:\${DOCKER_TAG}
     container_name: grafo-query-service-prod-dh
     network_mode: host
 
+    depends_on:
+      redis:
+        condition: service_healthy
+
+    # Log rotation
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
     environment:
       # MongoDB Configuration - PRODUCCIÓN
-      - MONGODB_CONNECTION_STRING=${MONGODB_CONNECTION_STRING}
-      - MONGODB_DATABASE=${MONGODB_DATABASE}
-      - MONGODB_PROJECTS_COLLECTION=${MONGODB_PROJECTS_COLLECTION}
+      - MONGODB_CONNECTION_STRING=\${MONGODB_CONNECTION_STRING}
+      - MONGODB_DATABASE=\${MONGODB_DATABASE}
+      - MONGODB_PROJECTS_COLLECTION=\${MONGODB_PROJECTS_COLLECTION}
 
       # TLS Configuration
-      - MONGODB_TLS_CERTIFICATE_KEY_FILE=${MONGODB_TLS_CERTIFICATE_KEY_FILE}
-      - MONGODB_TLS_INSECURE=${MONGODB_TLS_INSECURE}
+      - MONGODB_TLS_CERTIFICATE_KEY_FILE=\${MONGODB_TLS_CERTIFICATE_KEY_FILE}
+      - MONGODB_TLS_INSECURE=\${MONGODB_TLS_INSECURE}
+
+      # Redis Cache Configuration
+      - REDIS_HOST=\${REDIS_HOST}
+      - REDIS_PORT=\${REDIS_PORT}
+      - REDIS_DB=\${REDIS_DB}
+      - REDIS_PASSWORD=\${REDIS_PASSWORD}
+      - ENABLE_CACHE=\${ENABLE_CACHE}
+      - CACHE_TTL=\${CACHE_TTL}
 
       # Server Configuration
-      - SERVER_HOST=${SERVER_HOST}
-      - SERVER_PORT=${SERVER_PORT}
+      - SERVER_HOST=\${SERVER_HOST}
+      - SERVER_PORT=\${SERVER_PORT}
 
       # Logging - PRODUCCIÓN
-      - LOG_LEVEL=${LOG_LEVEL}
+      - LOG_LEVEL=\${LOG_LEVEL}
 
       # CORS
-      - CORS_ORIGINS=${CORS_ORIGINS}
+      - CORS_ORIGINS=\${CORS_ORIGINS}
 
       # Environment
-      - ENVIRONMENT=${ENVIRONMENT}
+      - ENVIRONMENT=\${ENVIRONMENT}
 
     volumes:
       # Montar certificados MongoDB desde directorio compartido
@@ -340,35 +443,52 @@ services:
   # MCP Server (Model Context Protocol) - PRODUCCIÓN
   # ========================
   mcp-server:
-    image: ${DOCKER_REPO_MCP}:${DOCKER_TAG}
+    image: \${DOCKER_REPO_MCP}:\${DOCKER_TAG}
     container_name: grafo-mcp-server-prod-dh
     network_mode: host
 
+    depends_on:
+      redis:
+        condition: service_healthy
+
+    # Log rotation
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
     environment:
       # MongoDB Configuration - PRODUCCIÓN
-      - MONGODB_CONNECTION_STRING=${MONGODB_CONNECTION_STRING}
-      - MONGODB_DATABASE=${MONGODB_DATABASE}
-      - MONGODB_PROJECTS_COLLECTION=${MONGODB_PROJECTS_COLLECTION}
+      - MONGODB_CONNECTION_STRING=\${MONGODB_CONNECTION_STRING}
+      - MONGODB_DATABASE=\${MONGODB_DATABASE}
+      - MONGODB_PROJECTS_COLLECTION=\${MONGODB_PROJECTS_COLLECTION}
 
       # TLS Configuration
-      - MONGODB_TLS_CERTIFICATE_KEY_FILE=${MONGODB_TLS_CERTIFICATE_KEY_FILE}
-      - MONGODB_TLS_INSECURE=${MONGODB_TLS_INSECURE}
+      - MONGODB_TLS_CERTIFICATE_KEY_FILE=\${MONGODB_TLS_CERTIFICATE_KEY_FILE}
+      - MONGODB_TLS_INSECURE=\${MONGODB_TLS_INSECURE}
+
+      # Redis Cache Configuration
+      - REDIS_HOST=\${REDIS_HOST}
+      - REDIS_PORT=\${REDIS_PORT}
+      - REDIS_DB=\${REDIS_DB}
+      - REDIS_PASSWORD=\${REDIS_PASSWORD}
+      - ENABLE_CACHE=\${ENABLE_CACHE}
+      - CACHE_TTL=\${CACHE_TTL}
 
       # Server Configuration
       # IMPORTANTE: Con network_mode: host, este puerto se expone directamente en el host
-      # Nginx está configurado para hacer proxy a localhost:9083
-      # Nota: Puerto 8082 está tomado en el servidor de producción
       - SERVER_PORT=9083
 
       # Logging - PRODUCCIÓN
-      - LOG_LEVEL=${LOG_LEVEL}
+      - LOG_LEVEL=\${LOG_LEVEL}
 
       # Python
       - PYTHONUNBUFFERED=1
       - PYTHONPATH=/app
 
       # Environment
-      - ENVIRONMENT=${ENVIRONMENT}
+      - ENVIRONMENT=\${ENVIRONMENT}
 
     volumes:
       # Montar certificados MongoDB desde directorio compartido
@@ -402,6 +522,7 @@ $DOCKER_COMPOSE -f "$COMPOSE_FILE" --env-file "$ENV_FILE" down 2>/dev/null || tr
 $DOCKER_COMPOSE -f docker-compose.prod.yml --env-file .env.prod down 2>/dev/null || true
 
 # Verificar y eliminar contenedores específicos si aún existen
+CONTAINER_REDIS="grafo-redis-prod"
 CONTAINER_QUERY="grafo-query-service-prod-dh"
 CONTAINER_MCP="grafo-mcp-server-prod-dh"
 
@@ -416,6 +537,7 @@ remove_container_if_exists() {
 }
 
 # Eliminar contenedores si existen
+remove_container_if_exists "$CONTAINER_REDIS"
 remove_container_if_exists "$CONTAINER_QUERY"
 remove_container_if_exists "$CONTAINER_MCP"
 
@@ -439,6 +561,19 @@ sleep 5
 
 # Step 8: Verificar servicios
 print_step "Paso 8/8: Verificando servicios..."
+
+# Verificar Redis
+echo -n "Redis Cache ($REDIS_HOST:$REDIS_PORT): "
+if redis-cli -h $REDIS_HOST -p $REDIS_PORT ping > /dev/null 2>&1; then
+  print_success "OK"
+else
+  # Try with docker exec as fallback
+  if docker exec grafo-redis-prod redis-cli -p $REDIS_PORT ping > /dev/null 2>&1; then
+    print_success "OK (via container)"
+  else
+    print_warning "No responde (puede tardar unos segundos más)"
+  fi
+fi
 
 # Verificar Query Service
 echo -n "Query Service (9081): "
@@ -470,8 +605,10 @@ echo -e "${GREEN}║                                                        ║$
 echo -e "${GREEN}╚════════════════════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "${CYAN}📡 Servicios disponibles:${NC}"
+echo "  • Redis Cache: $REDIS_HOST:$REDIS_PORT"
 echo "  • Query Service (REST API): http://localhost:9081"
 echo "  • Query Service Docs: http://localhost:9081/docs"
+echo "  • Cache Stats: http://localhost:9081/cache/stats"
 echo "  • MCP Server (SSE): http://localhost:9083/sse"
 echo "  • MCP Server Health: http://localhost:9083/health"
 echo ""

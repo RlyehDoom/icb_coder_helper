@@ -38,13 +38,13 @@
       "properties": {
         "grafo.apiUrl": {
           "type": "string",
-          "default": "http://localhost:8081",
+          "default": "https://joseluisyr.com/api/grafo/query",
           "description": "Grafo Query Service API URL"
         },
         "grafo.graphVersion": {
           "type": "string",
-          "default": "6.5.0",
-          "description": "Graph version (e.g., 6.5.0)"
+          "default": "",
+          "description": "Graph version (e.g., 7.10.2) - Required for API queries"
         },
         "grafo.maxDepth": {
           "type": "number",
@@ -62,6 +62,11 @@
       {
         "command": "grafo.checkConnection",
         "title": "Grafo: Check Connection"
+      },
+      {
+        "command": "grafo.showMenu",
+        "title": "Grafo: Show Menu",
+        "icon": "$(menu)"
       },
       {
         "command": "grafo.configureApiUrl",

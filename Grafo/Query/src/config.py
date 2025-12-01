@@ -30,9 +30,13 @@ CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
 API_KEY = os.getenv("QUERY_API_KEY", "")
 ENABLE_AUTH = os.getenv("ENABLE_AUTH", "false").lower() == "true"
 
-# Configuración de caché
+# Configuración de Redis Cache
+REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+REDIS_DB = int(os.getenv("REDIS_DB", "0"))
+REDIS_PASSWORD = os.getenv("REDIS_PASSWORD", "") or None
 ENABLE_CACHE = os.getenv("ENABLE_CACHE", "true").lower() == "true"
-CACHE_TTL = int(os.getenv("CACHE_TTL", "300"))  # 5 minutos por defecto
+CACHE_TTL = int(os.getenv("CACHE_TTL", "86400"))  # 24 horas por defecto
 
 # Logging
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
@@ -63,6 +67,18 @@ def get_mongodb_config() -> dict:
     }
 
 
+def get_redis_config() -> dict:
+    """Retorna configuración de Redis como diccionario."""
+    return {
+        "host": REDIS_HOST,
+        "port": REDIS_PORT,
+        "db": REDIS_DB,
+        "password": REDIS_PASSWORD,
+        "enabled": ENABLE_CACHE,
+        "ttl": CACHE_TTL
+    }
+
+
 def display_config():
     """Muestra la configuración actual (sin datos sensibles)."""
     print("🔧 Configuración del servicio Query:")
@@ -70,7 +86,7 @@ def display_config():
     print(f"   📦 Projects Collection: {MONGODB_PROJECTS_COLLECTION}")
     print(f"   🌐 Server: {SERVER_HOST}:{SERVER_PORT}")
     print(f"   🔐 Auth enabled: {ENABLE_AUTH}")
-    print(f"   💾 Cache enabled: {ENABLE_CACHE} (TTL: {CACHE_TTL}s)")
+    print(f"   💾 Redis Cache: {REDIS_HOST}:{REDIS_PORT} (enabled: {ENABLE_CACHE}, TTL: {CACHE_TTL}s)")
     print(f"   📝 Log level: {LOG_LEVEL}")
     if GRAFO_DEFAULT_VERSION:
         print(f"   🏷️  Default Graph Version: {GRAFO_DEFAULT_VERSION}")

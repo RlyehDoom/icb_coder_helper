@@ -90,7 +90,8 @@ export class GrafoClient {
     async checkHealth(): Promise<HealthResponse> {
         logger.separator('Health Check');
         const { data } = await this.client.get<HealthResponse>('/health');
-        logger.info(`MongoDB: ${data.mongodb}, Status: ${data.status}`);
+        const redisInfo = data.redis ? `, Redis: ${data.redis}` : '';
+        logger.info(`MongoDB: ${data.mongodb}${redisInfo}, Status: ${data.status}`);
         return data;
     }
 

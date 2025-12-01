@@ -1,6 +1,6 @@
 # Docker Compose Unificado para Grafo Stack
 # Stack: grafo
-# Servicios: MongoDB (27019), Query Service (8081), MCP Server
+# Servicios: MongoDB (27019), Redis (6379), Query Service (8081), MCP Server
 
 services:
   # ========================
@@ -41,6 +41,37 @@ services:
       - "com.grafo.description=MongoDB database for Grafo system"
 
   # ========================
+  # Redis Cache
+  # ========================
+  redis:
+    image: redis:7-alpine
+    container_name: grafo-redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+
+    command: redis-server --appendonly yes
+
+    volumes:
+      - grafo-redis-data:/data
+
+    networks:
+      - grafo-network
+
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+    labels:
+      - "com.grafo.service=redis"
+      - "com.grafo.version=7"
+      - "com.grafo.description=Redis cache for Grafo API"
+
+  # ========================
   # Query Service (REST API)
   # ========================
   query-service:
@@ -51,6 +82,13 @@ services:
     ports:
       - "${QUERY_SERVER_PORT:-8081}:${QUERY_SERVER_PORT:-8081}"
 
+    # Log rotation: limpia logs al llegar a 100MB
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
     # Docker Compose carga automáticamente .env de la misma carpeta
 
     environment:
@@ -58,6 +96,14 @@ services:
       - MONGODB_CONNECTION_STRING=mongodb://mongodb:27019/
       - MONGODB_DATABASE=GraphDB
       - MONGODB_PROJECTS_COLLECTION=projects
+
+      # Redis Cache Configuration
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - REDIS_PASSWORD=
+      - ENABLE_CACHE=${ENABLE_CACHE:-true}
+      - CACHE_TTL=${CACHE_TTL:-86400}
 
       # Server Configuration
       - SERVER_HOST=0.0.0.0
@@ -74,6 +120,8 @@ services:
 
     depends_on:
       mongodb:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
     restart: unless-stopped
@@ -94,6 +142,13 @@ services:
     ports:
       - "${MCP_SERVER_PORT:-8082}:${MCP_SERVER_PORT:-8082}"
 
+    # Log rotation: limpia logs al llegar a 100MB
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
     # Docker Compose carga automáticamente .env de la misma carpeta
 
     environment:
@@ -101,6 +156,14 @@ services:
       - MONGODB_CONNECTION_STRING=mongodb://mongodb:27019/
       - MONGODB_DATABASE=GraphDB
       - MONGODB_PROJECTS_COLLECTION=projects
+
+      # Redis Cache Configuration
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - REDIS_PASSWORD=
+      - ENABLE_CACHE=${ENABLE_CACHE:-true}
+      - CACHE_TTL=${CACHE_TTL:-86400}
 
       # Server Configuration
       - SERVER_PORT=${MCP_SERVER_PORT:-8082}
@@ -121,6 +184,8 @@ services:
 
     depends_on:
       mongodb:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
     restart: unless-stopped
@@ -154,4 +219,7 @@ volumes:
     driver: local
   grafo-mongodb-config:
     name: grafo-mongodb-config
+    driver: local
+  grafo-redis-data:
+    name: grafo-redis-data
     driver: local

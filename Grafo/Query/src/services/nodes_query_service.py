@@ -8,6 +8,7 @@ import logging
 import re
 from typing import List, Optional, Dict, Any
 from .mongodb_service import MongoDBService
+from .redis_service import cached
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,7 @@ class NodesQueryService:
     # VERSION MANAGEMENT
     # ============================================================================
 
+    @cached("versions", ttl=3600)  # Cache 1 hour
     async def get_available_versions(self) -> List[str]:
         """Get list of all available graph versions (collections)."""
         try:
@@ -59,6 +61,7 @@ class NodesQueryService:
             logger.error(f"Error getting available versions: {e}")
             return []
 
+    @cached("version_stats")
     async def get_version_statistics(self, version: str) -> Dict[str, Any]:
         """Get statistics for a specific version."""
         try:
@@ -110,6 +113,7 @@ class NodesQueryService:
     # NODE QUERIES
     # ============================================================================
 
+    @cached("search_nodes")
     async def search_nodes(
         self,
         version: str,
@@ -179,6 +183,7 @@ class NodesQueryService:
             logger.error(f"Error searching nodes: {e}")
             return []
 
+    @cached("node_by_id")
     async def get_node_by_id(self, version: str, node_id: str) -> Optional[Dict[str, Any]]:
         """Get a node by its semantic ID."""
         try:
@@ -241,6 +246,7 @@ class NodesQueryService:
     # GRAPH TRAVERSAL WITH $graphLookup (no restrictSearchWithMatch needed)
     # ============================================================================
 
+    @cached("find_callers")
     async def find_callers(
         self,
         version: str,
@@ -320,6 +326,7 @@ class NodesQueryService:
             logger.error(f"Error finding callers for {target_id}: {e}")
             return {"found": False, "error": str(e)}
 
+    @cached("find_callees")
     async def find_callees(
         self,
         version: str,
@@ -395,6 +402,7 @@ class NodesQueryService:
             logger.error(f"Error finding callees for {source_id}: {e}")
             return {"found": False, "error": str(e)}
 
+    @cached("find_implementations")
     async def find_implementations(
         self,
         version: str,
@@ -427,6 +435,7 @@ class NodesQueryService:
             logger.error(f"Error finding implementations for {interface_id}: {e}")
             return {"found": False, "error": str(e)}
 
+    @cached("inheritance_chain")
     async def find_inheritance_chain(
         self,
         version: str,
@@ -503,6 +512,7 @@ class NodesQueryService:
     # STATISTICS
     # ============================================================================
 
+    @cached("statistics")
     async def get_statistics(self, version: str) -> Dict[str, Any]:
         """Get overall statistics for a version."""
         try:
@@ -555,6 +565,7 @@ class NodesQueryService:
     # SEMANTIC STATISTICS (v2.1)
     # ============================================================================
 
+    @cached("semantic_stats")
     async def get_semantic_stats(self, version: str) -> Dict[str, Any]:
         """Get semantic relationship statistics for a version."""
         try:
@@ -618,6 +629,7 @@ class NodesQueryService:
     # IMPACT ANALYSIS
     # ============================================================================
 
+    @cached("analyze_impact")
     async def analyze_impact(
         self,
         version: str,

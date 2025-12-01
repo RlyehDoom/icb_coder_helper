@@ -719,6 +719,49 @@ export class GrafoPanel {
             display: flex;
             flex-direction: column;
         }
+
+        /* Layout menu */
+        .layout-wrapper {
+            position: relative;
+        }
+
+        .layout-menu {
+            display: none;
+            position: absolute;
+            top: 100%;
+            right: 0;
+            margin-top: 4px;
+            background: var(--vscode-menu-background);
+            border: 1px solid var(--vscode-menu-border);
+            border-radius: 4px;
+            padding: 4px 0;
+            min-width: 140px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            z-index: 1000;
+        }
+
+        .layout-menu.show {
+            display: block;
+        }
+
+        .layout-item {
+            padding: 6px 12px;
+            cursor: pointer;
+            font-size: 11px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .layout-item:hover {
+            background: var(--vscode-menu-selectionBackground);
+            color: var(--vscode-menu-selectionForeground);
+        }
+
+        .layout-item.selected::before {
+            content: '✓';
+            margin-right: 4px;
+        }
     </style>
 </head>
 <body>
@@ -745,6 +788,27 @@ export class GrafoPanel {
             <span class="toolbar-version">v${version}</span>
         </div>
         <div class="toolbar-right">
+            <div class="layout-wrapper">
+                <button class="toolbar-btn" id="layoutBtn" onclick="toggleLayoutMenu(event)" title="Change Layout">
+                    <svg viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M3 5v14h18V5H3zm4 2v2H5V7h2zm-2 6v-2h2v2H5zm0 2h2v2H5v-2zm14 2H9v-2h10v2zm0-4H9v-2h10v2zm0-4H9V7h10v2z"/>
+                    </svg>
+                    Layout
+                </button>
+                <div class="layout-menu" id="layoutMenu">
+                    <div class="layout-item selected" data-layout="cose" onclick="selectLayout('cose')">Force Directed</div>
+                    <div class="layout-item" data-layout="breadthfirst" onclick="selectLayout('breadthfirst')">Hierarchical</div>
+                    <div class="layout-item" data-layout="circle" onclick="selectLayout('circle')">Circle</div>
+                    <div class="layout-item" data-layout="concentric" onclick="selectLayout('concentric')">Concentric</div>
+                    <div class="layout-item" data-layout="grid" onclick="selectLayout('grid')">Grid</div>
+                </div>
+            </div>
+            <button class="toolbar-btn" onclick="handleFit()" title="Fit to View">
+                <svg viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M15 3l2.3 2.3-2.89 2.87 1.42 1.42L18.7 6.7 21 9V3h-6zM3 9l2.3-2.3 2.87 2.89 1.42-1.42L6.7 5.3 9 3H3v6zm6 12l-2.3-2.3 2.89-2.87-1.42-1.42L5.3 17.3 3 15v6h6zm12-6l-2.3 2.3-2.87-2.89-1.42 1.42 2.89 2.87L15 21h6v-6z"/>
+                </svg>
+            </button>
+            <div class="toolbar-separator"></div>
             <button class="toolbar-btn" onclick="handleRefresh()" title="Refresh">
                 <svg viewBox="0 0 24 24" fill="currentColor">
                     <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
@@ -847,6 +911,85 @@ export class GrafoPanel {
             inherits: '#ba68c8',
             uses: '#90a4ae'
         };
+
+        // Layout configurations
+        let currentLayout = 'cose';
+        let currentCenterNodeId = null;
+
+        const layoutConfigs = {
+            cose: {
+                name: 'cose',
+                animate: false,
+                nodeRepulsion: 10000,
+                idealEdgeLength: 120,
+                gravity: 0.2
+            },
+            breadthfirst: {
+                name: 'breadthfirst',
+                animate: false,
+                directed: true,
+                spacingFactor: 1.5,
+                avoidOverlap: true
+            },
+            circle: {
+                name: 'circle',
+                animate: false,
+                avoidOverlap: true,
+                spacingFactor: 1.2
+            },
+            concentric: {
+                name: 'concentric',
+                animate: false,
+                minNodeSpacing: 50,
+                concentric: (node) => node.data('isCurrent') ? 10 : 1,
+                levelWidth: () => 2
+            },
+            grid: {
+                name: 'grid',
+                animate: false,
+                avoidOverlap: true,
+                spacingFactor: 1.5
+            }
+        };
+
+        function applyLayout(layoutName) {
+            if (!cy) return;
+            currentLayout = layoutName;
+            const config = layoutConfigs[layoutName] || layoutConfigs.cose;
+            cy.layout(config).run();
+
+            if (currentCenterNodeId) {
+                const centerNode = cy.getElementById(currentCenterNodeId);
+                if (centerNode.length > 0) {
+                    cy.center(centerNode);
+                }
+            }
+
+            // Update menu selection
+            document.querySelectorAll('.layout-item').forEach(item => {
+                item.classList.toggle('selected', item.dataset.layout === layoutName);
+            });
+        }
+
+        function toggleLayoutMenu(e) {
+            e.stopPropagation();
+            const menu = document.getElementById('layoutMenu');
+            menu.classList.toggle('show');
+        }
+
+        function selectLayout(layoutName) {
+            applyLayout(layoutName);
+            document.getElementById('layoutMenu').classList.remove('show');
+        }
+
+        function handleFit() {
+            if (cy) cy.fit(null, 20);
+        }
+
+        // Close menu when clicking outside
+        document.addEventListener('click', () => {
+            document.getElementById('layoutMenu').classList.remove('show');
+        });
 
         let cy = null;
 
@@ -1053,20 +1196,8 @@ export class GrafoPanel {
                         cy.add(message.nodes);
                         cy.add(message.edges);
 
-                        cy.layout({
-                            name: 'cose',
-                            animate: false,
-                            nodeRepulsion: 10000,
-                            idealEdgeLength: 120,
-                            gravity: 0.2
-                        }).run();
-
-                        if (message.centerNodeId) {
-                            const centerNode = cy.getElementById(message.centerNodeId);
-                            if (centerNode.length > 0) {
-                                cy.center(centerNode);
-                            }
-                        }
+                        currentCenterNodeId = message.centerNodeId;
+                        applyLayout(currentLayout);
 
                         document.getElementById('statusRight').textContent =
                             'Nodes: ' + message.nodes.length + ' | Edges: ' + message.edges.length;

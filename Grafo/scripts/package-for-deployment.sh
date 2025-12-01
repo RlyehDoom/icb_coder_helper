@@ -71,18 +71,38 @@ QUICK START:
 2. ./deploy-from-dockerhub.sh
 
 The script will:
+- PROMPT FOR CREDENTIALS (MongoDB user/pass, optional Redis password)
 - Verify Docker and Docker Compose are installed
-- Download images from Docker Hub (rlyehdoom/grafo-query, rlyehdoom/grafo-mcp)
-- Create configuration files
+- Download images from Docker Hub (rlyehdoom/grafo-query, rlyehdoom/grafo-mcp, redis:7-alpine)
+- Create .env.production with your credentials
+- Create docker-compose configuration
 - Start services:
+  * Redis Cache on port 6380
   * Query Service on port 9081
   * MCP Server on port 9083
 - Generate Nginx configuration (grafo-nginx.conf)
+
+CREDENTIAL MANAGEMENT:
+- First run: You'll be prompted to enter MongoDB username and password
+- Subsequent runs: Script will offer to reuse existing credentials from .env.production
+- Credentials are stored ONLY in .env.production (not in compose file)
+- IMPORTANT: Keep .env.production secure and do NOT commit to version control
+
+SERVICES:
+- Redis Cache (6380): Persistent cache for API responses (24h TTL)
+- Query Service (9081): REST API for code graph queries
+- MCP Server (9083): Model Context Protocol server for Cursor integration
 
 IMPORTANT: After deployment, copy the Nginx configuration:
   sudo cp grafo-nginx.conf /etc/nginx/sites-available/grafo.conf
   sudo nginx -t
   sudo systemctl reload nginx
+
+CACHE MANAGEMENT:
+- View cache stats: curl http://localhost:9081/cache/stats
+- List cache keys: curl http://localhost:9081/cache/keys
+- Clear cache: curl -X DELETE http://localhost:9081/cache/clear
+- Clear specific version: curl -X DELETE "http://localhost:9081/cache/clear?version=7.10.2"
 
 TROUBLESHOOTING:
 
@@ -111,7 +131,20 @@ TROUBLESHOOTING:
    - Offer to automatically fix configuration if issues found
    - Reload Nginx after fixing
 
-4. Full troubleshooting guide:
+4. Redis cache issues:
+   # Check Redis container
+   docker logs grafo-redis-prod
+
+   # Test Redis connection
+   redis-cli -h 207.244.249.22 -p 6380 ping
+
+   # Or via container
+   docker exec grafo-redis-prod redis-cli -p 6380 ping
+
+   # Check cache stats
+   curl http://localhost:9081/cache/stats
+
+5. Full troubleshooting guide:
    See MCP_PRODUCTION_TROUBLESHOOTING.md
 
 CURSOR CONFIGURATION:

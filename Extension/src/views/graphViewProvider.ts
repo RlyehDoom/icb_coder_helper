@@ -279,6 +279,62 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
             font-family: var(--vscode-font-family);
             overflow: hidden;
         }
+        #toolbar {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            display: flex;
+            gap: 4px;
+            z-index: 100;
+        }
+        .toolbar-btn {
+            background: var(--vscode-button-secondaryBackground);
+            color: var(--vscode-button-secondaryForeground);
+            border: none;
+            padding: 4px 8px;
+            border-radius: 3px;
+            font-size: 11px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .toolbar-btn:hover {
+            background: var(--vscode-button-secondaryHoverBackground);
+        }
+        .toolbar-btn.active {
+            background: var(--vscode-button-background);
+            color: var(--vscode-button-foreground);
+        }
+        #layout-menu {
+            display: none;
+            position: absolute;
+            top: 100%;
+            right: 0;
+            margin-top: 4px;
+            background: var(--vscode-menu-background);
+            border: 1px solid var(--vscode-menu-border);
+            border-radius: 4px;
+            padding: 4px 0;
+            min-width: 120px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
+        #layout-menu.show { display: block; }
+        .menu-item {
+            padding: 6px 12px;
+            cursor: pointer;
+            font-size: 11px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .menu-item:hover {
+            background: var(--vscode-menu-selectionBackground);
+            color: var(--vscode-menu-selectionForeground);
+        }
+        .menu-item.selected::before {
+            content: '✓';
+        }
         #cy {
             width: 100%;
             height: 100vh;
@@ -308,6 +364,22 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
 </head>
 <body>
     <div id="cy"></div>
+    <div id="toolbar">
+        <div style="position: relative;">
+            <button class="toolbar-btn" id="layout-btn" title="Change layout">
+                <span>⊞</span> Layout
+            </button>
+            <div id="layout-menu">
+                <div class="menu-item selected" data-layout="cose">Force Directed</div>
+                <div class="menu-item" data-layout="breadthfirst">Hierarchical</div>
+                <div class="menu-item" data-layout="circle">Circle</div>
+                <div class="menu-item" data-layout="concentric">Concentric</div>
+                <div class="menu-item" data-layout="grid">Grid</div>
+            </div>
+        </div>
+        <button class="toolbar-btn" id="fit-btn" title="Fit to view">⊡</button>
+        <button class="toolbar-btn" id="center-btn" title="Center on current">◎</button>
+    </div>
     <div id="info">Select a class or method to visualize</div>
     <div id="legend">
         <div class="legend-item"><span class="legend-color" style="background:#4fc3f7"></span>Class</div>
@@ -392,6 +464,92 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
             layout: { name: 'cose', animate: false }
         });
 
+        // Layout configurations
+        let currentLayout = 'cose';
+        let currentCenterNodeId = null;
+
+        const layoutConfigs = {
+            cose: {
+                name: 'cose',
+                animate: false,
+                nodeRepulsion: 8000,
+                idealEdgeLength: 100,
+                gravity: 0.25
+            },
+            breadthfirst: {
+                name: 'breadthfirst',
+                animate: false,
+                directed: true,
+                spacingFactor: 1.5,
+                avoidOverlap: true
+            },
+            circle: {
+                name: 'circle',
+                animate: false,
+                avoidOverlap: true,
+                spacingFactor: 1.2
+            },
+            concentric: {
+                name: 'concentric',
+                animate: false,
+                minNodeSpacing: 50,
+                concentric: (node) => node.data('isCurrent') ? 10 : 1,
+                levelWidth: () => 2
+            },
+            grid: {
+                name: 'grid',
+                animate: false,
+                avoidOverlap: true,
+                spacingFactor: 1.5
+            }
+        };
+
+        function applyLayout(layoutName) {
+            currentLayout = layoutName;
+            const config = layoutConfigs[layoutName] || layoutConfigs.cose;
+            cy.layout(config).run();
+
+            // Update menu selection
+            document.querySelectorAll('.menu-item').forEach(item => {
+                item.classList.toggle('selected', item.dataset.layout === layoutName);
+            });
+        }
+
+        // Toolbar event handlers
+        const layoutBtn = document.getElementById('layout-btn');
+        const layoutMenu = document.getElementById('layout-menu');
+        const fitBtn = document.getElementById('fit-btn');
+        const centerBtn = document.getElementById('center-btn');
+
+        layoutBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            layoutMenu.classList.toggle('show');
+        });
+
+        document.querySelectorAll('.menu-item').forEach(item => {
+            item.addEventListener('click', () => {
+                applyLayout(item.dataset.layout);
+                layoutMenu.classList.remove('show');
+            });
+        });
+
+        document.addEventListener('click', () => {
+            layoutMenu.classList.remove('show');
+        });
+
+        fitBtn.addEventListener('click', () => {
+            cy.fit(null, 20);
+        });
+
+        centerBtn.addEventListener('click', () => {
+            if (currentCenterNodeId) {
+                const centerNode = cy.getElementById(currentCenterNodeId);
+                if (centerNode.length > 0) {
+                    cy.center(centerNode);
+                }
+            }
+        });
+
         cy.on('tap', 'node', function(evt) {
             const node = evt.target;
             vscode.postMessage({
@@ -410,13 +568,8 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
                     cy.add(message.nodes);
                     cy.add(message.edges);
 
-                    cy.layout({
-                        name: 'cose',
-                        animate: false,
-                        nodeRepulsion: 8000,
-                        idealEdgeLength: 100,
-                        gravity: 0.25
-                    }).run();
+                    currentCenterNodeId = message.centerNodeId;
+                    applyLayout(currentLayout);
 
                     // Center on current node
                     if (message.centerNodeId) {
@@ -431,6 +584,7 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
                 }
             } else if (message.type === 'clear') {
                 cy.elements().remove();
+                currentCenterNodeId = null;
                 document.getElementById('info').textContent = 'Select a class or method to visualize';
             }
         });

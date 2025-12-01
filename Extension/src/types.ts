@@ -127,6 +127,7 @@ export interface HealthResponse {
     service: string;
     version: string;
     mongodb: 'connected' | 'disconnected';
+    redis?: 'connected' | 'disconnected';
 }
 
 export interface StatsResponse {

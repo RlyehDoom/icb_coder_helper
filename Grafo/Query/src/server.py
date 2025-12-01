@@ -12,6 +12,7 @@ from .config import (
     validate_config, display_config
 )
 from .services import MongoDBService, GraphQueryService, get_mongodb_service
+from .services import RedisService, get_redis_service
 from .routes import projects, nodes, edges, context, semantic, graph_traversal
 
 # Configurar logging
@@ -24,37 +25,48 @@ logger = logging.getLogger(__name__)
 # Variables globales para servicios
 mongodb_service: MongoDBService = None
 graph_service: GraphQueryService = None
+redis_service: RedisService = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Gestión del ciclo de vida de la aplicación."""
-    global mongodb_service, graph_service
-    
+    global mongodb_service, graph_service, redis_service
+
     # Startup
     logger.info("🚀 Iniciando Grafo Query Service...")
-    
+
     try:
         validate_config()
         display_config()
-        
+
         # Conectar a MongoDB
         mongodb_service = get_mongodb_service()
         await mongodb_service.connect()
-        
+
+        # Conectar a Redis (opcional - no falla si no está disponible)
+        redis_service = get_redis_service()
+        redis_connected = await redis_service.connect()
+        if redis_connected:
+            logger.info("✅ Redis cache conectado")
+        else:
+            logger.warning("⚠️ Redis no disponible - cache deshabilitado")
+
         # Inicializar servicio de consultas
         graph_service = GraphQueryService(mongodb_service)
-        
+
         logger.info("✅ Grafo Query Service iniciado correctamente")
-        
+
     except Exception as e:
         logger.error(f"❌ Error durante el inicio: {e}")
         raise
-    
+
     yield
-    
+
     # Shutdown
     logger.info("🔌 Cerrando Grafo Query Service...")
+    if redis_service:
+        await redis_service.disconnect()
     if mongodb_service:
         await mongodb_service.disconnect()
     logger.info("👋 Grafo Query Service cerrado")
@@ -116,14 +128,99 @@ setup_dependencies()
 @app.get("/health")
 async def health_check():
     """Verifica el estado del servicio."""
-    is_healthy = await mongodb_service.is_healthy() if mongodb_service else False
-    
+    mongo_healthy = await mongodb_service.is_healthy() if mongodb_service else False
+    redis_connected = redis_service.is_connected if redis_service else False
+
     return {
-        "status": "healthy" if is_healthy else "degraded",
+        "status": "healthy" if mongo_healthy else "degraded",
         "service": "Grafo Query Service",
         "version": "1.0.0",
-        "mongodb": "connected" if is_healthy else "disconnected"
+        "mongodb": "connected" if mongo_healthy else "disconnected",
+        "redis": "connected" if redis_connected else "disconnected"
     }
+
+
+@app.get("/cache/stats")
+async def cache_stats():
+    """Obtiene estadísticas del cache."""
+    if redis_service:
+        return await redis_service.get_stats()
+    return {"enabled": False, "connected": False}
+
+
+@app.get("/cache/keys")
+async def cache_keys(version: str = None, limit: int = 100):
+    """
+    Lista las claves de cache.
+    - Si se especifica version, solo muestra las claves de esa versión
+    - Agrupa las claves por versión y tipo
+    """
+    if not redis_service or not redis_service.is_connected:
+        return {"keys": [], "message": "Cache not available"}
+
+    try:
+        pattern = f"grafo:*:v{version}:*" if version else "grafo:*"
+        keys_by_version = {}
+        count = 0
+
+        async for key in redis_service.client.scan_iter(match=pattern):
+            if count >= limit:
+                break
+            count += 1
+
+            # Parse key: grafo:{prefix}:v{version}:{hash}
+            parts = key.split(':')
+            if len(parts) >= 4 and parts[2].startswith('v'):
+                ver = parts[2][1:]  # Remove 'v' prefix
+                prefix = parts[1]
+                if ver not in keys_by_version:
+                    keys_by_version[ver] = {}
+                if prefix not in keys_by_version[ver]:
+                    keys_by_version[ver][prefix] = 0
+                keys_by_version[ver][prefix] += 1
+            else:
+                # Legacy format without version
+                if 'unknown' not in keys_by_version:
+                    keys_by_version['unknown'] = {}
+                prefix = parts[1] if len(parts) > 1 else 'other'
+                if prefix not in keys_by_version['unknown']:
+                    keys_by_version['unknown'][prefix] = 0
+                keys_by_version['unknown'][prefix] += 1
+
+        return {
+            "total_scanned": count,
+            "limit": limit,
+            "by_version": keys_by_version
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.delete("/cache/clear")
+async def cache_clear(
+    prefix: str = None,
+    version: str = None
+):
+    """
+    Limpia el cache.
+    - Si se especifica version, limpia solo las keys de esa versión
+    - Si se especifica prefix, limpia las keys con ese prefijo
+    - Sin parámetros, limpia todo el cache
+    """
+    if not redis_service or not redis_service.is_connected:
+        return {"cleared": False, "message": "Cache not available"}
+
+    if version:
+        # Clear all keys for a specific version
+        pattern = f"*:v{version}:*"
+        deleted = await redis_service.clear_prefix(pattern)
+        return {"cleared": True, "version": version, "keys_deleted": deleted}
+    elif prefix:
+        deleted = await redis_service.clear_prefix(prefix)
+        return {"cleared": True, "prefix": prefix, "keys_deleted": deleted}
+    else:
+        await redis_service.clear_all()
+        return {"cleared": True, "message": "All cache cleared"}
 
 
 @app.get("/")

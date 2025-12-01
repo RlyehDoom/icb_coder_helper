@@ -31,6 +31,81 @@ let statusBar: vscode.StatusBarItem;
 let currentContext: CurrentContext | null = null;
 let debounceTimer: NodeJS.Timeout | undefined;
 
+/**
+ * Prompt user to select version on first run.
+ * Shows available versions from API or manual input.
+ */
+async function promptInitialVersionSelection(context: vscode.ExtensionContext, apiUrl: string): Promise<string | undefined> {
+    // Show welcome message
+    const action = await vscode.window.showInformationMessage(
+        'Grafo Code Explorer: Please select a graph version to continue.',
+        'Select Version',
+        'Enter Manually'
+    );
+
+    if (!action) {
+        return undefined;
+    }
+
+    let selectedVersion: string | undefined;
+
+    if (action === 'Select Version') {
+        // Try to fetch versions from API
+        try {
+            const axios = await import('axios');
+            const response = await axios.default.get(`${apiUrl}/api/v1/versions`, { timeout: 5000 });
+            const versions = response.data.versions as string[];
+            const defaultVersion = response.data.default as string;
+
+            if (versions && versions.length > 0) {
+                const selected = await vscode.window.showQuickPick(
+                    versions.map(v => ({
+                        label: v,
+                        description: v === defaultVersion ? '(default)' : ''
+                    })),
+                    {
+                        placeHolder: 'Select a graph version',
+                        title: 'Grafo: Initial Setup'
+                    }
+                );
+                selectedVersion = selected?.label;
+            }
+        } catch (e) {
+            logger.warn('Could not fetch versions from API, prompting manual input');
+            // Fall through to manual input
+        }
+    }
+
+    // Manual input if API failed or user chose manual
+    if (!selectedVersion) {
+        selectedVersion = await vscode.window.showInputBox({
+            title: 'Grafo: Enter Graph Version',
+            prompt: 'Enter the graph version (e.g., 7.10.2)',
+            placeHolder: '7.10.2',
+            validateInput: (value) => {
+                if (!value || !value.match(/^\d+\.\d+(\.\d+)?$/)) {
+                    return 'Please enter a valid version (e.g., 7.10.2)';
+                }
+                return null;
+            }
+        });
+    }
+
+    if (selectedVersion) {
+        // Save to configuration
+        const config = vscode.workspace.getConfiguration('grafo');
+        await config.update('graphVersion', selectedVersion, vscode.ConfigurationTarget.Global);
+
+        // Mark as initialized
+        await context.globalState.update('grafo.initialized', true);
+
+        logger.info(`Initial version configured: ${selectedVersion}`);
+        vscode.window.showInformationMessage(`Grafo: Version ${selectedVersion} configured successfully.`);
+    }
+
+    return selectedVersion;
+}
+
 export async function activate(context: vscode.ExtensionContext) {
     logger.separator('Extension Activation');
     logger.info('Grafo Code Explorer v0.2.0 activating...');
@@ -38,7 +113,22 @@ export async function activate(context: vscode.ExtensionContext) {
     // Get configuration
     const config = vscode.workspace.getConfiguration('grafo');
     const apiUrl = config.get<string>('apiUrl', 'http://localhost:8081');
-    const version = config.get<string>('graphVersion', '6.5.0');
+    let version = config.get<string>('graphVersion', '');
+
+    // Check if first run (version not configured)
+    const isFirstRun = !context.globalState.get<boolean>('grafo.initialized');
+
+    if (isFirstRun || !version) {
+        logger.info('First run detected - requesting version selection...');
+        const selectedVersion = await promptInitialVersionSelection(context, apiUrl);
+        if (selectedVersion) {
+            version = selectedVersion;
+        } else {
+            // User cancelled - show warning and use default
+            vscode.window.showWarningMessage('Grafo: No version selected. Please configure version in settings.');
+            version = '6.5.0';
+        }
+    }
 
     logger.info(`Config: API=${apiUrl}, Version=${version}`);
 
@@ -73,8 +163,8 @@ export async function activate(context: vscode.ExtensionContext) {
     // Status bar
     statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     statusBar.text = `$(graph) Grafo [${version}]`;
-    statusBar.tooltip = 'Grafo Code Explorer';
-    statusBar.command = 'grafo.checkConnection';
+    statusBar.tooltip = 'Click for Grafo options';
+    statusBar.command = 'grafo.showMenu';
     statusBar.show();
     context.subscriptions.push(statusBar);
 
@@ -114,6 +204,47 @@ function registerCommands(context: vscode.ExtensionContext) {
     // Check connection
     context.subscriptions.push(
         vscode.commands.registerCommand('grafo.checkConnection', checkConnection)
+    );
+
+    // Status bar menu
+    context.subscriptions.push(
+        vscode.commands.registerCommand('grafo.showMenu', async () => {
+            const client = getClient();
+            const currentVersion = client?.getVersion() || 'Not configured';
+
+            const options = [
+                { label: '$(versions) Select Version', description: `Current: ${currentVersion}`, action: 'selectVersion' },
+                { label: '$(plug) Check Connection', description: 'Test API connectivity', action: 'checkConnection' },
+                { label: '$(gear) Configure API URL', description: 'Change API endpoint', action: 'configureApiUrl' },
+                { label: '$(refresh) Refresh All Views', description: 'Reload all widgets', action: 'refreshAll' },
+                { label: '$(debug-restart) Reload Window', description: 'Restart VS Code window', action: 'reloadWindow' }
+            ];
+
+            const selected = await vscode.window.showQuickPick(options, {
+                placeHolder: 'Grafo Code Explorer',
+                title: `Grafo [${currentVersion}]`
+            });
+
+            if (selected) {
+                switch (selected.action) {
+                    case 'selectVersion':
+                        vscode.commands.executeCommand('grafo.selectVersion');
+                        break;
+                    case 'checkConnection':
+                        vscode.commands.executeCommand('grafo.checkConnection');
+                        break;
+                    case 'configureApiUrl':
+                        vscode.commands.executeCommand('grafo.configureApiUrl');
+                        break;
+                    case 'refreshAll':
+                        vscode.commands.executeCommand('grafo.refreshAll');
+                        break;
+                    case 'reloadWindow':
+                        vscode.commands.executeCommand('workbench.action.reloadWindow');
+                        break;
+                }
+            }
+        })
     );
 
     // Configure API URL
