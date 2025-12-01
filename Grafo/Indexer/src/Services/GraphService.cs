@@ -1263,15 +1263,18 @@ namespace RoslynIndexer.Services
 
             foreach (var relation in inheritanceRelations)
             {
-                // Check if both types exist in our symbol index
+                // Check if derived type exists in our symbol index
                 if (!symbolLookup.ContainsKey(relation.DerivedType))
                     continue;
-                    
-                // Base type might be external (e.g., System types), skip if not in our code
-                if (!symbolLookup.ContainsKey(relation.BaseType))
+
+                // Skip System types (Object, ValueType, Enum, etc.)
+                if (relation.BaseType.StartsWith("System.") ||
+                    relation.BaseType == "object" ||
+                    relation.BaseType.StartsWith("Microsoft."))
                     continue;
 
                 var sourceId = $"component:{relation.DerivedType}";
+                // Use the base type FullName even if external - will match when base project is indexed
                 var targetId = $"component:{relation.BaseType}";
 
                 edges.Add(new GraphEdge

@@ -256,45 +256,25 @@ namespace IndexerDb.Services
                 {
                     try
                     {
-                        // Build semantic ID: grafo:{kind}/{project}/{identifier}
-                        // Include project to differentiate same-named elements across layers (DataAccess vs BusinessComponents)
+                        // Use original hash-based ID from NDJSON to preserve cross-project references
+                        // The Indexer generates consistent IDs based on SHA256(fullName)
+                        // This ensures that interfaces/classes referenced across projects have matching IDs
+                        var docId = node.Id;
                         var kind = node.Type.ToLowerInvariant();
-                        var isStructuralNode = kind is "project" or "layer" or "solution" or "file";
-                        var identifier = isStructuralNode
-                            ? node.Name
-                            : (!string.IsNullOrEmpty(node.FullName) ? node.FullName : node.Name);
 
-                        // Include project in ID to avoid collisions between layers
-                        // e.g., grafo:method/DataAccess/ICBanking.Communication.InsertBackOfficeMessage
-                        var projectPart = !string.IsNullOrEmpty(node.Project) ? $"{node.Project}/" : "";
-                        var docId = isStructuralNode
-                            ? $"grafo:{kind}/{identifier}"
-                            : $"grafo:{kind}/{projectPart}{identifier}";
-
-                        // Helper to build reference ID (must match main ID format with project)
+                        // Helper to preserve original reference IDs
+                        // References to external elements (interfaces, base classes) keep their original hash IDs
+                        // This allows cross-project references to work when both projects are loaded
                         string BuildRefId(string refNodeId)
                         {
-                            if (nodeById.TryGetValue(refNodeId, out var refNode))
+                            // Keep the original ID - it's already a consistent hash
+                            if (refNodeId.StartsWith("grafo:"))
                             {
-                                var refKind = refNode.Type?.ToLowerInvariant() ?? "unknown";
-                                var refIsStructural = refKind is "project" or "layer" or "solution" or "file";
-                                var refIdentifier = refIsStructural
-                                    ? refNode.Name
-                                    : (!string.IsNullOrEmpty(refNode.FullName) ? refNode.FullName : refNode.Name);
-
-                                // Include project in reference ID (same format as main ID)
-                                var refProjectPart = !refIsStructural && !string.IsNullOrEmpty(refNode.Project)
-                                    ? $"{refNode.Project}/"
-                                    : "";
-                                return $"grafo:{refKind}/{refProjectPart}{refIdentifier}";
-                            }
-                            else if (refNodeId.StartsWith("grafo:"))
-                            {
-                                // Remove any existing version suffix
+                                // Remove any version suffix if present
                                 var idx = refNodeId.IndexOf("@v");
                                 return idx > 0 ? refNodeId.Substring(0, idx) : refNodeId;
                             }
-                            return $"grafo:unknown/{refNodeId}";
+                            return refNodeId;
                         }
 
                         // Create document
@@ -309,7 +289,8 @@ namespace IndexerDb.Services
                             ["solution"] = solutionName
                         };
 
-                        // Add fullName for code elements
+                        // Add fullName for code elements (not for structural nodes like Solution, Layer, Project, File)
+                        var isStructuralNode = kind is "project" or "layer" or "solution" or "file";
                         if (!isStructuralNode && !string.IsNullOrEmpty(node.FullName))
                             doc["fullName"] = node.FullName;
 

@@ -141,7 +141,10 @@ namespace RoslynIndexer.Walkers
             var symbol = _semanticModel.GetDeclaredSymbol(node);
             if (symbol != null)
             {
-                _currentMethodFullName = GetFullyQualifiedName(symbol);
+                // Build _currentMethodFullName as ContainingType.MethodName for unique identification
+                _currentMethodFullName = symbol.ContainingType != null
+                    ? $"{GetFullyQualifiedName(symbol.ContainingType)}.{symbol.Name}"
+                    : GetFullyQualifiedName(symbol);
 
                 var symbolInfo = CreateSymbolInfo(node, symbol, "Method");
 
@@ -288,14 +291,18 @@ namespace RoslynIndexer.Walkers
                     // Skip system methods unless verbose
                     if (!IsSystemType(methodSymbol.ContainingType))
                     {
+                        // Build TargetMethod as ContainingType.MethodName to match FullName in SymbolInfo
+                        var targetType = GetFullyQualifiedName(methodSymbol.ContainingType);
+                        var targetMethodFullName = $"{targetType}.{methodSymbol.Name}";
+
                         var invocationInfo = new MethodInvocationInfo
                         {
                             CallerMethod = _currentMethodFullName,
                             CallerType = _currentTypeFullName,
                             CallerProject = _projectName,
-                            InvocationExpression = GetFullyQualifiedName(methodSymbol),
-                            TargetMethod = GetFullyQualifiedName(methodSymbol),
-                            TargetType = GetFullyQualifiedName(methodSymbol.ContainingType),
+                            InvocationExpression = targetMethodFullName,
+                            TargetMethod = targetMethodFullName,
+                            TargetType = targetType,
                             TargetProject = GetProjectName(methodSymbol.ContainingType),
                             File = _filePath,
                             Line = GetLine(node),
@@ -385,14 +392,18 @@ namespace RoslynIndexer.Walkers
                 {
                     if (!IsSystemType(propertySymbol.ContainingType))
                     {
+                        // Build TargetMethod as ContainingType.PropertyName to match FullName in SymbolInfo
+                        var propTargetType = GetFullyQualifiedName(propertySymbol.ContainingType);
+                        var propTargetFullName = $"{propTargetType}.{propertySymbol.Name}";
+
                         MethodInvocations.Add(new MethodInvocationInfo
                         {
                             CallerMethod = _currentMethodFullName,
                             CallerType = _currentTypeFullName,
                             CallerProject = _projectName,
-                            InvocationExpression = GetFullyQualifiedName(propertySymbol),
-                            TargetMethod = GetFullyQualifiedName(propertySymbol),
-                            TargetType = GetFullyQualifiedName(propertySymbol.ContainingType),
+                            InvocationExpression = propTargetFullName,
+                            TargetMethod = propTargetFullName,
+                            TargetType = propTargetType,
                             TargetProject = GetProjectName(propertySymbol.ContainingType),
                             File = _filePath,
                             Line = GetLine(node),
@@ -410,10 +421,19 @@ namespace RoslynIndexer.Walkers
             var location = node.GetLocation();
             var lineSpan = location.GetLineSpan();
 
+            // For methods, properties, fields: FullName must include containing type for unique ID generation
+            // Otherwise ToString() in ClassA and ToString() in ClassB would get the same hash ID
+            var fullName = GetFullyQualifiedName(symbol);
+            if ((symbolType == "Method" || symbolType == "Property" || symbolType == "Field")
+                && symbol.ContainingType != null)
+            {
+                fullName = $"{GetFullyQualifiedName(symbol.ContainingType)}.{symbol.Name}";
+            }
+
             var symbolInfo = new Models.SymbolInfo
             {
                 Name = symbol.Name,
-                FullName = GetFullyQualifiedName(symbol),
+                FullName = fullName,
                 Type = symbolType,
                 Project = _projectName,
                 File = _filePath,
