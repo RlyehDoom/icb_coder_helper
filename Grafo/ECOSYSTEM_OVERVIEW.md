@@ -35,9 +35,9 @@ Este documento proporciona una visión completa de cómo todos los componentes d
 ┌─────────────────────────────────────────────────────────────────────┐
 │                         MongoDB                                     │
 │                (GraphDB Database - Puerto 27019)                    │
-│  • Colección: projects                                              │
-│  • Colección: processing_states                                     │
-│  • Almacena grafo completo del código                               │
+│  • Colecciones versionadas: nodes_6_5_0, nodes_7_10_2, etc.         │
+│  • Multi-solución: Base + Tailored en misma versión                 │
+│  • Cross-project references via IDs consistentes                    │
 └───────────┬─────────────────────────────────────────────────────────┘
             │
             │ Escritura/Lectura
@@ -45,19 +45,20 @@ Este documento proporciona una visión completa de cómo todos los componentes d
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        IndexerDb                                    │
 │                    (.NET 8 Console App)                             │
-│  • Procesa archivos de grafo JSON                                   │
-│  • Almacena en MongoDB por proyecto                                 │
-│  • Detección incremental de cambios                                 │
+│  • Procesa archivos NDJSON-LD                                       │
+│  • Almacena en colecciones versionadas                              │
+│  • Preserva IDs originales para cross-project                       │
 └───────────┬─────────────────────────────────────────────────────────┘
             │
-            │ Lee JSON
+            │ Lee NDJSON
             ▲
 ┌─────────────────────────────────────────────────────────────────────┐
 │                         Indexer                                     │
 │                  (.NET 8 - Roslyn Based)                            │
 │  • Analiza código fuente C#                                         │
-│  • Genera grafo JSON (nodos + aristas)                              │
-│  • Output: *-graph.json                                             │
+│  • Genera grafo NDJSON-LD (nodos + aristas)                         │
+│  • IDs basados en SHA256(fullName)                                  │
+│  • Output: *-graph.ndjson                                           │
 └───────────┬─────────────────────────────────────────────────────────┘
             │
             │ Analiza
@@ -82,17 +83,16 @@ Código C# (.cs, .csproj, .sln)
     ↓
 [Indexer] Analiza con Roslyn
     ↓
-Grafo JSON (*-graph.json)
-    {
-      "nodes": [...],
-      "edges": [...]
-    }
+Grafo NDJSON-LD (*-graph.ndjson)
+    {"@id":"grafo:cls/abc123","name":"Accounts","inherits":["grafo:cls/def456"],...}
     ↓
 [IndexerDb] Procesa y almacena
     ↓
-MongoDB (GraphDB.projects)
-    Proyectos individuales con nodos/aristas
+MongoDB (GraphDB.nodes_6_5_0)
+    Colección versionada con múltiples soluciones
 ```
+
+**Multi-Solution:** Base y Tailored se cargan a la misma versión, con IDs consistentes para cross-project references.
 
 ### Fase 2: Consulta (Online/Tiempo Real)
 

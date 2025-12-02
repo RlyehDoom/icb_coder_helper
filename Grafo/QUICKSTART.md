@@ -92,17 +92,24 @@ dotnet run -- --solution "/ruta/a/tu/solution.sln"
 
 ```bash
 cd Grafo/IndexerDb
-dotnet run --all
+
+# Cargar a versión específica (ej: 6.5.0)
+dotnet run -- -d ICB6_6_5_0 -v 6.5.0 --all --clean
+
+# Cargar proyecto Tailored (se agrega a la misma versión)
+dotnet run -- -d ICB6_RBL_T -v 6.5.0 --all
 ```
 
 ### 3. Verificar datos
 
 ```bash
-grafo mongodb shell
+# Via API
+curl http://localhost:8081/api/v1/stats/6.5.0
 
-# En mongosh:
-db.projects.countDocuments()
-db.projects.find().limit(1).pretty()
+# Via mongosh
+grafo mongodb shell
+db.nodes_6_5_0.countDocuments()
+db.nodes_6_5_0.findOne({kind: "class"})
 exit
 ```
 
@@ -113,6 +120,21 @@ Ahora puedes consultar tu código desde Cursor:
 "Busca todas las clases que implementan IUserRepository"
 "Dame el contexto de la clase AuthenticationService"
 "Qué proyectos están indexados?"
+```
+
+### 5. Multi-Solution (Base + Tailored)
+
+Para proyectos con extensibilidad (Base + Tailored):
+
+```bash
+# Las relaciones cross-project funcionan automáticamente
+# Ejemplo: AccountsExtended (Tailored) hereda de Accounts (Base)
+
+# Consultar herencia
+curl http://localhost:8081/api/v1/graph/6.5.0/inheritance/grafo:cls/963edc04
+
+# Consultar implementaciones (muestra Base + Tailored)
+curl http://localhost:8081/api/v1/graph/6.5.0/implementations/grafo:ifc/3f72978e
 ```
 
 ---
@@ -169,12 +191,11 @@ Instala Docker Desktop:
 
 - **README Principal:** [README.md](README.md)
 - **Ecosystem Overview:** [ECOSYSTEM_OVERVIEW.md](ECOSYSTEM_OVERVIEW.md)
-- **MCP Server:** [Query/MCP_README.md](Query/MCP_README.md)
-- **MCP Docker:** [Query/MCP_DOCKER.md](Query/MCP_DOCKER.md)
 - **MongoDB Setup:** [IndexerDb/MONGODB_SETUP.md](IndexerDb/MONGODB_SETUP.md)
 - **Indexer:** [Indexer/README.md](Indexer/README.md)
 - **IndexerDb:** [IndexerDb/README.md](IndexerDb/README.md)
 - **Query Service:** [Query/README.md](Query/README.md)
+- **Extension:** [../Extension/package.json](../Extension/package.json)
 
 ---
 
