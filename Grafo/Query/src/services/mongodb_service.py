@@ -45,9 +45,19 @@ class MongoDBService:
             self.db = self.client[self.config['database']]
             self._connected = True
 
-            # Mostrar estadísticas de conexión
-            project_count = await self.db[self.config['projects_collection']].count_documents({})
-            logger.info(f"✅ Conectado a MongoDB: {project_count} proyectos disponibles")
+            # Mostrar estadísticas de conexión - buscar colecciones de nodos versionadas
+            collections = await self.db.list_collection_names()
+            node_collections = [c for c in collections if c.startswith("nodes_")]
+
+            if node_collections:
+                # Contar nodos en la primera colección de nodos
+                sample_collection = node_collections[0]
+                node_count = await self.db[sample_collection].count_documents({})
+                versions = ", ".join([c.replace("nodes_", "").replace("_", ".") for c in sorted(node_collections)])
+                logger.info(f"✅ Conectado a MongoDB: {len(node_collections)} version(es) disponible(s) [{versions}]")
+                logger.info(f"   📊 Colección {sample_collection}: {node_count} nodos")
+            else:
+                logger.info(f"✅ Conectado a MongoDB (sin colecciones de nodos indexadas)")
 
         except (ConnectionFailure, ServerSelectionTimeoutError) as e:
             logger.error(f"❌ Error conectando a MongoDB: {e}")

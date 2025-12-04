@@ -26,10 +26,6 @@ SERVER_RELOAD = os.getenv("SERVER_RELOAD", "true").lower() == "true"
 # Configuración de CORS (para permitir conexiones desde el MCP)
 CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
 
-# Configuración de autenticación (opcional)
-API_KEY = os.getenv("QUERY_API_KEY", "")
-ENABLE_AUTH = os.getenv("ENABLE_AUTH", "false").lower() == "true"
-
 # Configuración de Redis Cache
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
@@ -85,7 +81,6 @@ def display_config():
     print(f"   📊 MongoDB Database: {MONGODB_DATABASE}")
     print(f"   📦 Projects Collection: {MONGODB_PROJECTS_COLLECTION}")
     print(f"   🌐 Server: {SERVER_HOST}:{SERVER_PORT}")
-    print(f"   🔐 Auth enabled: {ENABLE_AUTH}")
     print(f"   💾 Redis Cache: {REDIS_HOST}:{REDIS_PORT} (enabled: {ENABLE_CACHE}, TTL: {CACHE_TTL}s)")
     print(f"   📝 Log level: {LOG_LEVEL}")
     if GRAFO_DEFAULT_VERSION:
