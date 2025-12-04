@@ -27,6 +27,7 @@ export class GrafoPanel {
     private _disposables: vscode.Disposable[] = [];
     private _currentNode: GraphNode | null = null;
     private _isHomeMode: boolean = false;
+    private _isLocked: boolean = false;
 
     public static createOrShow(extensionUri: vscode.Uri, viewColumn: vscode.ViewColumn = vscode.ViewColumn.Two) {
         if (GrafoPanel.currentPanel) {
@@ -242,6 +243,14 @@ export class GrafoPanel {
                         await this._toggleHomeMode();
                         break;
 
+                    case 'toggleLock':
+                        this._toggleLock();
+                        break;
+
+                    case 'toggleMaximize':
+                        vscode.commands.executeCommand('workbench.action.toggleMaximizeEditorGroup');
+                        break;
+
                     case 'search':
                         if (client && message.query) {
                             try {
@@ -299,11 +308,21 @@ export class GrafoPanel {
     }
 
     public get isLocked(): boolean {
-        return this._isHomeMode;
+        return this._isLocked || this._isHomeMode;
     }
 
     public get isHomeMode(): boolean {
         return this._isHomeMode;
+    }
+
+    private _toggleLock() {
+        this._isLocked = !this._isLocked;
+        logger.info(`[GrafoPanel] Lock mode: ${this._isLocked ? 'ON' : 'OFF'}`);
+
+        this._panel.webview.postMessage({
+            type: 'lockModeChanged',
+            locked: this._isLocked
+        });
     }
 
     private async _toggleHomeMode() {
@@ -321,18 +340,23 @@ export class GrafoPanel {
     }
 
     private async _loadSolutions() {
-        const solutions = await getSolutions();
-        if (solutions.length > 0) {
-            logger.info(`[GrafoPanel] Loading ${solutions.length} solutions as root`);
-            this._currentNode = null; // Multiple roots
+        try {
+            const solutions = await getSolutions();
+            if (solutions.length > 0) {
+                logger.debug(`[GrafoPanel] Loading ${solutions.length} solutions as root`);
+                this._currentNode = null; // Multiple roots
 
-            const graphData = await createRootGraphData(solutions);
-            this._panel.webview.postMessage({
-                type: 'initMultipleRoots',
-                ...graphData
-            });
-        } else {
-            logger.warn('[GrafoPanel] No solutions found');
+                const graphData = await createRootGraphData(solutions);
+                logger.debug(`[GrafoPanel] Graph data: ${graphData.nodes.length} nodes, ${graphData.edges.length} edges`);
+                this._panel.webview.postMessage({
+                    type: 'initMultipleRoots',
+                    ...graphData
+                });
+            } else {
+                logger.warn('[GrafoPanel] No solutions found');
+            }
+        } catch (e: any) {
+            logger.error(`[GrafoPanel] _loadSolutions error: ${e.message}`);
         }
     }
 

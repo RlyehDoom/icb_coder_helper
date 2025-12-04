@@ -616,20 +616,52 @@ export class OverridableMethodsProvider implements vscode.TreeDataProvider<TreeI
 
     refresh() { this._onDidChange.fire(); }
 
-    async loadForClass(baseClassNode: GraphNode, document: vscode.TextDocument) {
+    private noBaseClass = false;
+
+    async loadForClass(currentClassNode: GraphNode, document: vscode.TextDocument) {
         this.loading = true;
         this.methods = [];
-        this.baseClassName = baseClassNode.name;
+        this.baseClassName = '';
+        this.noBaseClass = false;
         this.currentDocument = document;
         this.refresh();
 
         const client = getClient();
 
         try {
+            // Check if the class inherits from another CLASS (not just interfaces)
+            // inherits[] contains class IDs, implements[] contains interface IDs
+            const inheritsFromClass = currentClassNode.inherits && currentClassNode.inherits.length > 0;
+
+            if (!inheritsFromClass) {
+                logger.debug(`[OverridableMethods] Class ${currentClassNode.name} does not inherit from any class`);
+                this.noBaseClass = true;
+                this.loading = false;
+                this.refresh();
+                return;
+            }
+
+            // Get the base class node
+            let baseClassNode: GraphNode | null = null;
+            if (client && currentClassNode.inherits) {
+                const baseClassId = currentClassNode.inherits[0]; // First inherited class
+                baseClassNode = await client.getNodeById(baseClassId);
+                if (baseClassNode) {
+                    this.baseClassName = baseClassNode.name;
+                    logger.debug(`[OverridableMethods] Base class: ${baseClassNode.name}`);
+                }
+            }
+
+            if (!baseClassNode) {
+                logger.debug(`[OverridableMethods] Could not fetch base class`);
+                this.noBaseClass = true;
+                this.loading = false;
+                this.refresh();
+                return;
+            }
+
             const documentText = document.getText();
             const lines = documentText.split('\n');
-
-            logger.debug(`[OverridableMethods] Base class: ${baseClassNode.name}`);
 
             // Step 1: Scan document for ALL override methods (this always works)
             const documentOverrides = new Map<string, { lineNumber: number; callsBase: boolean }>();
@@ -740,6 +772,7 @@ export class OverridableMethodsProvider implements vscode.TreeDataProvider<TreeI
     clear() {
         this.methods = [];
         this.baseClassName = '';
+        this.noBaseClass = false;
         this.currentDocument = null;
         this.refresh();
     }
@@ -748,6 +781,10 @@ export class OverridableMethodsProvider implements vscode.TreeDataProvider<TreeI
 
     getChildren(element?: TreeItem): TreeItem[] {
         if (this.loading) return [new InfoItem('Loading...', 'sync~spin')];
+
+        if (this.noBaseClass) {
+            return [new InfoItem('Selected class does not support override', 'info')];
+        }
 
         if (!this.baseClassName) {
             return [new InfoItem('Open a C# class to see overridable methods', 'info')];

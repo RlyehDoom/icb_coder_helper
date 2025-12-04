@@ -586,11 +586,14 @@ function onEditorChange(editor: vscode.TextEditor | undefined) {
         return;
     }
 
-    // Only reload if it's a different file
-    if (currentContext?.filePath === editor.document.uri.fsPath) {
+    // Only reload if it's a different file OR if context is not loaded yet
+    // This ensures widgets load after extension reload
+    if (currentContext?.filePath === editor.document.uri.fsPath && currentContext?.node) {
         return;
     }
 
+    // Reset element tracking to ensure widgets reload
+    currentElementId = null;
     loadContextFromDocument(editor.document);
 }
 

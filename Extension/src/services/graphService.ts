@@ -39,11 +39,18 @@ export async function createRootGraphData(solutions: GraphNode[]): Promise<{
     const nodes: CytoscapeNode[] = [];
     const edges: CytoscapeEdge[] = [];
 
-    // Create a map of solution name to id
+    // Create a map of solution name to id (both name and fullName as keys)
     const solutionNameToId: Record<string, string> = {};
 
     for (const solution of solutions) {
+        // Map by name
         solutionNameToId[solution.name] = solution.id;
+        // Also map by fullName if different
+        if (solution.fullName && solution.fullName !== solution.name) {
+            solutionNameToId[solution.fullName] = solution.id;
+        }
+        logger.debug(`[GraphService] Solution mapping: name="${solution.name}", id="${solution.id}"`);
+
         nodes.push({
             data: {
                 id: solution.id,
@@ -63,9 +70,20 @@ export async function createRootGraphData(solutions: GraphNode[]): Promise<{
     if (client) {
         try {
             const dependencies = await client.getSolutionDependencies();
+            logger.debug(`[GraphService] Got ${dependencies.length} solution dependencies`);
+
             for (const dep of dependencies) {
+                logger.debug(`[GraphService] Dependency: "${dep.from}" -> "${dep.to}" (${dep.relationshipCount} rels)`);
                 const fromId = solutionNameToId[dep.from];
                 const toId = solutionNameToId[dep.to];
+
+                if (!fromId) {
+                    logger.warn(`[GraphService] No solution found for "from": ${dep.from}`);
+                }
+                if (!toId) {
+                    logger.warn(`[GraphService] No solution found for "to": ${dep.to}`);
+                }
+
                 if (fromId && toId) {
                     edges.push({
                         data: {
@@ -76,16 +94,15 @@ export async function createRootGraphData(solutions: GraphNode[]): Promise<{
                             label: `${dep.relationshipCount} deps`
                         }
                     });
+                    logger.debug(`[GraphService] Added edge: ${dep.from} -> ${dep.to}`);
                 }
             }
-            if (dependencies.length > 0) {
-                logger.info(`[GraphService] Added ${dependencies.length} cross-solution dependency edges`);
-            }
-        } catch (e) {
-            logger.debug('[GraphService] Could not load cross-solution dependencies');
+        } catch (e: any) {
+            logger.error(`[GraphService] Error loading cross-solution dependencies: ${e.message}`);
         }
     }
 
+    logger.debug(`[GraphService] createRootGraphData complete: ${nodes.length} nodes, ${edges.length} edges`);
     return { nodes, edges };
 }
 
@@ -268,7 +285,7 @@ export async function getProjectRelationships(projectName: string, projectId: st
 
     try {
         // Get ALL classes and interfaces in this project (no limit)
-        const projectNodes = await client.getNodesByProject(projectName, undefined, 500);
+        const projectNodes = await client.getNodesByProject(projectName);
         const classesAndInterfaces = projectNodes.filter(n =>
             n.kind === 'class' || n.kind === 'interface'
         );
@@ -326,10 +343,16 @@ export async function getNamespaceRelationships(projectName: string, namespace: 
     const edges: CytoscapeEdge[] = [];
 
     try {
-        const projectNodes = await client.getNodesByProject(projectName, undefined, 500);
-        const nsClasses = projectNodes.filter(n =>
-            (n.kind === 'class' || n.kind === 'interface') && n.namespace === namespace
-        );
+        // Get classes and interfaces separately to ensure we get them all
+        const [classes, interfaces] = await Promise.all([
+            client.getNodesByProject(projectName, 'class'),
+            client.getNodesByProject(projectName, 'interface')
+        ]);
+
+        const allNodes = [...classes, ...interfaces];
+        const nsClasses = allNodes.filter(n => n.namespace === namespace);
+
+        logger.info(`[GraphService] Namespace ${namespace}: found ${nsClasses.length} classes/interfaces`);
 
         for (const childNode of nsClasses) {
             nodes.push(createCytoscapeNode(childNode));
@@ -733,7 +756,7 @@ async function loadContainerRelationships(
     if (node.kind === 'project') {
         try {
             // Get ALL classes and interfaces in this project (no limit)
-            const projectNodes = await client.getNodesByProject(node.name, undefined, 500);
+            const projectNodes = await client.getNodesByProject(node.name);
             const classesAndInterfaces = projectNodes.filter(n =>
                 n.kind === 'class' || n.kind === 'interface'
             );
@@ -787,7 +810,7 @@ async function loadContainerRelationships(
             const projectName = node.project || (node as any).data?.project;
 
             if (namespace && projectName) {
-                const projectNodes = await client.getNodesByProject(projectName, undefined, 500);
+                const projectNodes = await client.getNodesByProject(projectName);
                 const nsClasses = projectNodes.filter(n =>
                     (n.kind === 'class' || n.kind === 'interface') && n.namespace === namespace
                 );
@@ -1260,7 +1283,14 @@ export function generateGraphWebviewHtml(options: {
         </div>
         ` : ''}
         <div class="toolbar-right">
-            <button class="toolbar-btn" id="btnHome" title="Home (Lock + Navigate to root)">
+            <button class="toolbar-btn" id="btnMaximize" title="Maximize / Restore">
+                <svg viewBox="0 0 24 24" fill="currentColor" id="iconMaximize"><path d="M4 4h16v16H4V4zm2 2v12h12V6H6z"/></svg>
+            </button>
+            <button class="toolbar-btn" id="btnLock" title="Lock graph (prevent changes on code selection)">
+                <svg viewBox="0 0 24 24" fill="currentColor" id="iconLock"><path d="M12 17a2 2 0 0 0 2-2 2 2 0 0 0-2-2 2 2 0 0 0-2 2 2 2 0 0 0 2 2m6-9a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2h1V6a5 5 0 0 1 5-5 5 5 0 0 1 5 5v2h1m-6-5a3 3 0 0 0-3 3v2h6V6a3 3 0 0 0-3-3z"/></svg>
+                <span id="lockIndicator" style="display:none; color:#ff9800;">●</span>
+            </button>
+            <button class="toolbar-btn" id="btnHome" title="Home (Navigate to solutions root)">
                 <svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
                 <span id="homeModeIndicator" style="display:none; color:#4caf50;">●</span>
             </button>
@@ -1315,7 +1345,7 @@ export function generateGraphWebviewHtml(options: {
             <span class="legend-item">
                 <span class="legend-icon">
                     <svg viewBox="0 0 24 24" fill="#888"><path d="M8,3A2,2 0 0,0 6,5V9A2,2 0 0,1 4,11H3V13H4A2,2 0 0,1 6,15V19A2,2 0 0,0 8,21H10V19H8V14A2,2 0 0,0 6,12A2,2 0 0,0 8,10V5H10V3M16,3A2,2 0 0,1 18,5V9A2,2 0 0,0 20,11H21V13H20A2,2 0 0,0 18,15V19A2,2 0 0,1 16,21H14V19H16V14A2,2 0 0,1 18,12A2,2 0 0,1 16,10V5H14V3H16Z"/></svg>
-                </span>{ }
+                </span>Namespace
             </span>
             <span class="legend-item">
                 <span class="legend-icon">
@@ -1535,19 +1565,19 @@ export function generateGraphWebviewHtml(options: {
                 },
                 {
                     selector: 'node[type="solution"]',
-                    style: { 'width': 44, 'height': 44 }
+                    style: { 'width': 44, 'height': 44, 'background-width': '55%', 'background-height': '55%' }
                 },
                 {
                     selector: 'node[type="layer"]',
-                    style: { 'width': 40, 'height': 40 }
+                    style: { 'width': 40, 'height': 40, 'background-width': '55%', 'background-height': '55%' }
                 },
                 {
                     selector: 'node[type="project"]',
-                    style: { 'width': 38, 'height': 38 }
+                    style: { 'width': 38, 'height': 38, 'background-width': '55%', 'background-height': '55%' }
                 },
                 {
                     selector: 'node[type="namespace"]',
-                    style: { 'width': 36, 'height': 36 }
+                    style: { 'width': 36, 'height': 36, 'background-width': '55%', 'background-height': '55%' }
                 },
                 {
                     selector: 'node[type="method"], node[type="interfaceMethod"]',
@@ -1772,6 +1802,9 @@ export function generateGraphWebviewHtml(options: {
         cy.on('pan zoom', () => tooltip.classList.remove('visible'));
 
         // Toolbar buttons
+        document.getElementById('btnMaximize')?.addEventListener('click', () => {
+            vscode.postMessage({ type: 'toggleMaximize' });
+        });
         document.getElementById('btnFit')?.addEventListener('click', () => cy.fit(null, 30));
         document.getElementById('btnReset')?.addEventListener('click', () => {
             if (rootNodeId) {
@@ -1786,6 +1819,9 @@ export function generateGraphWebviewHtml(options: {
         });
         document.getElementById('btnHome')?.addEventListener('click', () => {
             vscode.postMessage({ type: 'goHome' });
+        });
+        document.getElementById('btnLock')?.addEventListener('click', () => {
+            vscode.postMessage({ type: 'toggleLock' });
         });
         document.getElementById('btnBack')?.addEventListener('click', () => {
             if (historyIndex > 0) {
@@ -1912,16 +1948,21 @@ export function generateGraphWebviewHtml(options: {
                         expandedNodes.clear();
                         rootNodeId = null; // No single root
 
-                        // Add all root nodes
-                        msg.nodes.forEach(node => cy.add(node));
-                        msg.edges.forEach(edge => cy.add(edge));
+                        console.log('[Grafo] initMultipleRoots - nodes:', msg.nodes?.length, 'edges:', msg.edges?.length);
 
-                        // Layout for multiple roots
-                        cy.layout({
-                            name: 'grid',
-                            rows: Math.ceil(Math.sqrt(msg.nodes.length)),
-                            padding: 50
-                        }).run();
+                        // Add all root nodes
+                        if (msg.nodes) {
+                            msg.nodes.forEach(node => cy.add(node));
+                        }
+                        if (msg.edges) {
+                            msg.edges.forEach(edge => {
+                                console.log('[Grafo] Adding edge:', edge.data.id, edge.data.source, '->', edge.data.target);
+                                cy.add(edge);
+                            });
+                        }
+
+                        // Use current layout or default to dagre for hierarchical display
+                        runLayout();
 
                         cy.fit(null, 50);
                         updateInfo();
@@ -1993,7 +2034,21 @@ export function generateGraphWebviewHtml(options: {
                     } else {
                         indicator.style.display = 'none';
                         homeBtn.style.color = '';
-                        homeBtn.title = 'Home (Lock + Navigate to root)';
+                        homeBtn.title = 'Home (Navigate to solutions root)';
+                    }
+                    break;
+
+                case 'lockModeChanged':
+                    const lockIndicator = document.getElementById('lockIndicator');
+                    const lockBtn = document.getElementById('btnLock');
+                    if (msg.locked) {
+                        lockIndicator.style.display = 'inline';
+                        lockBtn.style.color = '#ff9800';
+                        lockBtn.title = 'Locked (click to unlock)';
+                    } else {
+                        lockIndicator.style.display = 'none';
+                        lockBtn.style.color = '';
+                        lockBtn.title = 'Lock graph (prevent changes on code selection)';
                     }
                     break;
 

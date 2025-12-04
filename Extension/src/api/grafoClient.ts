@@ -255,7 +255,7 @@ export class GrafoClient {
     }
 
     // Get nodes by project
-    async getNodesByProject(project: string, type?: string, limit = 100): Promise<GraphNode[]> {
+    async getNodesByProject(project: string, type?: string, limit = 5000): Promise<GraphNode[]> {
         logger.debug(`Getting nodes for project: ${project}`);
         return this.withCache('NODES_BY_PROJECT', { project, type: type || '', limit }, async () => {
             const params = new URLSearchParams({ limit: String(limit) });
@@ -290,62 +290,63 @@ export class GrafoClient {
         });
     }
 
-    // Get solutions (nodes with kind: 'solution' and layer: 'root')
+    // Get solutions (nodes with kind: 'solution' and layer: 'root') - no caching for fresh data
     async getSolutions(): Promise<GraphNode[]> {
-        logger.debug('Getting solutions');
-        return this.withCache('LAYERS', { version: this.version, type: 'solutions' }, async () => {
-            // Try searching for all solutions using partial search (exact_first=false)
-            try {
-                const { data } = await this.client.get<SearchResponse>(
-                    `/api/v1/nodes/${this.version}/search?q=.&limit=50&type=solution&exact_first=false`
-                );
-                if (data.results && data.results.length > 0) {
-                    return data.results.filter(n => (n.layer as string) === 'root' || !n.layer);
-                }
-            } catch (e) {
-                logger.debug('Solution search failed, trying layers endpoint');
-            }
-
-            // Fallback: Get solutions from the 'root' layer in the layers endpoint
-            const layersData = await this.getProjectsByLayer();
-            if (layersData.layers['root'] && layersData.layers['root'].projects) {
-                // These are the solutions - fetch full node data for each
-                const solutions: GraphNode[] = [];
-                for (const proj of layersData.layers['root'].projects) {
-                    if (proj.name) {
-                        // Search for the solution node by name (use partial search)
-                        const results = await this.searchNodes(proj.name, 'solution', undefined, 1, false);
-                        if (results.length > 0) {
-                            solutions.push(results[0]);
-                        }
-                    }
-                }
+        logger.debug('[getSolutions] Fetching fresh data');
+        // Try searching for all solutions using partial search (exact_first=false)
+        try {
+            const { data } = await this.client.get<SearchResponse>(
+                `/api/v1/nodes/${this.version}/search?q=.&limit=50&type=solution&exact_first=false`
+            );
+            if (data.results && data.results.length > 0) {
+                const solutions = data.results.filter(n => (n.layer as string) === 'root' || !n.layer);
+                logger.debug(`[getSolutions] Found ${solutions.length} solutions`);
                 return solutions;
             }
+        } catch (e: any) {
+            logger.warn(`[getSolutions] Search failed: ${e.message}, trying layers endpoint`);
+        }
 
-            return [];
-        });
+        // Fallback: Get solutions from the 'root' layer in the layers endpoint
+        const layersData = await this.getProjectsByLayer();
+        if (layersData.layers['root'] && layersData.layers['root'].projects) {
+            // These are the solutions - fetch full node data for each
+            const solutions: GraphNode[] = [];
+            for (const proj of layersData.layers['root'].projects) {
+                if (proj.name) {
+                    // Search for the solution node by name (use partial search)
+                    const results = await this.searchNodes(proj.name, 'solution', undefined, 1, false);
+                    if (results.length > 0) {
+                        solutions.push(results[0]);
+                    }
+                }
+            }
+            logger.debug(`[getSolutions] Fallback found ${solutions.length} solutions`);
+            return solutions;
+        }
+
+        logger.warn('[getSolutions] No solutions found');
+        return [];
     }
 
-    // Get cross-solution dependencies
+    // Get cross-solution dependencies (no caching - always fresh for accurate graph)
     async getSolutionDependencies(): Promise<{ from: string; to: string; relationshipCount: number }[]> {
-        logger.debug('Getting solution dependencies');
-        return this.withCache('LAYERS', { version: this.version, type: 'solution-deps' }, async () => {
-            try {
-                const { data } = await this.client.get<{
-                    version: string;
-                    dependencies: Array<{ from: string; to: string; relationshipCount: number; relationships: any[] }>;
-                }>(`/api/v1/graph/${this.version}/solution-dependencies`);
-                return data.dependencies.map(d => ({
-                    from: d.from,
-                    to: d.to,
-                    relationshipCount: d.relationshipCount
-                }));
-            } catch (e) {
-                logger.debug('Solution dependencies not available');
-                return [];
+        const fullUrl = `${this.baseUrl}/api/v1/graph/${this.version}/solution-dependencies`;
+        try {
+            const response = await fetch(fullUrl);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
             }
-        });
+            const data: any = await response.json();
+            return (data.dependencies || []).map((d: any) => ({
+                from: d.from,
+                to: d.to,
+                relationshipCount: d.relationshipCount
+            }));
+        } catch (e: any) {
+            logger.error(`[getSolutionDependencies] Error fetching ${fullUrl}: ${e.message}`);
+            return [];
+        }
     }
 
     // Utility: Find class/method by name

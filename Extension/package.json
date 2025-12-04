@@ -2,7 +2,7 @@
   "name": "grafo-code-explorer",
   "displayName": "Grafo Code Explorer",
   "description": "Explore C# code relationships using Grafo knowledge graph with visual graph navigation",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "publisher": "grafo",
   "author": {
     "name": "Jose Luis Yanez Rojas",

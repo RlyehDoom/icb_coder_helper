@@ -48,7 +48,7 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
         };
 
         webviewView.webview.html = generateGraphWebviewHtml({
-            showToolbar: true,
+            showToolbar: false,
             showLegend: false,
             showStatusBar: true,
             showTooltip: false
