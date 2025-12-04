@@ -127,9 +127,8 @@ class NodesQueryService:
         """
         Search nodes by name/fullName in a specific version.
 
-        If exact_first=True (default):
-        1. First tries exact match on name (case-insensitive)
-        2. If no results, falls back to regex/like search
+        If exact_first=True: Only return exact matches on name (case-insensitive)
+        If exact_first=False: Return partial matches (contains query in name or fullName)
         """
         try:
             collection = self._get_collection(version)
@@ -145,10 +144,9 @@ class NodesQueryService:
 
             results = []
 
-            # STEP 1: Try exact match first (case-insensitive)
             if query and exact_first:
+                # EXACT ONLY: Match exact name (case-insensitive)
                 exact_conditions = base_conditions.copy()
-                # Exact match on name (case-insensitive using regex ^query$)
                 exact_conditions.append({"name": {"$regex": f"^{re.escape(query)}$", "$options": "i"}})
 
                 exact_query = {"$and": exact_conditions} if len(exact_conditions) > 1 else exact_conditions[0]
@@ -156,12 +154,10 @@ class NodesQueryService:
                 async for doc in cursor:
                     results.append(self._normalize_node(doc))
 
-                if results:
-                    logger.info(f"Found {len(results)} exact matches for '{query}' in v{version}")
-                    return results
+                logger.info(f"Found {len(results)} exact matches for '{query}' in v{version}")
 
-            # STEP 2: Fall back to regex/like search if no exact matches
-            if query:
+            elif query:
+                # PARTIAL: Match contains in name or fullName
                 like_conditions = base_conditions.copy()
                 like_conditions.append({
                     "$or": [
@@ -241,6 +237,78 @@ class NodesQueryService:
         except Exception as e:
             logger.error(f"Error getting nodes for project {project}: {e}")
             return []
+
+    # ============================================================================
+    # CLASS MEMBERS (Methods, Properties, Fields)
+    # ============================================================================
+
+    async def get_class_members(
+        self,
+        version: str,
+        class_id: str,
+        member_types: Optional[List[str]] = None
+    ) -> Dict[str, Any]:
+        """
+        Get all members (methods, properties, fields) of a class.
+
+        Args:
+            version: Graph version
+            class_id: Class node ID (e.g., grafo:cls/xxxxx)
+            member_types: Optional filter for member types (method, property, field)
+
+        Returns:
+            Dictionary with class info and its members
+        """
+        try:
+            collection = self._get_collection(version)
+
+            # First, get the class node
+            class_node = await collection.find_one({"_id": class_id})
+            if not class_node:
+                return {"found": False, "message": f"Class {class_id} not found"}
+
+            # Get member IDs from hasMember relationship
+            member_ids = class_node.get("hasMember", [])
+            if not member_ids:
+                return {
+                    "found": True,
+                    "class": self._normalize_node(class_node),
+                    "members": [],
+                    "count": 0
+                }
+
+            # Fetch all members
+            query = {"_id": {"$in": member_ids}}
+            if member_types:
+                query["kind"] = {"$in": [t.lower() for t in member_types]}
+
+            cursor = collection.find(query)
+            members = []
+            async for doc in cursor:
+                members.append(self._normalize_node(doc))
+
+            # Group by type
+            methods = [m for m in members if m.get("kind") == "method"]
+            properties = [m for m in members if m.get("kind") == "property"]
+            fields = [m for m in members if m.get("kind") == "field"]
+
+            return {
+                "found": True,
+                "class": self._normalize_node(class_node),
+                "members": members,
+                "methods": methods,
+                "properties": properties,
+                "fields": fields,
+                "count": len(members),
+                "summary": {
+                    "methods": len(methods),
+                    "properties": len(properties),
+                    "fields": len(fields)
+                }
+            }
+        except Exception as e:
+            logger.error(f"Error getting class members for {class_id}: {e}")
+            return {"found": False, "message": str(e)}
 
     # ============================================================================
     # GRAPH TRAVERSAL WITH $graphLookup (no restrictSearchWithMatch needed)
@@ -561,6 +629,50 @@ class NodesQueryService:
             logger.error(f"Error getting statistics: {e}")
             return {"error": str(e)}
 
+    @cached("projects_by_layer")
+    async def get_projects_by_layer(self, version: str) -> Dict[str, Any]:
+        """Get projects grouped by architectural layer."""
+        try:
+            collection = self._get_collection(version)
+
+            # Aggregate projects by layer
+            pipeline = [
+                {"$match": {"layer": {"$exists": True, "$ne": None}}},
+                {"$group": {
+                    "_id": {"layer": "$layer", "project": "$project"},
+                    "count": {"$sum": 1}
+                }},
+                {"$group": {
+                    "_id": "$_id.layer",
+                    "projects": {
+                        "$push": {
+                            "name": "$_id.project",
+                            "nodeCount": "$count"
+                        }
+                    },
+                    "totalNodes": {"$sum": "$count"}
+                }},
+                {"$sort": {"_id": 1}}
+            ]
+
+            layers = {}
+            async for doc in collection.aggregate(pipeline):
+                layer_name = doc["_id"]
+                if layer_name:
+                    layers[layer_name] = {
+                        "projects": doc["projects"],
+                        "totalNodes": doc["totalNodes"]
+                    }
+
+            return {
+                "version": version,
+                "layers": layers
+            }
+
+        except Exception as e:
+            logger.error(f"Error getting projects by layer: {e}")
+            return {"error": str(e)}
+
     # ============================================================================
     # SEMANTIC STATISTICS (v2.1)
     # ============================================================================
@@ -754,6 +866,123 @@ class NodesQueryService:
         except Exception as e:
             logger.error(f"Error analyzing impact for {node_id}: {e}")
             return {"found": False, "error": str(e)}
+
+    # ============================================================================
+    # CROSS-SOLUTION DEPENDENCIES
+    # ============================================================================
+
+    @cached("solution_dependencies")
+    async def get_solution_dependencies(self, version: str) -> Dict[str, Any]:
+        """
+        Find cross-solution dependencies based on inherits/implements relationships.
+        Returns which solutions depend on which others through class relationships.
+        """
+        try:
+            collection = self._get_collection(version)
+
+            # Find all nodes that have inherits or implements pointing to nodes in other solutions
+            # We use aggregation to find cross-solution relationships
+
+            pipeline = [
+                # Only consider classes and interfaces
+                {"$match": {"kind": {"$in": ["class", "interface"]}}},
+                # Project relevant fields
+                {"$project": {
+                    "_id": 1,
+                    "name": 1,
+                    "solution": 1,
+                    "project": 1,
+                    "kind": 1,
+                    "inherits": {"$ifNull": ["$inherits", []]},
+                    "implements": {"$ifNull": ["$implements", []]}
+                }},
+                # Filter only nodes with relationships
+                {"$match": {
+                    "$or": [
+                        {"inherits": {"$ne": []}},
+                        {"implements": {"$ne": []}}
+                    ]
+                }}
+            ]
+
+            # Build a map of nodeId -> solution
+            node_to_solution = {}
+            nodes_with_deps = []
+
+            async for doc in collection.aggregate(pipeline):
+                node_id = doc["_id"]
+                node_solution = doc.get("solution")
+                node_to_solution[node_id] = node_solution
+                nodes_with_deps.append(doc)
+
+            # Now we need to resolve the target IDs to find their solutions
+            # Get all referenced IDs
+            all_target_ids = set()
+            for doc in nodes_with_deps:
+                all_target_ids.update(doc.get("inherits", []))
+                all_target_ids.update(doc.get("implements", []))
+
+            # Fetch all target nodes to get their solutions
+            if all_target_ids:
+                async for doc in collection.find({"_id": {"$in": list(all_target_ids)}}):
+                    node_to_solution[doc["_id"]] = doc.get("solution")
+
+            # Now analyze cross-solution dependencies
+            dependencies = {}  # source_solution -> {target_solution -> [relationships]}
+
+            for doc in nodes_with_deps:
+                source_solution = doc.get("solution")
+                if not source_solution:
+                    continue
+
+                # Check inherits
+                for target_id in doc.get("inherits", []):
+                    target_solution = node_to_solution.get(target_id)
+                    if target_solution and target_solution != source_solution:
+                        if source_solution not in dependencies:
+                            dependencies[source_solution] = {}
+                        if target_solution not in dependencies[source_solution]:
+                            dependencies[source_solution][target_solution] = []
+                        dependencies[source_solution][target_solution].append({
+                            "type": "inherits",
+                            "source": {"id": doc["_id"], "name": doc["name"], "kind": doc["kind"]},
+                            "target": {"id": target_id}
+                        })
+
+                # Check implements
+                for target_id in doc.get("implements", []):
+                    target_solution = node_to_solution.get(target_id)
+                    if target_solution and target_solution != source_solution:
+                        if source_solution not in dependencies:
+                            dependencies[source_solution] = {}
+                        if target_solution not in dependencies[source_solution]:
+                            dependencies[source_solution][target_solution] = []
+                        dependencies[source_solution][target_solution].append({
+                            "type": "implements",
+                            "source": {"id": doc["_id"], "name": doc["name"], "kind": doc["kind"]},
+                            "target": {"id": target_id}
+                        })
+
+            # Format the result
+            result = {
+                "version": version,
+                "dependencies": []
+            }
+
+            for source_sol, targets in dependencies.items():
+                for target_sol, rels in targets.items():
+                    result["dependencies"].append({
+                        "from": source_sol,
+                        "to": target_sol,
+                        "relationshipCount": len(rels),
+                        "relationships": rels[:20]  # Limit to first 20 for brevity
+                    })
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Error getting solution dependencies: {e}")
+            return {"error": str(e)}
 
     # ============================================================================
     # HELPERS

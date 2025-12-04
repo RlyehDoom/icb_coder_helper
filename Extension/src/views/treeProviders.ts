@@ -254,9 +254,15 @@ export class DependenciesProvider implements vscode.TreeDataProvider<TreeItem> {
     private _onDidChange = new vscode.EventEmitter<void>();
     readonly onDidChangeTreeData = this._onDidChange.event;
 
-    private methods: NodeItem[] = [];
-    private classes: NodeItem[] = [];
-    private interfaces: NodeItem[] = [];
+    // Incoming (who calls this method) - all callers combined
+    private incomingCallers: NodeItem[] = [];
+
+    // Outgoing - Methods called (all combined)
+    private outgoingMethods: NodeItem[] = [];
+
+    // Outgoing - Types used
+    private outgoingTypes: NodeItem[] = [];
+
     private currentNode: GraphNode | null = null;
     private loading = false;
 
@@ -265,9 +271,9 @@ export class DependenciesProvider implements vscode.TreeDataProvider<TreeItem> {
     async loadForNode(node: GraphNode) {
         this.loading = true;
         this.currentNode = node;
-        this.methods = [];
-        this.classes = [];
-        this.interfaces = [];
+        this.incomingCallers = [];
+        this.outgoingMethods = [];
+        this.outgoingTypes = [];
         this.refresh();
 
         const client = getClient();
@@ -277,17 +283,120 @@ export class DependenciesProvider implements vscode.TreeDataProvider<TreeItem> {
             return;
         }
 
-        try {
-            const response = await client.findCallees(node.id, 1);
+        const addedCallerIds = new Set<string>();
+        const addedCalleeIds = new Set<string>();
+        const addedTypeIds = new Set<string>();
 
-            for (const { node: callee } of [...response.callees, ...response.viaInterface]) {
-                const item = new NodeItem(callee);
-                if (callee.kind === 'method') this.methods.push(item);
-                else if (callee.kind === 'interface') this.interfaces.push(item);
-                else if (callee.kind === 'class') this.classes.push(item);
+        try {
+            // === INCOMING: Who calls this method ===
+            logger.debug(`[Dependencies] Loading callers for ${node.id}`);
+            const callersResponse = await client.findCallers(node.id, 2);
+            logger.debug(`[Dependencies] Got ${callersResponse.callers?.length || 0} direct, ${callersResponse.indirectCallers?.length || 0} indirect callers`);
+
+            // Direct callers
+            for (const { node: caller } of callersResponse.callers || []) {
+                if (!addedCallerIds.has(caller.id)) {
+                    this.incomingCallers.push(new NodeItem(caller));
+                    addedCallerIds.add(caller.id);
+                }
             }
+
+            // Indirect callers (via interface/Unity) - combine with direct
+            for (const { node: caller } of callersResponse.indirectCallers || []) {
+                if (!addedCallerIds.has(caller.id)) {
+                    this.incomingCallers.push(new NodeItem(caller));
+                    addedCallerIds.add(caller.id);
+                }
+            }
+
+            // === OUTGOING: What this method calls ===
+            const calleesResponse = await client.findCallees(node.id, 1);
+
+            // Direct callees
+            for (const { node: callee } of calleesResponse.callees || []) {
+                if (!addedCalleeIds.has(callee.id)) {
+                    if (callee.kind === 'method') {
+                        this.outgoingMethods.push(new NodeItem(callee));
+                    } else {
+                        this.outgoingTypes.push(new NodeItem(callee));
+                    }
+                    addedCalleeIds.add(callee.id);
+                }
+            }
+
+            // Via interface callees - combine with methods
+            for (const { node: callee } of calleesResponse.viaInterface || []) {
+                if (!addedCalleeIds.has(callee.id)) {
+                    if (callee.kind === 'method') {
+                        this.outgoingMethods.push(new NodeItem(callee));
+                    } else {
+                        this.outgoingTypes.push(new NodeItem(callee));
+                    }
+                    addedCalleeIds.add(callee.id);
+                }
+            }
+
+            // Indirect calls from node.indirectCall
+            if (node.indirectCall && node.indirectCall.length > 0) {
+                const indirectPromises = node.indirectCall.map(id => client.getNodeById(id));
+                const indirectNodes = await Promise.all(indirectPromises);
+                for (const indirectNode of indirectNodes) {
+                    if (indirectNode && !addedCalleeIds.has(indirectNode.id)) {
+                        this.outgoingMethods.push(new NodeItem(indirectNode));
+                        addedCalleeIds.add(indirectNode.id);
+                    }
+                }
+            }
+
+            // Calls from node.calls
+            if (node.calls && node.calls.length > 0) {
+                const callsPromises = node.calls.map(id => client.getNodeById(id));
+                const callsNodes = await Promise.all(callsPromises);
+                for (const callNode of callsNodes) {
+                    if (callNode && !addedCalleeIds.has(callNode.id)) {
+                        if (callNode.kind === 'method') {
+                            this.outgoingMethods.push(new NodeItem(callNode));
+                        } else {
+                            this.outgoingTypes.push(new NodeItem(callNode));
+                        }
+                        addedCalleeIds.add(callNode.id);
+                    }
+                }
+            }
+
+            // CallsVia from node.callsVia
+            if (node.callsVia && node.callsVia.length > 0) {
+                const callsViaPromises = node.callsVia.map(id => client.getNodeById(id));
+                const callsViaNodes = await Promise.all(callsViaPromises);
+                for (const callNode of callsViaNodes) {
+                    if (callNode && !addedCalleeIds.has(callNode.id)) {
+                        if (callNode.kind === 'method') {
+                            this.outgoingMethods.push(new NodeItem(callNode));
+                        } else {
+                            this.outgoingTypes.push(new NodeItem(callNode));
+                        }
+                        addedCalleeIds.add(callNode.id);
+                    }
+                }
+            }
+
+            // Uses (types used by this method) from node.uses
+            if (node.uses && node.uses.length > 0) {
+                const usesPromises = node.uses.map(id => client.getNodeById(id));
+                const usesNodes = await Promise.all(usesPromises);
+                for (const usesNode of usesNodes) {
+                    if (usesNode && !addedTypeIds.has(usesNode.id)) {
+                        this.outgoingTypes.push(new NodeItem(usesNode));
+                        addedTypeIds.add(usesNode.id);
+                    }
+                }
+            }
+
+            logger.debug(`[Dependencies] Result: ${this.incomingCallers.length} callers, ${this.outgoingMethods.length} methods, ${this.outgoingTypes.length} types`);
+
         } catch (e) {
             console.error('Dependencies error:', e);
+            logger.error('[Dependencies] Error loading dependencies', e);
         }
 
         this.loading = false;
@@ -296,9 +405,9 @@ export class DependenciesProvider implements vscode.TreeDataProvider<TreeItem> {
 
     clear() {
         this.currentNode = null;
-        this.methods = [];
-        this.classes = [];
-        this.interfaces = [];
+        this.incomingCallers = [];
+        this.outgoingMethods = [];
+        this.outgoingTypes = [];
         this.refresh();
     }
 
@@ -317,16 +426,34 @@ export class DependenciesProvider implements vscode.TreeDataProvider<TreeItem> {
             // Header showing which method is being analyzed
             items.push(new InfoItem(`Method: ${this.currentNode.name}`, 'target'));
 
-            const groups: GroupItem[] = [];
-            if (this.methods.length > 0) groups.push(new GroupItem('Methods', this.methods, 'symbol-method'));
-            if (this.classes.length > 0) groups.push(new GroupItem('Classes', this.classes, 'symbol-class'));
-            if (this.interfaces.length > 0) groups.push(new GroupItem('Interfaces', this.interfaces, 'symbol-interface'));
+            const totalIncoming = this.incomingCallers.length;
+            const totalOutgoing = this.outgoingMethods.length + this.outgoingTypes.length;
 
-            if (groups.length === 0) {
+            if (totalIncoming === 0 && totalOutgoing === 0) {
                 items.push(new InfoItem('No dependencies found', 'check'));
                 return items;
             }
-            return [...items, ...groups];
+
+            // === INCOMING SECTION ===
+            if (totalIncoming > 0) {
+                items.push(new InfoItem('───────────────', 'dash'));
+                items.push(new GroupItem(`⬅ CALLERS`, this.incomingCallers, 'call-incoming'));
+            }
+
+            // === OUTGOING SECTION ===
+            if (totalOutgoing > 0) {
+                items.push(new InfoItem('───────────────', 'dash'));
+
+                if (this.outgoingMethods.length > 0) {
+                    items.push(new GroupItem('➡ METHODS CALLED', this.outgoingMethods, 'symbol-method'));
+                }
+
+                if (this.outgoingTypes.length > 0) {
+                    items.push(new GroupItem('➡ TYPES USED', this.outgoingTypes, 'references'));
+                }
+            }
+
+            return items;
         }
 
         if (element instanceof GroupItem) {
@@ -543,26 +670,20 @@ export class OverridableMethodsProvider implements vscode.TreeDataProvider<TreeI
                     const methodIds = fullNode?.hasMember?.filter(id => id.includes(':mtd/') || id.includes(':method/')) || [];
                     logger.debug(`[OverridableMethods] Base class has ${methodIds.length} methods in hasMember`);
 
-                    // Extract method info from IDs without making additional API calls
-                    // ID format: grafo:method/Project/MethodName
+                    // Fetch actual method details from API (IDs are now hashes, not names)
                     for (const methodId of methodIds) {
-                        const parts = methodId.split('/');
-                        const methodName = parts[parts.length - 1];
-                        const project = parts.length > 2 ? parts[parts.length - 2] : baseClassNode.project;
-
-                        // Create minimal node with info extracted from ID
-                        baseClassMethods.push({
-                            id: methodId,
-                            name: methodName,
-                            fullName: methodName,
-                            type: 'Method',
-                            kind: 'method',
-                            project: project,
-                            namespace: baseClassNode.namespace
-                        } as GraphNode);
+                        try {
+                            const methodNode = await client.getNodeById(methodId);
+                            if (methodNode && methodNode.name) {
+                                baseClassMethods.push(methodNode);
+                            }
+                        } catch (e) {
+                            // Skip methods that can't be fetched
+                            logger.debug(`[OverridableMethods] Could not fetch method ${methodId}`);
+                        }
                     }
 
-                    logger.debug(`[OverridableMethods] Extracted ${baseClassMethods.length} methods from hasMember IDs`);
+                    logger.debug(`[OverridableMethods] Fetched ${baseClassMethods.length} methods from API`);
                 } catch (e) {
                     logger.debug(`[OverridableMethods] Could not fetch base methods from API`);
                 }

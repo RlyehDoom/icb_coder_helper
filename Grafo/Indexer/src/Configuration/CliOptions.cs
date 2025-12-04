@@ -56,6 +56,16 @@ namespace RoslynIndexer.Configuration
 
         [Option("mongodb-clean", Required = false, Default = false, HelpText = "Delete existing data for this solution before importing")]
         public bool MongoDbClean { get; set; }
+
+        // Layer Detection Options
+        [Option("layer-mode", Required = false, Default = "auto", HelpText = "Layer detection mode: auto, directory, naming")]
+        public string LayerDetectionMode { get; set; } = "auto";
+
+        [Option("skip-layer-confirmation", Required = false, Default = false, HelpText = "Skip layer classification confirmation prompt")]
+        public bool SkipLayerConfirmation { get; set; }
+
+        [Option("show-layer-summary", Required = false, Default = true, HelpText = "Show layer classification summary before processing")]
+        public bool ShowLayerSummary { get; set; } = true;
     }
 
     public class BatchConfiguration

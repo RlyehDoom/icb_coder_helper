@@ -1,22 +1,38 @@
 /**
- * Cytoscape Graph WebView Provider
- * Visual graph that changes based on current file/class
- * Detects inherited ICBanking classes and displays from base class
+ * Cytoscape Graph WebView Provider (Sidebar)
+ * Uses shared graphService for Lazy Expand Nodes pattern
+ * History is managed in the webview for proper state preservation
  */
 import * as vscode from 'vscode';
 import { getClient } from '../api/grafoClient';
-import { GraphNode, CytoscapeNode, CytoscapeEdge } from '../types';
+import { GraphNode } from '../types';
+import { logger } from '../logger';
+import {
+    createCytoscapeNode,
+    getNodeRelationships,
+    getLayerRelationships,
+    getProjectRelationships,
+    getNamespaceRelationships,
+    generateGraphWebviewHtml,
+    getSolutions,
+    createRootGraphData
+} from '../services/graphService';
 
 export class GraphViewProvider implements vscode.WebviewViewProvider {
     public static readonly viewType = 'grafo.graphView';
 
     private _view?: vscode.WebviewView;
     private _currentNode: GraphNode | null = null;
+    private _isHomeMode: boolean = false;
 
     constructor(private readonly _extensionUri: vscode.Uri) {}
 
     public get currentNode(): GraphNode | null {
         return this._currentNode;
+    }
+
+    public get isHomeMode(): boolean {
+        return this._isHomeMode;
     }
 
     public resolveWebviewView(
@@ -31,229 +47,253 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
             localResourceRoots: [this._extensionUri]
         };
 
-        webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+        webviewView.webview.html = generateGraphWebviewHtml({
+            showToolbar: true,
+            showLegend: false,
+            showStatusBar: true,
+            showTooltip: false
+        });
 
         // Handle messages from webview
         webviewView.webview.onDidReceiveMessage(async (data) => {
-            if (data.type === 'nodeClick') {
-                const client = getClient();
-                if (client) {
-                    const node = await client.getNodeById(data.nodeId);
-                    if (node) {
-                        // If it's an interface or interface method, try to find implementation
-                        if (node.kind === 'interface' || (node.kind === 'method' && node.containedIn?.includes('interface'))) {
-                            try {
-                                const impls = await client.findImplementations(node.id);
-                                if (impls.implementations && impls.implementations.length > 0) {
-                                    if (impls.implementations.length === 1) {
-                                        // Single implementation, navigate directly
-                                        vscode.commands.executeCommand('grafo.navigateToNode', impls.implementations[0]);
-                                    } else {
-                                        // Multiple implementations, let user choose
-                                        const items = impls.implementations.map(impl => ({
-                                            label: impl.name,
-                                            description: impl.namespace || impl.project,
-                                            impl
-                                        }));
-                                        const selected = await vscode.window.showQuickPick(items, {
-                                            placeHolder: 'Select implementation to navigate'
-                                        });
-                                        if (selected) {
-                                            vscode.commands.executeCommand('grafo.navigateToNode', selected.impl);
-                                        }
-                                    }
-                                    return;
-                                }
-                            } catch (e) {
-                                // No implementations found, fall through to default behavior
+            const client = getClient();
+
+            switch (data.type) {
+                case 'expandNode':
+                    logger.debug(`[GraphView] Expanding node: ${data.nodeId}`);
+                    let expandNodes: any[] = [];
+                    let expandEdges: any[] = [];
+                    if (!client) {
+                        logger.warn('[GraphView] No client available');
+                        this._view?.webview.postMessage({
+                            type: 'addRelationships',
+                            sourceId: data.nodeId,
+                            nodes: [],
+                            edges: []
+                        });
+                        break;
+                    }
+                    try {
+                        // Handle virtual layer nodes (layer:name)
+                        if (data.nodeId.startsWith('layer:')) {
+                            const layerName = data.nodeId.replace('layer:', '');
+                            const layerRelationships = await getLayerRelationships(layerName, data.nodeId);
+                            expandNodes = layerRelationships.nodes;
+                            expandEdges = layerRelationships.edges;
+                        }
+                        // Handle virtual project nodes (project:name)
+                        else if (data.nodeId.startsWith('project:')) {
+                            const projectName = data.nodeId.replace('project:', '');
+                            const projectRelationships = await getProjectRelationships(projectName, data.nodeId);
+                            expandNodes = projectRelationships.nodes;
+                            expandEdges = projectRelationships.edges;
+                        }
+                        // Handle virtual namespace nodes (ns:projectName:namespace)
+                        else if (data.nodeId.startsWith('ns:')) {
+                            // Format: ns:projectName:namespace
+                            const parts = data.nodeId.split(':');
+                            if (parts.length >= 3) {
+                                const projectName = parts[1];
+                                const namespace = parts.slice(2).join(':'); // Handle namespace that might contain colons
+                                const nsRelationships = await getNamespaceRelationships(projectName, namespace, data.nodeId);
+                                expandNodes = nsRelationships.nodes;
+                                expandEdges = nsRelationships.edges;
                             }
                         }
-                        // Default: navigate to the node itself
-                        if (node.source?.file) {
-                            vscode.commands.executeCommand('grafo.navigateToNode', node);
+                        // Handle regular nodes
+                        else {
+                            const node = await client.getNodeById(data.nodeId);
+                            if (node) {
+                                const relationships = await getNodeRelationships(node);
+                                expandNodes = relationships.nodes;
+                                expandEdges = relationships.edges;
+                                logger.debug(`[GraphView] Got ${expandNodes.length} nodes, ${expandEdges.length} edges`);
+                            } else {
+                                logger.warn(`[GraphView] Node not found: ${data.nodeId}`);
+                            }
+                        }
+                    } catch (e: any) {
+                        logger.error(`[GraphView] Error expanding node: ${e.message}`);
+                    } finally {
+                        // ALWAYS send response to hide loading overlay
+                        logger.info(`[GraphView] Sending response: ${expandNodes.length} nodes, ${expandEdges.length} edges`);
+                        this._view?.webview.postMessage({
+                            type: 'addRelationships',
+                            sourceId: data.nodeId,
+                            nodes: expandNodes,
+                            edges: expandEdges
+                        });
+                    }
+                    break;
+
+                case 'navigateToNode':
+                    // Skip virtual nodes (no source file)
+                    if (data.nodeId.startsWith('layer:') || data.nodeId.startsWith('project:') || data.nodeId.startsWith('ns:')) {
+                        break;
+                    }
+                    if (client) {
+                        const navNode = await client.getNodeById(data.nodeId);
+                        if (navNode?.source?.file) {
+                            vscode.commands.executeCommand('grafo.navigateToNode', navNode);
                         }
                     }
-                }
+                    break;
+
+                case 'setAsRoot':
+                    // Handle virtual layer nodes
+                    if (data.nodeId.startsWith('layer:')) {
+                        const layerName = data.nodeId.replace('layer:', '');
+                        this._currentNode = null;
+                        this._view?.webview.postMessage({
+                            type: 'initGraph',
+                            rootNode: {
+                                data: {
+                                    id: data.nodeId,
+                                    label: layerName.toUpperCase(),
+                                    type: 'layer',
+                                    layer: layerName,
+                                    expandable: true,
+                                    isCurrent: true
+                                }
+                            },
+                            rootNodeId: data.nodeId
+                        });
+                        break;
+                    }
+
+                    // Handle virtual project nodes
+                    if (data.nodeId.startsWith('project:')) {
+                        const projectName = data.nodeId.replace('project:', '');
+                        this._currentNode = null;
+                        this._view?.webview.postMessage({
+                            type: 'initGraph',
+                            rootNode: {
+                                data: {
+                                    id: data.nodeId,
+                                    label: projectName,
+                                    type: 'project',
+                                    project: projectName,
+                                    expandable: true,
+                                    isCurrent: true
+                                }
+                            },
+                            rootNodeId: data.nodeId
+                        });
+                        break;
+                    }
+
+                    // Handle virtual namespace nodes (ns:projectName:namespace)
+                    if (data.nodeId.startsWith('ns:')) {
+                        const parts = data.nodeId.split(':');
+                        if (parts.length >= 3) {
+                            const projectName = parts[1];
+                            const namespace = parts.slice(2).join(':');
+                            const lastSegment = namespace.split('.').pop() || namespace;
+                            this._currentNode = null;
+                            this._view?.webview.postMessage({
+                                type: 'initGraph',
+                                rootNode: {
+                                    data: {
+                                        id: data.nodeId,
+                                        label: lastSegment,
+                                        type: 'namespace',
+                                        fullName: namespace,
+                                        project: projectName,
+                                        expandable: true,
+                                        isCurrent: true
+                                    }
+                                },
+                                rootNodeId: data.nodeId
+                            });
+                        }
+                        break;
+                    }
+
+                    // Handle regular nodes
+                    if (client) {
+                        const rootNode = await client.getNodeById(data.nodeId);
+                        if (rootNode) {
+                            this._currentNode = rootNode;
+                            this._view?.webview.postMessage({
+                                type: 'initGraph',
+                                rootNode: createCytoscapeNode(rootNode, true),
+                                rootNodeId: rootNode.id
+                            });
+                        }
+                    }
+                    break;
+
+                case 'goHome':
+                    await this._toggleHomeMode();
+                    break;
             }
         });
     }
 
+    private async _toggleHomeMode() {
+        this._isHomeMode = !this._isHomeMode;
+        logger.info(`[GraphView] Home mode: ${this._isHomeMode ? 'ON' : 'OFF'}`);
+
+        this._view?.webview.postMessage({
+            type: 'homeModeChanged',
+            homeMode: this._isHomeMode
+        });
+
+        if (this._isHomeMode) {
+            await this._loadSolutions();
+        }
+
+        // Fire event for extension to handle
+        this._onHomeModeChanged.fire(this._isHomeMode);
+    }
+
+    // Event emitter for home mode changes
+    private _onHomeModeChanged = new vscode.EventEmitter<boolean>();
+    public readonly onHomeModeChanged = this._onHomeModeChanged.event;
+
+    private async _loadSolutions() {
+        const solutions = await getSolutions();
+        if (solutions.length > 0) {
+            logger.info(`[GraphView] Loading ${solutions.length} solutions as root`);
+            this._currentNode = null; // Multiple roots
+
+            const graphData = await createRootGraphData(solutions);
+            this._view?.webview.postMessage({
+                type: 'initMultipleRoots',
+                ...graphData
+            });
+        } else {
+            logger.warn('[GraphView] No solutions found');
+        }
+    }
+
+    public setHomeMode(enabled: boolean) {
+        this._isHomeMode = enabled;
+        this._view?.webview.postMessage({
+            type: 'homeModeChanged',
+            homeMode: this._isHomeMode
+        });
+    }
+
+    /**
+     * Load a node as root - respects home mode lock
+     */
     public async loadForNode(node: GraphNode) {
+        if (this._isHomeMode) {
+            return; // Locked in home mode
+        }
+
         this._currentNode = node;
 
         if (!this._view) return;
 
-        const client = getClient();
-        if (!client) return;
+        logger.debug(`[GraphView] Loading root node: ${node.name}`);
 
-        try {
-            const nodes: CytoscapeNode[] = [];
-            const edges: CytoscapeEdge[] = [];
-            const addedNodes = new Set<string>();
-
-            // Helper to get node type with fallback
-            // Use kind, fallback to type, fallback to extracting from ID (grafo:{kind}/...)
-            const getNodeType = (n: GraphNode, nodeId: string): string => {
-                let kind: string = 'class';
-                if (n.kind) kind = n.kind;
-                else if (n.type) kind = n.type;
-                else {
-                    // Extract from ID format: grafo:{kind}/{project}/{name}
-                    const match = nodeId.match(/^grafo:(\w+)\//);
-                    if (match) kind = match[1];
-                }
-                return kind;
-            };
-
-            // Check if a method belongs to an interface
-            const isInterfaceMethod = (n: GraphNode, nodeId: string): boolean => {
-                // Check containedIn for interface
-                if (n.containedIn && n.containedIn.includes('interface')) return true;
-                // Check if contained in an interface node (ID pattern)
-                if (n.containedIn && n.containedIn.match(/grafo:interface\//)) return true;
-                // Check node name patterns (methods in interfaces often have I prefix in container)
-                if (n.namespace && n.namespace.match(/\.I[A-Z]/)) return true;
-                return false;
-            };
-
-            // Helper to create node data with full info
-            const createNodeData = (n: GraphNode, id: string) => {
-                let nodeType = getNodeType(n, id);
-                // Differentiate interface methods from implementation methods
-                if (nodeType === 'method' && isInterfaceMethod(n, id)) {
-                    nodeType = 'interfaceMethod';
-                }
-                return {
-                    id: id,
-                    label: n.name,
-                    type: nodeType,
-                    layer: n.layer,
-                    project: n.project,
-                    namespace: n.namespace,
-                    fullName: n.fullName,
-                    accessibility: n.accessibility
-                };
-            };
-
-            // Add current node
-            nodes.push({
-                data: {
-                    ...createNodeData(node, node.id),
-                    isCurrent: true
-                }
-            });
-            addedNodes.add(node.id);
-
-            // Add calls (outgoing)
-            if (node.calls) {
-                for (const callId of node.calls.slice(0, 10)) {
-                    const callee = await client.getNodeById(callId);
-                    if (callee && !addedNodes.has(callId)) {
-                        nodes.push({ data: createNodeData(callee, callId) });
-                        addedNodes.add(callId);
-                    }
-                    edges.push({
-                        data: {
-                            id: `${node.id}-calls-${callId}`,
-                            source: node.id,
-                            target: callId,
-                            type: 'calls'
-                        }
-                    });
-                }
-            }
-
-            // Add callsVia (via interface)
-            if (node.callsVia) {
-                for (const viaId of node.callsVia.slice(0, 5)) {
-                    const viaNode = await client.getNodeById(viaId);
-                    if (viaNode && !addedNodes.has(viaId)) {
-                        nodes.push({ data: createNodeData(viaNode, viaId) });
-                        addedNodes.add(viaId);
-                    }
-                    edges.push({
-                        data: {
-                            id: `${node.id}-callsVia-${viaId}`,
-                            source: node.id,
-                            target: viaId,
-                            type: 'callsVia'
-                        }
-                    });
-                }
-            }
-
-            // Add implements
-            if (node.implements) {
-                for (const implId of node.implements) {
-                    const implNode = await client.getNodeById(implId);
-                    if (implNode && !addedNodes.has(implId)) {
-                        nodes.push({ data: createNodeData(implNode, implId) });
-                        addedNodes.add(implId);
-                    }
-                    edges.push({
-                        data: {
-                            id: `${node.id}-implements-${implId}`,
-                            source: node.id,
-                            target: implId,
-                            type: 'implements'
-                        }
-                    });
-                }
-            }
-
-            // Add inherits
-            if (node.inherits) {
-                for (const inheritId of node.inherits) {
-                    const inheritNode = await client.getNodeById(inheritId);
-                    if (inheritNode && !addedNodes.has(inheritId)) {
-                        nodes.push({ data: createNodeData(inheritNode, inheritId) });
-                        addedNodes.add(inheritId);
-                    }
-                    edges.push({
-                        data: {
-                            id: `${node.id}-inherits-${inheritId}`,
-                            source: node.id,
-                            target: inheritId,
-                            type: 'inherits'
-                        }
-                    });
-                }
-            }
-
-            // Add callers (for methods)
-            if (node.kind === 'method') {
-                try {
-                    const callers = await client.findCallers(node.id, 1);
-                    for (const { node: caller } of callers.callers.slice(0, 5)) {
-                        if (!addedNodes.has(caller.id)) {
-                            nodes.push({ data: createNodeData(caller, caller.id) });
-                            addedNodes.add(caller.id);
-                        }
-                        edges.push({
-                            data: {
-                                id: `${caller.id}-calls-${node.id}`,
-                                source: caller.id,
-                                target: node.id,
-                                type: 'calls'
-                            }
-                        });
-                    }
-                } catch (e) {
-                    // Ignore callers errors
-                }
-            }
-
-            // Send data to webview
-            this._view.webview.postMessage({
-                type: 'updateGraph',
-                nodes,
-                edges,
-                centerNodeId: node.id
-            });
-
-        } catch (e) {
-            console.error('Graph view error:', e);
-        }
+        this._view.webview.postMessage({
+            type: 'initGraph',
+            rootNode: createCytoscapeNode(node, true),
+            rootNodeId: node.id
+        });
     }
 
     public clear() {
@@ -261,335 +301,5 @@ export class GraphViewProvider implements vscode.WebviewViewProvider {
         if (this._view) {
             this._view.webview.postMessage({ type: 'clear' });
         }
-    }
-
-    private _getHtmlForWebview(webview: vscode.Webview): string {
-        return `<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Grafo Graph</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            background: var(--vscode-editor-background);
-            color: var(--vscode-editor-foreground);
-            font-family: var(--vscode-font-family);
-            overflow: hidden;
-        }
-        #toolbar {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            display: flex;
-            gap: 4px;
-            z-index: 100;
-        }
-        .toolbar-btn {
-            background: var(--vscode-button-secondaryBackground);
-            color: var(--vscode-button-secondaryForeground);
-            border: none;
-            padding: 4px 8px;
-            border-radius: 3px;
-            font-size: 11px;
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 4px;
-        }
-        .toolbar-btn:hover {
-            background: var(--vscode-button-secondaryHoverBackground);
-        }
-        .toolbar-btn.active {
-            background: var(--vscode-button-background);
-            color: var(--vscode-button-foreground);
-        }
-        #layout-menu {
-            display: none;
-            position: absolute;
-            top: 100%;
-            right: 0;
-            margin-top: 4px;
-            background: var(--vscode-menu-background);
-            border: 1px solid var(--vscode-menu-border);
-            border-radius: 4px;
-            padding: 4px 0;
-            min-width: 120px;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-        }
-        #layout-menu.show { display: block; }
-        .menu-item {
-            padding: 6px 12px;
-            cursor: pointer;
-            font-size: 11px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        .menu-item:hover {
-            background: var(--vscode-menu-selectionBackground);
-            color: var(--vscode-menu-selectionForeground);
-        }
-        .menu-item.selected::before {
-            content: '✓';
-        }
-        #cy {
-            width: 100%;
-            height: 100vh;
-        }
-        #info {
-            position: absolute;
-            top: 10px;
-            left: 10px;
-            background: var(--vscode-input-background);
-            padding: 8px 12px;
-            border-radius: 4px;
-            font-size: 11px;
-            opacity: 0.9;
-        }
-        #legend {
-            position: absolute;
-            bottom: 10px;
-            left: 10px;
-            background: var(--vscode-input-background);
-            padding: 8px;
-            border-radius: 4px;
-            font-size: 10px;
-        }
-        .legend-item { display: flex; align-items: center; margin: 2px 0; }
-        .legend-color { width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; }
-    </style>
-</head>
-<body>
-    <div id="cy"></div>
-    <div id="toolbar">
-        <div style="position: relative;">
-            <button class="toolbar-btn" id="layout-btn" title="Change layout">
-                <span>⊞</span> Layout
-            </button>
-            <div id="layout-menu">
-                <div class="menu-item selected" data-layout="cose">Force Directed</div>
-                <div class="menu-item" data-layout="breadthfirst">Hierarchical</div>
-                <div class="menu-item" data-layout="circle">Circle</div>
-                <div class="menu-item" data-layout="concentric">Concentric</div>
-                <div class="menu-item" data-layout="grid">Grid</div>
-            </div>
-        </div>
-        <button class="toolbar-btn" id="fit-btn" title="Fit to view">⊡</button>
-        <button class="toolbar-btn" id="center-btn" title="Center on current">◎</button>
-    </div>
-    <div id="info">Select a class or method to visualize</div>
-    <div id="legend">
-        <div class="legend-item"><span class="legend-color" style="background:#4fc3f7"></span>Class</div>
-        <div class="legend-item"><span class="legend-color" style="background:#81c784"></span>Interface</div>
-        <div class="legend-item"><span class="legend-color" style="background:#ffb74d"></span>Method</div>
-        <div class="legend-item"><span class="legend-color" style="background:#4db6ac"></span>Interface Method</div>
-    </div>
-    <script>
-        const vscode = acquireVsCodeApi();
-
-        const colors = {
-            class: '#4fc3f7',
-            interface: '#81c784',
-            method: '#ffb74d',
-            interfaceMethod: '#4db6ac',
-            property: '#ce93d8',
-            enum: '#f48fb1',
-            default: '#90a4ae'
-        };
-
-        const edgeColors = {
-            calls: '#64b5f6',
-            callsVia: '#4db6ac',
-            implements: '#81c784',
-            inherits: '#ba68c8',
-            uses: '#90a4ae'
-        };
-
-        let cy = cytoscape({
-            container: document.getElementById('cy'),
-            wheelSensitivity: 0.1,
-            style: [
-                {
-                    selector: 'node',
-                    style: {
-                        'background-color': (ele) => colors[ele.data('type')] || colors.default,
-                        'label': 'data(label)',
-                        'text-valign': 'bottom',
-                        'text-margin-y': 5,
-                        'font-size': 10,
-                        'color': '#fff',
-                        'text-outline-color': '#000',
-                        'text-outline-width': 1,
-                        'width': 30,
-                        'height': 30
-                    }
-                },
-                {
-                    selector: 'node[?isCurrent]',
-                    style: {
-                        'border-width': 3,
-                        'border-color': '#fff',
-                        'width': 40,
-                        'height': 40
-                    }
-                },
-                {
-                    selector: 'edge',
-                    style: {
-                        'width': 2,
-                        'line-color': (ele) => edgeColors[ele.data('type')] || '#888',
-                        'target-arrow-color': (ele) => edgeColors[ele.data('type')] || '#888',
-                        'target-arrow-shape': 'triangle',
-                        'curve-style': 'bezier',
-                        'arrow-scale': 0.8
-                    }
-                },
-                {
-                    selector: 'edge[type="inherits"]',
-                    style: {
-                        'line-style': 'dashed',
-                        'target-arrow-shape': 'triangle-tee'
-                    }
-                },
-                {
-                    selector: 'edge[type="implements"]',
-                    style: {
-                        'line-style': 'dotted'
-                    }
-                }
-            ],
-            layout: { name: 'cose', animate: false }
-        });
-
-        // Layout configurations
-        let currentLayout = 'cose';
-        let currentCenterNodeId = null;
-
-        const layoutConfigs = {
-            cose: {
-                name: 'cose',
-                animate: false,
-                nodeRepulsion: 8000,
-                idealEdgeLength: 100,
-                gravity: 0.25
-            },
-            breadthfirst: {
-                name: 'breadthfirst',
-                animate: false,
-                directed: true,
-                spacingFactor: 1.5,
-                avoidOverlap: true
-            },
-            circle: {
-                name: 'circle',
-                animate: false,
-                avoidOverlap: true,
-                spacingFactor: 1.2
-            },
-            concentric: {
-                name: 'concentric',
-                animate: false,
-                minNodeSpacing: 50,
-                concentric: (node) => node.data('isCurrent') ? 10 : 1,
-                levelWidth: () => 2
-            },
-            grid: {
-                name: 'grid',
-                animate: false,
-                avoidOverlap: true,
-                spacingFactor: 1.5
-            }
-        };
-
-        function applyLayout(layoutName) {
-            currentLayout = layoutName;
-            const config = layoutConfigs[layoutName] || layoutConfigs.cose;
-            cy.layout(config).run();
-
-            // Update menu selection
-            document.querySelectorAll('.menu-item').forEach(item => {
-                item.classList.toggle('selected', item.dataset.layout === layoutName);
-            });
-        }
-
-        // Toolbar event handlers
-        const layoutBtn = document.getElementById('layout-btn');
-        const layoutMenu = document.getElementById('layout-menu');
-        const fitBtn = document.getElementById('fit-btn');
-        const centerBtn = document.getElementById('center-btn');
-
-        layoutBtn.addEventListener('click', (e) => {
-            e.stopPropagation();
-            layoutMenu.classList.toggle('show');
-        });
-
-        document.querySelectorAll('.menu-item').forEach(item => {
-            item.addEventListener('click', () => {
-                applyLayout(item.dataset.layout);
-                layoutMenu.classList.remove('show');
-            });
-        });
-
-        document.addEventListener('click', () => {
-            layoutMenu.classList.remove('show');
-        });
-
-        fitBtn.addEventListener('click', () => {
-            cy.fit(null, 20);
-        });
-
-        centerBtn.addEventListener('click', () => {
-            if (currentCenterNodeId) {
-                const centerNode = cy.getElementById(currentCenterNodeId);
-                if (centerNode.length > 0) {
-                    cy.center(centerNode);
-                }
-            }
-        });
-
-        cy.on('tap', 'node', function(evt) {
-            const node = evt.target;
-            vscode.postMessage({
-                type: 'nodeClick',
-                nodeId: node.id()
-            });
-        });
-
-        window.addEventListener('message', event => {
-            const message = event.data;
-
-            if (message.type === 'updateGraph') {
-                cy.elements().remove();
-
-                if (message.nodes.length > 0) {
-                    cy.add(message.nodes);
-                    cy.add(message.edges);
-
-                    currentCenterNodeId = message.centerNodeId;
-                    applyLayout(currentLayout);
-
-                    // Center on current node
-                    if (message.centerNodeId) {
-                        const centerNode = cy.getElementById(message.centerNodeId);
-                        if (centerNode.length > 0) {
-                            cy.center(centerNode);
-                        }
-                    }
-
-                    document.getElementById('info').textContent =
-                        'Nodes: ' + message.nodes.length + ' | Edges: ' + message.edges.length;
-                }
-            } else if (message.type === 'clear') {
-                cy.elements().remove();
-                currentCenterNodeId = null;
-                document.getElementById('info').textContent = 'Select a class or method to visualize';
-            }
-        });
-    </script>
-</body>
-</html>`;
     }
 }

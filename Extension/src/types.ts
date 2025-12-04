@@ -24,6 +24,7 @@ export interface GraphNode {
     containedIn?: string;
     contains?: string[];
     hasMember?: string[];  // Class/Interface -> Method/Property/Field (logical containment)
+    memberOf?: string;     // Method/Property/Field -> containing Class/Interface (reverse of hasMember)
     calls?: string[];
     callsVia?: string[];
     indirectCall?: string[];
@@ -32,9 +33,9 @@ export interface GraphNode {
     uses?: string[];
 }
 
-export type NodeKind = 'class' | 'interface' | 'method' | 'property' | 'field' | 'enum' | 'struct' | 'file' | 'project' | 'solution' | 'layer';
+export type NodeKind = 'class' | 'interface' | 'method' | 'property' | 'field' | 'enum' | 'struct' | 'file' | 'project' | 'solution' | 'layer' | 'namespace';
 
-export type LayerType = 'presentation' | 'services' | 'business' | 'data' | 'infrastructure' | 'test';
+export type LayerType = 'presentation' | 'services' | 'business' | 'data' | 'shared' | 'infrastructure' | 'test';
 
 export interface SourceLocation {
     file?: string;
@@ -81,6 +82,21 @@ export interface InheritanceResponse {
     version: string;
     ancestors: Array<{ node: GraphNode; depth: number }>;
     descendants: Array<{ node: GraphNode; depth: number }>;
+}
+
+export interface ClassMembersResponse {
+    found: boolean;
+    class: GraphNode;
+    members: GraphNode[];
+    methods: GraphNode[];
+    properties: GraphNode[];
+    fields: GraphNode[];
+    count: number;
+    summary: {
+        methods: number;
+        properties: number;
+        fields: number;
+    };
 }
 
 export interface ImpactAnalysisResponse {
@@ -188,6 +204,7 @@ export interface CytoscapeNode {
         isStatic?: boolean;
         isCurrent?: boolean;
         containedIn?: string;
+        expandable?: boolean;
     };
 }
 
@@ -196,7 +213,8 @@ export interface CytoscapeEdge {
         id: string;
         source: string;
         target: string;
-        type: 'calls' | 'callsVia' | 'implements' | 'inherits' | 'uses';
+        type: 'calls' | 'callsVia' | 'implements' | 'inherits' | 'uses' | 'hasMember' | 'dependsOn';
+        label?: string;
     };
 }
 

@@ -170,6 +170,51 @@ static class Program
             if (options.Verbose)
                 Console.WriteLine("Generating symbol relationship graph...");
 
+            // Configure layer detection mode
+            var layerMode = options.LayerDetectionMode.ToLower() switch
+            {
+                "directory" => LayerDetectionService.DetectionMode.Directory,
+                "naming" => LayerDetectionService.DetectionMode.Naming,
+                _ => LayerDetectionService.DetectionMode.Auto
+            };
+
+            // Pre-analyze layers and show summary
+            if (options.ShowLayerSummary)
+            {
+                Console.WriteLine();
+                Console.WriteLine($"Layer detection mode: {layerMode}");
+
+                var layerSummary = graphService.PreAnalyzeLayers(
+                    filteredSymbols,
+                    options.SolutionPath,
+                    layerMode,
+                    options.Verbose);
+
+                LayerDetectionService.PrintSummary(layerSummary);
+
+                // Ask for confirmation in interactive mode
+                if (!options.SkipLayerConfirmation)
+                {
+                    Console.Write("Do you want to proceed with this layer classification? (Y/n): ");
+                    var response = Console.ReadLine()?.Trim().ToLower();
+
+                    if (response == "n" || response == "no")
+                    {
+                        Console.WriteLine("\nLayer classification rejected. You can:");
+                        Console.WriteLine("  1. Use --layer-mode=naming to use naming-based detection only");
+                        Console.WriteLine("  2. Use --layer-mode=directory to force directory-based detection");
+                        Console.WriteLine("  3. Reorganize your project structure to match layer patterns");
+                        Console.WriteLine("\nExiting without generating graph.");
+                        return 1;
+                    }
+                }
+            }
+            else
+            {
+                // Configure layer detection for graph generation
+                graphService.ConfigureLayerDetection(layerMode, options.Verbose);
+            }
+
             var graphResult = await graphService.GenerateSymbolGraph(
                 filteredSymbols,
                 options.SolutionPath,

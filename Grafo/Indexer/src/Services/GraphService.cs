@@ -19,8 +19,102 @@ namespace RoslynIndexer.Services
 {
     public class GraphService
     {
+        private LayerDetectionService? _layerDetectionService;
+        private LayerDetectionService.LayerDetectionSummary? _lastLayerDetectionSummary;
+
+        /// <summary>
+        /// Gets the last layer detection summary (useful for displaying after processing)
+        /// </summary>
+        public LayerDetectionService.LayerDetectionSummary? LastLayerDetectionSummary => _lastLayerDetectionSummary;
+
+        /// <summary>
+        /// Configures the layer detection service with the specified mode
+        /// </summary>
+        public void ConfigureLayerDetection(LayerDetectionService.DetectionMode mode, bool verbose = false)
+        {
+            _layerDetectionService = new LayerDetectionService(mode, verbose);
+        }
+
+        /// <summary>
+        /// Pre-analyzes layer classification and returns summary for user confirmation.
+        /// Call this before GenerateSymbolGraph to get layer classification preview.
+        /// </summary>
+        public LayerDetectionService.LayerDetectionSummary PreAnalyzeLayers(
+            List<SymbolInfo> symbols,
+            string solutionPath,
+            LayerDetectionService.DetectionMode mode = LayerDetectionService.DetectionMode.Auto,
+            bool verbose = false)
+        {
+            Console.WriteLine("Pre-analyzing project layers...");
+
+            var layerService = new LayerDetectionService(mode, verbose);
+
+            // Find repository root
+            var solutionDirectory = Path.GetDirectoryName(solutionPath) ?? "";
+            var repositoryRoot = FindRepositoryRoot(solutionPath) ?? solutionDirectory;
+
+            // Build project paths map
+            var projectPaths = BuildProjectPathsMap(symbols, repositoryRoot);
+
+            // Detect layers
+            var summary = layerService.DetectAllLayers(projectPaths, solutionPath);
+
+            _lastLayerDetectionSummary = summary;
+            return summary;
+        }
+
+        // Cache for .csproj files discovered in repository
+        private Dictionary<string, string>? _csprojCache;
+
+        /// <summary>
+        /// Builds a map of project names to their .csproj file paths (optimized - single directory scan)
+        /// </summary>
+        private Dictionary<string, string> BuildProjectPathsMap(List<SymbolInfo> symbols, string repositoryRoot)
+        {
+            var projectPaths = new Dictionary<string, string>();
+            var projects = symbols.Select(s => s.Project).Where(p => !string.IsNullOrEmpty(p)).Distinct().ToList();
+
+            // Build csproj cache once (single directory traversal)
+            if (_csprojCache == null && !string.IsNullOrEmpty(repositoryRoot))
+            {
+                _csprojCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                try
+                {
+                    var allCsproj = Directory.GetFiles(repositoryRoot, "*.csproj", SearchOption.AllDirectories);
+                    foreach (var csproj in allCsproj)
+                    {
+                        var name = Path.GetFileNameWithoutExtension(csproj);
+                        if (!_csprojCache.ContainsKey(name))
+                            _csprojCache[name] = csproj;
+                    }
+                }
+                catch
+                {
+                    // Ignore errors, we'll fall back to symbol files
+                }
+            }
+
+            // Map each project to its path
+            foreach (var projectName in projects)
+            {
+                // Try cache first
+                if (_csprojCache != null && _csprojCache.TryGetValue(projectName, out var cachedPath))
+                {
+                    projectPaths[projectName] = cachedPath;
+                }
+                else
+                {
+                    // Fallback: use first symbol file from this project
+                    var firstSymbol = symbols.FirstOrDefault(s => s.Project == projectName && !string.IsNullOrEmpty(s.File));
+                    projectPaths[projectName] = firstSymbol?.File ?? "";
+                }
+            }
+
+            return projectPaths;
+        }
+
         public async Task<GraphResult> GenerateSymbolGraph(
-            List<SymbolInfo> symbols, 
+            List<SymbolInfo> symbols,
             string solutionPath,
             List<MethodInvocationInfo>? methodInvocations = null,
             List<TypeUsageInfo>? typeUsages = null,
@@ -54,7 +148,7 @@ namespace RoslynIndexer.Services
             nodes.Add(solutionNode);
 
             // Step 2: Analyze and group projects by architectural layers
-            var projectsByLayer = AnalyzeProjectLayers(symbols);
+            var projectsByLayer = AnalyzeProjectLayers(symbols, solutionPath, repositoryRoot);
             
             // Step 3: Create architectural layer nodes and clusters
             var layerNodes = CreateArchitecturalLayers(projectsByLayer);
@@ -205,60 +299,128 @@ namespace RoslynIndexer.Services
             };
         }
 
-        private Dictionary<string, Dictionary<string, List<SymbolInfo>>> AnalyzeProjectLayers(List<SymbolInfo> symbols)
+        private Dictionary<string, Dictionary<string, List<SymbolInfo>>> AnalyzeProjectLayers(
+            List<SymbolInfo> symbols,
+            string? solutionPath = null,
+            string? repositoryRoot = null)
         {
             Console.WriteLine("Analyzing project layers...");
-            
+
             var projectsByLayer = new Dictionary<string, Dictionary<string, List<SymbolInfo>>>();
             var projects = symbols.GroupBy(s => s.Project).ToDictionary(g => g.Key, g => g.ToList());
-            
-            foreach (var project in projects)
+
+            // Use cached layer detection results if available
+            if (_lastLayerDetectionSummary != null)
             {
-                var layer = DetectProjectLayer(project.Key);
-                
-                if (!projectsByLayer.ContainsKey(layer))
-                    projectsByLayer[layer] = new Dictionary<string, List<SymbolInfo>>();
-                    
-                projectsByLayer[layer][project.Key] = project.Value;
+                Console.WriteLine("Using pre-analyzed layer classification...");
+                foreach (var result in _lastLayerDetectionSummary.AllResults)
+                {
+                    var layer = result.DetectedLayer;
+                    if (!projectsByLayer.ContainsKey(layer))
+                        projectsByLayer[layer] = new Dictionary<string, List<SymbolInfo>>();
+
+                    if (projects.ContainsKey(result.ProjectName))
+                        projectsByLayer[layer][result.ProjectName] = projects[result.ProjectName];
+                }
             }
-            
+            // Use layer detection service if configured
+            else if (_layerDetectionService != null && !string.IsNullOrEmpty(solutionPath))
+            {
+                Console.WriteLine("Using LayerDetectionService...");
+                var projectPaths = BuildProjectPathsMap(symbols, repositoryRoot ?? "");
+                var summary = _layerDetectionService.DetectAllLayers(projectPaths, solutionPath);
+                _lastLayerDetectionSummary = summary;
+
+                foreach (var result in summary.AllResults)
+                {
+                    var layer = result.DetectedLayer;
+                    if (!projectsByLayer.ContainsKey(layer))
+                        projectsByLayer[layer] = new Dictionary<string, List<SymbolInfo>>();
+
+                    if (projects.ContainsKey(result.ProjectName))
+                        projectsByLayer[layer][result.ProjectName] = projects[result.ProjectName];
+                }
+            }
+            // Fallback to legacy detection (improved version)
+            else
+            {
+                Console.WriteLine("Using fallback layer detection (naming-based)...");
+                foreach (var project in projects)
+                {
+                    var layer = DetectProjectLayerLegacy(project.Key);
+
+                    if (!projectsByLayer.ContainsKey(layer))
+                        projectsByLayer[layer] = new Dictionary<string, List<SymbolInfo>>();
+
+                    projectsByLayer[layer][project.Key] = project.Value;
+                }
+            }
+
             Console.WriteLine($"Detected layers: {string.Join(", ", projectsByLayer.Keys)}");
             return projectsByLayer;
         }
 
-        private string DetectProjectLayer(string projectName)
+        /// <summary>
+        /// Legacy layer detection based on project naming conventions (improved version).
+        /// Used as fallback when directory-based detection is not available.
+        /// </summary>
+        private string DetectProjectLayerLegacy(string projectName)
         {
             var lowerName = projectName.ToLower();
-            
-            // Presentation Layer
-            if (lowerName.Contains("web") || lowerName.Contains("api") || lowerName.Contains("mvc") || 
-                lowerName.Contains("ui") || lowerName.Contains("frontend") || lowerName.Contains("client"))
-                return "presentation";
-            
-            // Services Layer
-            if (lowerName.Contains("service") || lowerName.Contains("application") || lowerName.Contains("app"))
-                return "services";
-            
-            // Business Layer
-            if (lowerName.Contains("business") || lowerName.Contains("domain") || lowerName.Contains("core") || 
-                lowerName.Contains("logic") || lowerName.Contains("engine"))
-                return "business";
-            
-            // Data Layer
-            if (lowerName.Contains("data") || lowerName.Contains("repository") || lowerName.Contains("persistence") || 
-                lowerName.Contains("database") || lowerName.Contains("entity"))
+
+            // Priority 1: Specific compound keywords (most reliable)
+            if (lowerName.Contains("dataaccess") || lowerName.EndsWith(".dal"))
                 return "data";
-            
-            // Infrastructure Layer
-            if (lowerName.Contains("infrastructure") || lowerName.Contains("common") || lowerName.Contains("shared") || 
-                lowerName.Contains("framework") || lowerName.Contains("utility") || lowerName.Contains("tools"))
-                return "infrastructure";
-            
-            // Test Layer
-            if (lowerName.Contains("test") || lowerName.Contains("spec") || lowerName.Contains("unit") || 
-                lowerName.Contains("integration"))
+
+            if (lowerName.Contains("businesscomponents") || lowerName.Contains("businessentities"))
+                return "business";
+
+            if (lowerName.Contains("uiprocess") || lowerName.Contains("userinterface"))
+                return "presentation";
+
+            if (lowerName.Contains("serviceagents") || lowerName.Contains("servicehost"))
+                return "services";
+
+            // Priority 2: Test layer (check early)
+            if (lowerName.Contains("test") || lowerName.Contains("spec") ||
+                lowerName.Contains("unittest") || lowerName.Contains("integrationtest"))
                 return "test";
-            
+
+            // Priority 3: Presentation Layer
+            if (lowerName.Contains("web") || lowerName.Contains("mvc") ||
+                lowerName.Contains("frontend") || lowerName.Contains("client") ||
+                lowerName.Contains("webapi") || lowerName.Contains(".api"))
+                return "presentation";
+
+            // Check for "ui" as a word component (avoid false positives)
+            if (lowerName.Contains(".ui.") || lowerName.Contains(".ui") ||
+                lowerName.StartsWith("ui.") || lowerName == "ui")
+                return "presentation";
+
+            // Priority 4: Data Layer
+            if (lowerName.Contains("data") || lowerName.Contains("repository") ||
+                lowerName.Contains("persistence") || lowerName.Contains("database") ||
+                lowerName.Contains("entity") || lowerName.Contains("dal"))
+                return "data";
+
+            // Priority 5: Services Layer (careful with "app" - causes false positives)
+            if (lowerName.Contains("service") || lowerName.Contains("application.") ||
+                lowerName.Contains("applicationserver"))
+                return "services";
+
+            // Priority 6: Business Layer
+            if (lowerName.Contains("business") || lowerName.Contains("domain") ||
+                lowerName.Contains("core") || lowerName.Contains("logic") ||
+                lowerName.Contains("engine"))
+                return "business";
+
+            // Priority 7: Infrastructure Layer
+            if (lowerName.Contains("infrastructure") || lowerName.Contains("common") ||
+                lowerName.Contains("shared") || lowerName.Contains("framework") ||
+                lowerName.Contains("utility") || lowerName.Contains("tools") ||
+                lowerName.Contains("daemon") || lowerName.Contains("adapter"))
+                return "infrastructure";
+
             // Default to business layer
             return "business";
         }
@@ -269,11 +431,12 @@ namespace RoslynIndexer.Services
             var layerColors = new Dictionary<string, string>
             {
                 ["presentation"] = "#3B82F6",   // Blue
-                ["services"] = "#10B981",       // Green  
+                ["services"] = "#10B981",       // Green
                 ["business"] = "#F59E0B",       // Orange
-                ["data"] = "#EF4444",          // Red
+                ["data"] = "#EF4444",           // Red
+                ["shared"] = "#EC4899",          // Pink - shared/transversal
                 ["infrastructure"] = "#6B7280", // Gray
-                ["test"] = "#8B5CF6"           // Purple
+                ["test"] = "#8B5CF6"            // Purple
             };
             
             foreach (var layer in projectsByLayer)
@@ -314,6 +477,7 @@ namespace RoslynIndexer.Services
                 "services" => 8,
                 "business" => 10,
                 "data" => 7,
+                "shared" => 8,  // High importance - used by all layers
                 "infrastructure" => 6,
                 "test" => 3,
                 _ => 5
@@ -328,6 +492,7 @@ namespace RoslynIndexer.Services
                 "services" => "#10B981",
                 "business" => "#F59E0B",
                 "data" => "#EF4444",
+                "shared" => "#EC4899",  // Pink - shared/transversal
                 "infrastructure" => "#6B7280",
                 "test" => "#8B5CF6",
                 _ => "#6B7280"
@@ -389,8 +554,8 @@ namespace RoslynIndexer.Services
             var nodes = new List<GraphNode>();
             var edges = new List<GraphEdge>();
             
-            // Show all classes, interfaces, and methods
-            var componentTypes = new[] { "Class", "Interface", "Method" };
+            // Show all classes, interfaces, methods, and properties
+            var componentTypes = new[] { "Class", "Interface", "Method", "Property" };
             
             foreach (var layer in projectsByLayer)
             {
@@ -539,30 +704,32 @@ namespace RoslynIndexer.Services
         private int GetComponentImportance(SymbolInfo symbol)
         {
             var lowerName = symbol.FullName.ToLower();
-            
-            // Methods have lower importance than classes/interfaces
+
+            // Methods and properties have lower importance than classes/interfaces
             if (symbol.Type == "Method") return 2;
-            
+            if (symbol.Type == "Property") return 2;
+
             if (lowerName.Contains("controller")) return 8;
             if (lowerName.Contains("service")) return 7;
             if (lowerName.Contains("repository")) return 6;
             if (lowerName.Contains("manager")) return 5;
             if (lowerName.Contains("provider") || lowerName.Contains("factory")) return 4;
-            
+
             return 3;
         }
 
         private string GetComponentColor(SymbolInfo symbol)
         {
             var lowerName = symbol.FullName.ToLower();
-            
+
             if (lowerName.Contains("controller")) return "#EC4899";
             if (lowerName.Contains("service")) return "#06B6D4";
             if (lowerName.Contains("repository")) return "#84CC16";
             if (lowerName.Contains("manager")) return "#F97316";
             if (symbol.Type == "Interface") return "#A78BFA";
-            if (symbol.Type == "Method") return "#94A3B8";  // Gray-blue for methods
-            
+            if (symbol.Type == "Method") return "#94A3B8";     // Gray-blue for methods
+            if (symbol.Type == "Property") return "#22D3EE";   // Cyan for properties
+
             return "#64748B";
         }
 
@@ -679,7 +846,7 @@ namespace RoslynIndexer.Services
         private List<GraphEdge> CreateLayerDependencies(Dictionary<string, Dictionary<string, List<SymbolInfo>>> projectsByLayer)
         {
             var edges = new List<GraphEdge>();
-            var layerOrder = new[] { "presentation", "services", "business", "data", "infrastructure" };
+            var layerOrder = new[] { "presentation", "services", "business", "data", "shared", "infrastructure" };
             
             // Create typical architectural dependencies
             for (int i = 0; i < layerOrder.Length - 1; i++)
@@ -877,7 +1044,7 @@ namespace RoslynIndexer.Services
                 .ToDictionary(g => g.Key, g => g.First());
             
             // Index by simple name (case-insensitive) for fast lookups
-            var componentTypes = new[] { "Class", "Interface", "Struct", "Enum", "Method" };
+            var componentTypes = new[] { "Class", "Interface", "Struct", "Enum", "Method", "Property" };
             var components = symbols.Where(s => componentTypes.Contains(s.Type)).ToList();
             
             var nameIndex = new Dictionary<string, List<SymbolInfo>>(StringComparer.OrdinalIgnoreCase);

@@ -6,6 +6,7 @@ import * as vscode from 'vscode';
 import { initClient, getClient } from './api/grafoClient';
 import { GraphNode, CurrentContext } from './types';
 import { logger } from './logger';
+import { initCacheService, getCacheService, CacheService } from './services/cacheService';
 import {
     ImpactProvider,
     DependenciesProvider,
@@ -24,12 +25,19 @@ let overridableMethodsProvider: OverridableMethodsProvider;
 let implementationsProvider: ImplementationsProvider;
 let graphViewProvider: GraphViewProvider;
 
+// Cache service
+let cacheService: CacheService;
+
 // Status bar
 let statusBar: vscode.StatusBarItem;
 
 // Current context
 let currentContext: CurrentContext | null = null;
+let currentElementId: string | null = null; // Track current method/class being displayed
 let debounceTimer: NodeJS.Timeout | undefined;
+
+// Cache cleanup interval
+let cacheCleanupInterval: NodeJS.Timeout | undefined;
 
 /**
  * Prompt user to select version on first run.
@@ -136,8 +144,17 @@ export async function activate(context: vscode.ExtensionContext) {
 
     logger.info(`Config: API=${apiUrl}, Version=${version}`);
 
-    // Initialize API client
-    initClient(apiUrl, version);
+    // Initialize cache service
+    cacheService = initCacheService(context.globalState);
+    logger.info('Cache service initialized');
+
+    // Initialize API client with cache
+    initClient(apiUrl, version, cacheService);
+
+    // Start cache cleanup interval (every 5 minutes)
+    cacheCleanupInterval = setInterval(() => {
+        cacheService.cleanup();
+    }, 5 * 60 * 1000);
 
     // Initialize providers
     impactProvider = new ImpactProvider();
@@ -161,6 +178,16 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.window.registerWebviewViewProvider(GraphViewProvider.viewType, graphViewProvider)
     );
 
+    // Register panel serializer for restoring GrafoPanel on reload
+    context.subscriptions.push(
+        vscode.window.registerWebviewPanelSerializer(GrafoPanel.viewType, {
+            async deserializeWebviewPanel(webviewPanel: vscode.WebviewPanel, _state: unknown) {
+                // Restore the panel
+                GrafoPanel.revive(webviewPanel, context.extensionUri);
+            }
+        })
+    );
+
     // Register commands
     registerCommands(context);
 
@@ -176,6 +203,17 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         vscode.window.onDidChangeActiveTextEditor(onEditorChange),
         vscode.window.onDidChangeTextEditorSelection(onSelectionChange)
+    );
+
+    // Listen for Home mode changes to reset tracking
+    context.subscriptions.push(
+        graphViewProvider.onHomeModeChanged((isHomeMode) => {
+            if (!isHomeMode) {
+                // Exiting Home mode - reset tracking to force refresh on next selection
+                currentElementId = null;
+                logger.debug('Home mode exited - reset currentElementId');
+            }
+        })
     );
 
     // Check connection
@@ -216,11 +254,27 @@ function registerCommands(context: vscode.ExtensionContext) {
             const client = getClient();
             const currentVersion = client?.getVersion() || 'Not configured';
 
+            // Get cache stats
+            const cache = getCacheService();
+            const cacheStats = cache ? cache.getStats() : null;
+            const cacheInfo = cacheStats ? `${cacheStats.size} entries, ${cacheStats.hitRate} hit rate` : 'N/A';
+            const cacheEnabled = cache?.isEnabled ?? true;
+            const cacheIcon = cacheEnabled ? '$(debug-pause)' : '$(debug-start)';
+            const cacheStatus = cacheEnabled ? 'ON' : 'OFF';
+
+            // Debug mode status
+            const debugStatus = logger.debugEnabled ? 'ON' : 'OFF';
+            const debugIcon = logger.debugEnabled ? '$(debug-stop)' : '$(debug-start)';
+
             const options = [
                 { label: '$(versions) Select Version', description: `Current: ${currentVersion}`, action: 'selectVersion' },
                 { label: '$(plug) Check Connection', description: 'Test API connectivity', action: 'checkConnection' },
                 { label: '$(gear) Configure API URL', description: 'Change API endpoint', action: 'configureApiUrl' },
                 { label: '$(refresh) Refresh All Views', description: 'Reload all widgets', action: 'refreshAll' },
+                { label: '$(database) Cache Stats', description: cacheInfo, action: 'cacheStats' },
+                { label: `${cacheIcon} Toggle Cache`, description: `Currently: ${cacheStatus}`, action: 'toggleCache' },
+                { label: '$(trash) Clear Cache', description: 'Clear all cached data', action: 'clearCache' },
+                { label: `${debugIcon} Debug Logs`, description: `Currently: ${debugStatus}`, action: 'toggleDebug' },
                 { label: '$(debug-restart) Reload Window', description: 'Restart VS Code window', action: 'reloadWindow' }
             ];
 
@@ -242,6 +296,18 @@ function registerCommands(context: vscode.ExtensionContext) {
                         break;
                     case 'refreshAll':
                         vscode.commands.executeCommand('grafo.refreshAll');
+                        break;
+                    case 'cacheStats':
+                        vscode.commands.executeCommand('grafo.cacheStats');
+                        break;
+                    case 'toggleCache':
+                        vscode.commands.executeCommand('grafo.toggleCache');
+                        break;
+                    case 'clearCache':
+                        vscode.commands.executeCommand('grafo.clearCache');
+                        break;
+                    case 'toggleDebug':
+                        vscode.commands.executeCommand('grafo.toggleDebug');
                         break;
                     case 'reloadWindow':
                         vscode.commands.executeCommand('workbench.action.reloadWindow');
@@ -340,6 +406,28 @@ function registerCommands(context: vscode.ExtensionContext) {
         })
     );
 
+    // Toggle cache
+    context.subscriptions.push(
+        vscode.commands.registerCommand('grafo.toggleCache', async () => {
+            if (cacheService) {
+                const enabled = await cacheService.toggle();
+                vscode.window.showInformationMessage(`Grafo cache ${enabled ? 'enabled' : 'disabled'}`);
+                logger.info(`Cache toggled: ${enabled ? 'enabled' : 'disabled'}`);
+            }
+        })
+    );
+
+    // Clear cache
+    context.subscriptions.push(
+        vscode.commands.registerCommand('grafo.clearCache', async () => {
+            if (cacheService) {
+                await cacheService.clearAll();
+                vscode.window.showInformationMessage('Grafo cache cleared');
+                logger.info('Cache cleared by user');
+            }
+        })
+    );
+
     // Go to line (for overridable methods)
     context.subscriptions.push(
         vscode.commands.registerCommand('grafo.goToLine', (lineNumber: number) => {
@@ -375,6 +463,38 @@ function registerCommands(context: vscode.ExtensionContext) {
             // Focus the sidebar
             vscode.commands.executeCommand('grafo.graphView.focus');
             logger.info('Panel docked to sidebar');
+        })
+    );
+
+    // Cache stats command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('grafo.cacheStats', () => {
+            const cache = getCacheService();
+            if (!cache) {
+                vscode.window.showWarningMessage('Cache service not initialized');
+                return;
+            }
+
+            const stats = cache.getStats();
+            cache.logStats();
+
+            vscode.window.showInformationMessage(
+                `Cache: ${stats.hits} hits, ${stats.misses} misses (${stats.hitRate}), ${stats.size} entries in memory`,
+                'Clear Cache'
+            ).then(action => {
+                if (action === 'Clear Cache') {
+                    vscode.commands.executeCommand('grafo.clearCache');
+                }
+            });
+        })
+    );
+
+
+    // Toggle debug logs command
+    context.subscriptions.push(
+        vscode.commands.registerCommand('grafo.toggleDebug', () => {
+            const enabled = logger.toggleDebug();
+            vscode.window.showInformationMessage(`Debug logs ${enabled ? 'enabled' : 'disabled'}`);
         })
     );
 }
@@ -510,7 +630,7 @@ async function loadContextFromDocument(document: vscode.TextDocument) {
     const inheritance = classMatch[2];
 
     // Check if it's an Extended class (ICBanking pattern)
-    let targetClassName = className;
+    let baseClassName: string | undefined;
     let baseClassFullName: string | undefined;
     let isExtendedClass = false;
 
@@ -518,14 +638,10 @@ async function loadContextFromDocument(document: vscode.TextDocument) {
         isExtendedClass = true;
         const baseClass = extractBaseClass(inheritance);
         if (baseClass) {
-            targetClassName = baseClass.simpleName;
-
+            baseClassName = baseClass.simpleName;
             if (baseClass.fullName.includes('.')) {
-                // Already fully qualified (e.g., Infocorp.Framework.BusinessComponents.Common)
                 baseClassFullName = baseClass.fullName;
             }
-            // If simple name, we'll resolve using 'using' statements during search
-
             logger.info(`Extended class detected: ${className} → base: ${baseClass.fullName}`);
         }
     } else {
@@ -546,39 +662,43 @@ async function loadContextFromDocument(document: vscode.TextDocument) {
     try {
         let node: GraphNode | null = null;
 
-        if (baseClassFullName) {
-            // Direct fully qualified name (e.g., Infocorp.Framework.BusinessComponents.Common)
-            logger.debug(`Searching for class: ${baseClassFullName}`);
-            node = await client.findByName(baseClassFullName, 'class');
-        } else if (isExtendedClass && usingStatements.length > 0) {
-            // Simple name with using statements - search all and filter by namespace
-            logger.debug(`Searching for class: ${targetClassName} (will filter by using statements)`);
-            const results = await client.searchNodes(targetClassName, 'class', undefined, 30);
+        // ALWAYS try to find the actual class first (e.g., GeolocationExtended)
+        // Pass namespace to filter when there are multiple classes with the same name
+        logger.debug(`Searching for current class: ${className} in namespace: ${namespace || '(none)'}`);
+        node = await client.findByName(className, 'class', { namespace });
 
-            // Find the one whose namespace matches a using statement
-            for (const candidate of results) {
-                if (candidate.name === targetClassName && candidate.namespace) {
-                    // Check if namespace matches any using statement
-                    const matchingUsing = usingStatements.find(ns =>
-                        candidate.namespace === ns ||
-                        candidate.namespace?.startsWith(ns + '.')
-                    );
-                    if (matchingUsing) {
-                        logger.debug(`Found match: ${candidate.namespace}.${candidate.name} (using: ${matchingUsing})`);
-                        node = candidate;
-                        break;
+        // If not found and it's an Extended class, try the base class
+        if (!node && isExtendedClass && baseClassName) {
+            logger.debug(`Class ${className} not found, trying base class: ${baseClassName}`);
+
+            if (baseClassFullName) {
+                // Direct fully qualified name
+                node = await client.findByName(baseClassFullName, 'class');
+            } else if (usingStatements.length > 0) {
+                // Simple name with using statements - search all and filter by namespace
+                const results = await client.searchNodes(baseClassName, 'class', undefined, 30);
+
+                // Find the one whose namespace matches a using statement
+                for (const candidate of results) {
+                    if (candidate.name === baseClassName && candidate.namespace) {
+                        const matchingUsing = usingStatements.find(ns =>
+                            candidate.namespace === ns ||
+                            candidate.namespace?.startsWith(ns + '.')
+                        );
+                        if (matchingUsing) {
+                            logger.debug(`Found base match: ${candidate.namespace}.${candidate.name}`);
+                            node = candidate;
+                            break;
+                        }
                     }
                 }
-            }
 
-            if (!node && results.length > 0) {
-                logger.debug(`No namespace match, using first result`);
-                node = results[0];
+                if (!node && results.length > 0) {
+                    node = results[0];
+                }
+            } else {
+                node = await client.findByName(baseClassName, 'class');
             }
-        } else {
-            // Simple class name without Extended pattern
-            logger.debug(`Searching for class: ${targetClassName}`);
-            node = await client.findByName(targetClassName, 'class');
         }
         if (node) {
             logger.info(`Found in graph: ${node.id}`);
@@ -588,19 +708,22 @@ async function loadContextFromDocument(document: vscode.TextDocument) {
 
             currentContext = {
                 filePath: document.uri.fsPath,
-                className: targetClassName,
+                className: className,  // Always use actual class name (e.g., GeolocationExtended)
                 namespace,
-                baseClass: isExtendedClass ? targetClassName : undefined,
+                baseClass: isExtendedClass ? baseClassName : undefined,  // Base class name (e.g., Geolocation)
                 isExtendedClass,
                 node
             };
+
+            // Track current element
+            currentElementId = node.id;
 
             // Load widgets
             classOverviewProvider.loadForClass(node);
             overridableMethodsProvider.loadForClass(node, document);
             graphViewProvider.loadForNode(node);
 
-            // Sync to panel if open and not locked
+            // Sync to panel if open and not locked/home mode
             if (GrafoPanel.currentPanel && !GrafoPanel.currentPanel.isLocked) {
                 GrafoPanel.currentPanel.loadForClass(node);
             }
@@ -610,7 +733,7 @@ async function loadContextFromDocument(document: vscode.TextDocument) {
                 implementationsProvider.loadForInterface(node);
             }
         } else {
-            logger.warn(`Class not found in graph: ${targetClassName}`);
+            logger.warn(`Class not found in graph: ${className}`);
         }
     } catch (e: any) {
         logger.error('Error loading context', e);
@@ -626,24 +749,43 @@ async function loadContextFromSelection(editor: vscode.TextEditor) {
 
     if (methodMatch) {
         const methodName = methodMatch[1];
-        logger.separator(`Method: ${methodName}`);
 
         const client = getClient();
         if (!client) return;
 
         try {
-            const node = await client.findByName(methodName, 'method', currentContext?.className);
+            // First try to find method in current class (e.g., GeolocationExtended)
+            // Pass className and namespace to filter correctly
+            let node = await client.findByName(methodName, 'method', {
+                className: currentContext?.className,
+                namespace: currentContext?.namespace
+            });
+
+            // If not found and we have a base class, try the base class
+            if (!node && currentContext?.baseClass) {
+                logger.debug(`Method not found in ${currentContext.className}, trying base class ${currentContext.baseClass}`);
+                node = await client.findByName(methodName, 'method', { className: currentContext.baseClass });
+            }
+
             if (node) {
+                // Only update if it's a different element
+                if (currentElementId === node.id) {
+                    return;
+                }
+
+                logger.separator(`Method: ${methodName}`);
                 logger.info(`Found method: ${node.id}`);
                 logger.widget('Impact', 'Loading', methodName);
                 logger.widget('Dependencies', 'Loading', methodName);
                 logger.widget('Graph', 'Loading', methodName);
 
+                currentElementId = node.id;
+
                 impactProvider.loadForNode(node);
                 dependenciesProvider.loadForNode(node);
                 graphViewProvider.loadForNode(node);
 
-                // Sync to panel if open and not locked
+                // Sync to panel if open and not locked/home mode
                 if (GrafoPanel.currentPanel && !GrafoPanel.currentPanel.isLocked) {
                     GrafoPanel.currentPanel.loadForNode(node);
                 }
@@ -652,6 +794,100 @@ async function loadContextFromSelection(editor: vscode.TextEditor) {
             }
         } catch (e: any) {
             logger.error('Error loading method context', e);
+        }
+        return;
+    }
+
+    // Check if cursor is on a class declaration
+    const classMatch = line.match(/(?:public|private|protected|internal)\s+(?:static\s+)?(?:partial\s+)?(?:abstract\s+)?(?:sealed\s+)?class\s+(\w+)(?:\s*:\s*([^{]+))?/);
+    if (classMatch) {
+        const className = classMatch[1];
+        const inheritance = classMatch[2]?.trim();
+
+        const client = getClient();
+        if (!client) return;
+
+        try {
+            // First try to find the current class with namespace for accuracy
+            let node = await client.findByName(className, 'class', { namespace: currentContext?.namespace });
+            let targetName = className;
+
+            // If not found and has inheritance, try base class or first interface
+            if (!node && inheritance) {
+                const baseInfo = extractBaseClass(inheritance);
+                if (baseInfo) {
+                    logger.debug(`Class ${className} not found, trying base: ${baseInfo.simpleName}`);
+                    node = await client.findByName(baseInfo.simpleName, 'class');
+                    if (node) {
+                        targetName = baseInfo.simpleName;
+                    }
+                }
+
+                // If still not found, try first interface
+                if (!node) {
+                    const interfaceMatch = inheritance.match(/I[A-Z]\w+/);
+                    if (interfaceMatch) {
+                        logger.debug(`Trying interface: ${interfaceMatch[0]}`);
+                        node = await client.findByName(interfaceMatch[0], 'interface');
+                        if (node) {
+                            targetName = interfaceMatch[0];
+                        }
+                    }
+                }
+            }
+
+            if (node) {
+                // Only update if it's a different element
+                if (currentElementId === node.id) {
+                    return;
+                }
+
+                logger.separator(`Class: ${className}`);
+                logger.info(`Found ${node.kind}: ${node.id}`);
+                logger.widget('Graph', 'Loading', targetName);
+
+                currentElementId = node.id;
+
+                // Update current context
+                currentContext = {
+                    ...currentContext!,
+                    className: className,
+                    node
+                };
+
+                // Load widgets
+                classOverviewProvider.loadForClass(node);
+                graphViewProvider.loadForNode(node);
+
+                // Sync to panel if open and not locked/home mode
+                if (GrafoPanel.currentPanel && !GrafoPanel.currentPanel.isLocked) {
+                    GrafoPanel.currentPanel.loadForClass(node);
+                }
+            } else {
+                logger.warn(`Class not found in graph: ${className}`);
+            }
+        } catch (e: any) {
+            logger.error('Error loading class context', e);
+        }
+        return;
+    }
+
+    // Not on a method or class declaration - check if we should show class context
+    // This handles when cursor is in class body (not on method signature)
+    if (currentContext?.node && currentElementId !== currentContext.node.id) {
+        logger.separator(`Class (body): ${currentContext.className}`);
+        logger.info(`Returning to class context: ${currentContext.node.id}`);
+        logger.widget('Graph', 'Loading', currentContext.className);
+
+        currentElementId = currentContext.node.id;
+
+        // Load class widgets
+        classOverviewProvider.loadForClass(currentContext.node);
+        graphViewProvider.loadForNode(currentContext.node);
+
+        // Sync to panel if open and not locked/home mode
+        if (GrafoPanel.currentPanel && !GrafoPanel.currentPanel.isLocked) {
+            GrafoPanel.currentPanel.loadForClass(currentContext.node);
         }
         return;
     }
@@ -698,6 +934,7 @@ function extractBaseClass(inheritance: string): { fullName: string; simpleName: 
 
 function clearAllProviders() {
     currentContext = null;
+    currentElementId = null;
     impactProvider.clear();
     dependenciesProvider.clear();
     classOverviewProvider.clear();
@@ -710,5 +947,9 @@ function clearAllProviders() {
 }
 
 export function deactivate() {
+    // Clear cache cleanup interval
+    if (cacheCleanupInterval) {
+        clearInterval(cacheCleanupInterval);
+    }
     console.log('Grafo Code Explorer deactivated');
 }

@@ -54,7 +54,8 @@ async def search_nodes(
     type: Optional[str] = Query(None, description="Node type: class, method, interface, etc."),
     solution: Optional[str] = Query(None, description="Filter by solution"),
     project: Optional[str] = Query(None, description="Filter by project"),
-    limit: int = Query(50, ge=1, le=500, description="Max results")
+    limit: int = Query(50, ge=1, le=500, description="Max results"),
+    exact_first: bool = Query(True, description="Prioritize exact name matches")
 ):
     """Search nodes by name/fullName in a specific version."""
     service = get_nodes_service()
@@ -67,7 +68,8 @@ async def search_nodes(
         node_type=type,
         solution=solution,
         project=project,
-        limit=limit
+        limit=limit,
+        exact_first=exact_first
     )
     return {"version": version, "query": q, "results": results, "count": len(results)}
 
@@ -212,3 +214,74 @@ async def get_statistics(
     if not await service.check_version_exists(version):
         raise HTTPException(status_code=404, detail=f"Version {version} not found")
     return await service.get_statistics(version)
+
+
+@router.get("/layers/{version}")
+async def get_projects_by_layer(
+    version: str = Path(..., description="Graph version")
+):
+    """Get projects grouped by architectural layer."""
+    service = get_nodes_service()
+    if not await service.check_version_exists(version):
+        raise HTTPException(status_code=404, detail=f"Version {version} not found")
+    return await service.get_projects_by_layer(version)
+
+
+# ============================================================================
+# CLASS MEMBERS
+# ============================================================================
+
+@router.get("/graph/{version}/members/{node_id:path}")
+async def get_class_members(
+    version: str = Path(..., description="Graph version"),
+    node_id: str = Path(..., description="Class node ID (e.g., grafo:cls/xxxxx)"),
+    types: Optional[str] = Query(None, description="Filter member types: method,property,field (comma-separated)")
+):
+    """
+    Get all members (methods, properties, fields) of a class.
+
+    Returns the class info along with its members grouped by type.
+    """
+    service = get_nodes_service()
+    if not await service.check_version_exists(version):
+        raise HTTPException(status_code=404, detail=f"Version {version} not found")
+
+    # Parse types filter
+    member_types = None
+    if types:
+        member_types = [t.strip() for t in types.split(',') if t.strip()]
+
+    result = await service.get_class_members(
+        version=version,
+        class_id=node_id,
+        member_types=member_types
+    )
+
+    if not result.get("found"):
+        raise HTTPException(status_code=404, detail=result.get("message", "Class not found"))
+
+    return result
+
+
+# ============================================================================
+# CROSS-SOLUTION DEPENDENCIES
+# ============================================================================
+
+@router.get("/graph/{version}/solution-dependencies")
+async def get_solution_dependencies(
+    version: str = Path(..., description="Graph version")
+):
+    """
+    Find cross-solution dependencies based on inherits/implements relationships.
+
+    Analyzes which solutions depend on which others by examining class inheritance
+    and interface implementations that cross solution boundaries.
+
+    Returns a list of dependencies with the source solution, target solution,
+    and the specific class relationships that create the dependency.
+    """
+    service = get_nodes_service()
+    if not await service.check_version_exists(version):
+        raise HTTPException(status_code=404, detail=f"Version {version} not found")
+
+    return await service.get_solution_dependencies(version)

@@ -57,6 +57,11 @@
           "type": "number",
           "default": 2,
           "description": "Max depth for graph traversal"
+        },
+        "grafo.cacheEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable/disable client-side cache for API responses"
         }
       }
     },
@@ -112,6 +117,21 @@
         "command": "grafo.dockPanel",
         "title": "Grafo: Dock to Sidebar",
         "icon": "$(layout-sidebar-left)"
+      },
+      {
+        "command": "grafo.cacheStats",
+        "title": "Grafo: Show Cache Statistics",
+        "icon": "$(database)"
+      },
+      {
+        "command": "grafo.toggleCache",
+        "title": "Grafo: Toggle Cache",
+        "icon": "$(debug-pause)"
+      },
+      {
+        "command": "grafo.clearCache",
+        "title": "Grafo: Clear Cache",
+        "icon": "$(trash)"
       }
     ],
     "viewsContainers": {

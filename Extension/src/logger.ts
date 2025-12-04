@@ -6,9 +6,25 @@ import * as vscode from 'vscode';
 class GrafoLogger {
     private channel: vscode.OutputChannel;
     private startTime: number = Date.now();
+    private _debugEnabled: boolean = false;
 
     constructor() {
         this.channel = vscode.window.createOutputChannel('Grafo Explorer');
+    }
+
+    get debugEnabled(): boolean {
+        return this._debugEnabled;
+    }
+
+    setDebugEnabled(enabled: boolean) {
+        this._debugEnabled = enabled;
+        this.info(`Debug mode ${enabled ? 'enabled' : 'disabled'}`);
+    }
+
+    toggleDebug(): boolean {
+        this._debugEnabled = !this._debugEnabled;
+        this.info(`Debug mode ${this._debugEnabled ? 'enabled' : 'disabled'}`);
+        return this._debugEnabled;
     }
 
     private timestamp(): string {
@@ -47,6 +63,7 @@ class GrafoLogger {
     }
 
     debug(message: string) {
+        if (!this._debugEnabled) return;
         this.channel.appendLine(`[${this.timestamp()}] DEBUG ${message}`);
     }
 
