@@ -219,9 +219,12 @@ export async function activate(context: vscode.ExtensionContext) {
     // Check connection
     checkConnection();
 
-    // Load for current editor
+    // Load for current editor (with small delay to ensure webview is ready)
     if (vscode.window.activeTextEditor?.document.languageId === 'csharp') {
-        onEditorChange(vscode.window.activeTextEditor);
+        setTimeout(() => {
+            logger.debug('[Activation] Loading initial editor context...');
+            onEditorChange(vscode.window.activeTextEditor);
+        }, 500);
     }
 
     logger.info('Extension activated successfully');
@@ -621,23 +624,29 @@ async function loadContextFromDocument(document: vscode.TextDocument) {
     }
     logger.debug(`Found ${usingStatements.length} using statements`);
 
-    // Extract class info
+    // Extract class or interface info
     const classMatch = text.match(/class\s+(\w+)(?:\s*:\s*([^{\n]+))?/);
-    if (!classMatch) {
-        logger.debug('No class found in file');
+    const interfaceMatch = text.match(/interface\s+(I\w+)(?:\s*:\s*([^{\n]+))?/);
+
+    if (!classMatch && !interfaceMatch) {
+        logger.debug('No class or interface found in file');
         clearAllProviders();
         return;
     }
 
-    const className = classMatch[1];
-    const inheritance = classMatch[2];
+    // Determine if it's a class or interface
+    const isInterface = !classMatch && !!interfaceMatch;
+    const typeName = isInterface ? interfaceMatch![1] : classMatch![1];
+    const inheritance = isInterface ? interfaceMatch![2] : classMatch![2];
 
-    // Check if it's an Extended class (ICBanking pattern)
+    // Check if it's an Extended class (ICBanking pattern) - only for classes
     let baseClassName: string | undefined;
     let baseClassFullName: string | undefined;
     let isExtendedClass = false;
 
-    if (className.endsWith('Extended') && inheritance) {
+    if (isInterface) {
+        logger.context('Interface', typeName);
+    } else if (typeName.endsWith('Extended') && inheritance) {
         isExtendedClass = true;
         const baseClass = extractBaseClass(inheritance);
         if (baseClass) {
@@ -645,10 +654,10 @@ async function loadContextFromDocument(document: vscode.TextDocument) {
             if (baseClass.fullName.includes('.')) {
                 baseClassFullName = baseClass.fullName;
             }
-            logger.info(`Extended class detected: ${className} → base: ${baseClass.fullName}`);
+            logger.info(`Extended class detected: ${typeName} → base: ${baseClass.fullName}`);
         }
     } else {
-        logger.context('Class', className);
+        logger.context('Class', typeName);
     }
 
     // Extract namespace
@@ -660,19 +669,24 @@ async function loadContextFromDocument(document: vscode.TextDocument) {
 
     // Find the class in the graph
     const client = getClient();
-    if (!client) return;
+    if (!client) {
+        logger.warn('[loadContextFromDocument] No client available');
+        return;
+    }
 
     try {
         let node: GraphNode | null = null;
+        const nodeKind = isInterface ? 'interface' : 'class';
 
-        // ALWAYS try to find the actual class first (e.g., GeolocationExtended)
-        // Pass namespace to filter when there are multiple classes with the same name
-        logger.debug(`Searching for current class: ${className} in namespace: ${namespace || '(none)'}`);
-        node = await client.findByName(className, 'class', { namespace });
+        // ALWAYS try to find the actual type first (class or interface)
+        // Pass namespace to filter when there are multiple types with the same name
+        logger.info(`[loadContextFromDocument] Searching for ${nodeKind}: ${typeName} in namespace: ${namespace || '(none)'}`);
+        node = await client.findByName(typeName, nodeKind, { namespace });
+        logger.debug(`[loadContextFromDocument] findByName result: ${node ? node.id : 'null'}`);
 
         // If not found and it's an Extended class, try the base class
-        if (!node && isExtendedClass && baseClassName) {
-            logger.debug(`Class ${className} not found, trying base class: ${baseClassName}`);
+        if (!node && !isInterface && isExtendedClass && baseClassName) {
+            logger.debug(`Class ${typeName} not found, trying base class: ${baseClassName}`);
 
             if (baseClassFullName) {
                 // Direct fully qualified name
@@ -706,14 +720,13 @@ async function loadContextFromDocument(document: vscode.TextDocument) {
         if (node) {
             logger.info(`Found in graph: ${node.id}`);
             logger.widget('ClassOverview', 'Loading', node.name);
-            logger.widget('OverridableMethods', 'Loading', node.name);
             logger.widget('Graph', 'Loading', node.name);
 
             currentContext = {
                 filePath: document.uri.fsPath,
-                className: className,  // Always use actual class name (e.g., GeolocationExtended)
+                className: typeName,  // Always use actual type name
                 namespace,
-                baseClass: isExtendedClass ? baseClassName : undefined,  // Base class name (e.g., Geolocation)
+                baseClass: isExtendedClass ? baseClassName : undefined,
                 isExtendedClass,
                 node
             };
@@ -721,9 +734,8 @@ async function loadContextFromDocument(document: vscode.TextDocument) {
             // Track current element
             currentElementId = node.id;
 
-            // Load widgets
+            // Load widgets based on type
             classOverviewProvider.loadForClass(node);
-            overridableMethodsProvider.loadForClass(node, document);
             graphViewProvider.loadForNode(node);
 
             // Sync to panel if open and not locked/home mode
@@ -731,12 +743,21 @@ async function loadContextFromDocument(document: vscode.TextDocument) {
                 GrafoPanel.currentPanel.loadForClass(node);
             }
 
-            if (node.kind === 'interface') {
+            if (isInterface || node.kind === 'interface') {
+                // Interface: load implementations widget
                 logger.widget('Implementations', 'Loading', node.name);
                 implementationsProvider.loadForInterface(node);
+                // Clear override widget (not applicable for interfaces)
+                overridableMethodsProvider.clear();
+            } else {
+                // Class: load overridable methods widget
+                logger.widget('OverridableMethods', 'Loading', node.name);
+                overridableMethodsProvider.loadForClass(node, document);
+                // Clear implementations widget (not applicable for classes)
+                implementationsProvider.clear();
             }
         } else {
-            logger.warn(`Class not found in graph: ${className}`);
+            logger.warn(`${nodeKind} not found in graph: ${typeName}`);
         }
     } catch (e: any) {
         logger.error('Error loading context', e);
