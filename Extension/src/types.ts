@@ -105,18 +105,22 @@ export interface ImpactAnalysisResponse {
     target: GraphNode;
     description: string;
     impact: {
-        level: 'high' | 'medium' | 'low';
+        level: 'critical' | 'high' | 'medium' | 'low';
+        flowsAffected: number;
         totalIncoming: number;
         totalOutgoing: number;
         directCallers: number;
+        viaInterfaceCallers: number;
         implementers: number;
         inheritors: number;
         affectedProjects: number;
         affectedLayers: number;
         hasPresentation: boolean;
+        hasServices: boolean;
     };
     incoming: {
         callers: GraphNode[];
+        callersViaInterface: GraphNode[];
         callersByLayer: Record<string, GraphNode[]>;
         implementers: GraphNode[];
         inheritors: GraphNode[];

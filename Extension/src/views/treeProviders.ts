@@ -79,6 +79,7 @@ export class ImpactProvider implements vscode.TreeDataProvider<TreeItem> {
     readonly onDidChangeTreeData = this._onDidChange.event;
 
     private callersByLayer: Map<string, NodeItem[]> = new Map();
+    private callersViaInterface: NodeItem[] = [];
     private implementers: NodeItem[] = [];
     private inheritors: NodeItem[] = [];
     private currentNode: GraphNode | null = null;
@@ -93,6 +94,7 @@ export class ImpactProvider implements vscode.TreeDataProvider<TreeItem> {
         this.loading = true;
         this.currentNode = node;
         this.callersByLayer.clear();
+        this.callersViaInterface = [];
         this.implementers = [];
         this.inheritors = [];
         this.impactData = null;
@@ -115,9 +117,14 @@ export class ImpactProvider implements vscode.TreeDataProvider<TreeItem> {
             this.affectedProjects = response.affectedProjects;
             this.impactDescription = response.description || '';
 
-            // Process callers by layer
+            // Process callers by layer (includes both direct and via interface)
             for (const [layer, callers] of Object.entries(response.incoming.callersByLayer)) {
                 this.callersByLayer.set(layer, callers.map(c => new NodeItem(c)));
+            }
+
+            // Process callers via interface separately for display
+            if (response.incoming.callersViaInterface) {
+                this.callersViaInterface = response.incoming.callersViaInterface.map(c => new NodeItem(c));
             }
 
             // Process implementers and inheritors
@@ -135,6 +142,7 @@ export class ImpactProvider implements vscode.TreeDataProvider<TreeItem> {
     clear() {
         this.currentNode = null;
         this.callersByLayer.clear();
+        this.callersViaInterface = [];
         this.implementers = [];
         this.inheritors = [];
         this.impactData = null;
@@ -163,10 +171,11 @@ export class ImpactProvider implements vscode.TreeDataProvider<TreeItem> {
             items.push(new InfoItem(`Method: ${this.currentNode.name}`, 'target'));
 
             const hasCallers = this.callersByLayer.size > 0;
+            const hasViaInterface = this.callersViaInterface.length > 0;
             const hasImplementers = this.implementers.length > 0;
             const hasInheritors = this.inheritors.length > 0;
 
-            if (!hasCallers && !hasImplementers && !hasInheritors) {
+            if (!hasCallers && !hasViaInterface && !hasImplementers && !hasInheritors) {
                 items.push(new InfoItem('───────────────', 'dash'));
                 items.push(new InfoItem('🟢 Low Impact - No dependencies', 'circle-filled'));
                 items.push(new InfoItem('No dependencies found', 'check'));
@@ -177,9 +186,9 @@ export class ImpactProvider implements vscode.TreeDataProvider<TreeItem> {
             items.push(new InfoItem('───────────────', 'dash'));
 
             if (this.impactData) {
-                // Use impact level from API
-                const icons: Record<string, string> = { high: '🔴', medium: '🟡', low: '🟢' };
-                const labels: Record<string, string> = { high: 'High Impact', medium: 'Medium Impact', low: 'Low Impact' };
+                // Use impact level from API - now includes "critical"
+                const icons: Record<string, string> = { critical: '🟣', high: '🔴', medium: '🟡', low: '🟢' };
+                const labels: Record<string, string> = { critical: 'CRITICAL', high: 'High Impact', medium: 'Medium Impact', low: 'Low Impact' };
 
                 // Impact level with description tooltip
                 const impactItem = new InfoItem(`${icons[this.impactData.level]} ${labels[this.impactData.level]}`, 'circle-filled');
@@ -188,12 +197,38 @@ export class ImpactProvider implements vscode.TreeDataProvider<TreeItem> {
                 }
                 items.push(impactItem);
 
-                items.push(new InfoItem(`Callers: ${this.impactData.directCallers}`, 'call-incoming'));
+                // Show flows affected (the key metric now)
+                const flowsAffected = this.impactData.flowsAffected || 0;
+                if (flowsAffected > 0) {
+                    items.push(new InfoItem(`Flows affected: ${flowsAffected}`, 'git-branch'));
+                }
+
+                // Show both direct and via interface callers
+                const directCallers = this.impactData.directCallers || 0;
+                const viaInterfaceCallers = this.impactData.viaInterfaceCallers || 0;
+                const totalCallers = directCallers + viaInterfaceCallers;
+
+                if (viaInterfaceCallers > 0) {
+                    items.push(new InfoItem(`Callers: ${totalCallers} (${directCallers} direct, ${viaInterfaceCallers} via interface)`, 'call-incoming'));
+                } else {
+                    items.push(new InfoItem(`Callers: ${totalCallers}`, 'call-incoming'));
+                }
+
                 items.push(new InfoItem(`Layers: ${this.impactData.affectedLayers} | Projects: ${this.impactData.affectedProjects}`, 'layers'));
+
+                // Warning for critical level
+                if (this.impactData.level === 'critical') {
+                    items.push(new InfoItem('🟣 Multiple service flows affected!', 'warning'));
+                }
 
                 // Warning for UI layer affected
                 if (this.impactData.hasPresentation) {
                     items.push(new InfoItem('⚠️ UI layer affected', 'warning'));
+                }
+
+                // Warning for services layer via interface (Unity/DI)
+                if (this.impactData.hasServices && viaInterfaceCallers > 0) {
+                    items.push(new InfoItem('⚠️ Services layer via Unity/DI', 'warning'));
                 }
 
                 // Additional stats
@@ -224,6 +259,11 @@ export class ImpactProvider implements vscode.TreeDataProvider<TreeItem> {
                 .map(l => new GroupItem(l.toUpperCase(), this.callersByLayer.get(l)!, layerIcons[l]));
 
             items.push(...groups);
+
+            // Via Interface callers (Unity/DI - high impact indicator)
+            if (hasViaInterface) {
+                items.push(new GroupItem('🔗 VIA INTERFACE/UNITY', this.callersViaInterface, 'plug'));
+            }
 
             // Implementers (high impact indicator)
             if (hasImplementers) {

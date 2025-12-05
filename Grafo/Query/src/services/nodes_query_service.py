@@ -750,6 +750,12 @@ class NodesQueryService:
         """
         Analyze the impact of changes to a node.
         Returns callers, implementers, inheritors, and affected projects.
+
+        Algorithm:
+        1. Find direct callers of the target method (nodes with target in their `calls`)
+        2. Find the containing class and its interfaces
+        3. Find callers via interface methods (nodes with interface methods in their `callsVia`)
+        4. Recursively traverse up to services/presentation layer
         """
         try:
             collection = self._get_collection(version)
@@ -768,12 +774,143 @@ class NodesQueryService:
 
             # Incoming dependencies - who depends on this node
             incoming_callers = []
+            incoming_callers_via_interface = []
             incoming_implementers = []
             incoming_inheritors = []
+            seen_class_ids = set()
+            seen_method_ids = set()
 
-            # Find nodes that call this one
-            async for doc in collection.find({"calls": node_id}):
-                incoming_callers.append(self._normalize_node(doc))
+            # Get the containing class of the target method
+            method_name = target.get("name")
+            full_name = target.get("fullName", "")
+            target_kind = target.get("kind", "")
+            class_full_name = ".".join(full_name.split(".")[:-1]) if "." in full_name and target_kind == "method" else ""
+
+            logger.info(f"[Impact] Analyzing {target_kind} '{method_name}' (ID: {node_id})")
+            if class_full_name:
+                logger.info(f"[Impact] Containing class: {class_full_name}")
+
+            # Helper to get the containing class of a method
+            async def get_containing_class(method_full_name: str):
+                """Extract class fullName from method fullName and find the class"""
+                class_name = ".".join(method_full_name.split(".")[:-1])
+                if class_name:
+                    class_doc = await collection.find_one({
+                        "fullName": class_name,
+                        "kind": {"$in": ["class", "interface"]}
+                    })
+                    if class_doc:
+                        return self._normalize_node(class_doc)
+                return None
+
+            # Helper to find callers of a method and traverse up
+            async def find_method_callers(method_id: str, depth: int = 0, max_depth: int = 6):
+                """Find methods that call the target method, then get their containing classes"""
+                if depth >= max_depth or method_id in seen_method_ids:
+                    return
+                seen_method_ids.add(method_id)
+
+                # Find methods that have this method in their `calls` array
+                async for caller_doc in collection.find({"calls": method_id, "kind": "method"}):
+                    caller = self._normalize_node(caller_doc)
+                    caller_full_name = caller.get("fullName", "")
+                    containing_class = await get_containing_class(caller_full_name)
+
+                    if containing_class and containing_class["id"] not in seen_class_ids:
+                        seen_class_ids.add(containing_class["id"])
+                        class_layer = containing_class.get("layer", "")
+                        logger.debug(f"[Impact] Depth {depth}: {containing_class['name']} ({class_layer}) calls method directly")
+
+                        # Add to appropriate list based on layer
+                        if class_layer in ["services", "presentation"]:
+                            incoming_callers_via_interface.append(containing_class)
+                        else:
+                            incoming_callers.append(containing_class)
+
+                        # ALWAYS continue traversing up until presentation layer
+                        if class_layer != "presentation":
+                            await find_class_callers(containing_class["id"], depth + 1, max_depth)
+
+            # Helper to find callers of a class via its interface
+            async def find_class_callers(class_id: str, depth: int = 0, max_depth: int = 6):
+                """Find classes that call methods of this class via interface"""
+                if depth >= max_depth:
+                    return
+
+                # Get the class document to find its interfaces and methods
+                class_doc = await collection.find_one({"_id": class_id})
+                if not class_doc:
+                    return
+
+                class_name = class_doc.get("name", "")
+                interface_ids = class_doc.get("implements", [])
+                class_member_ids = class_doc.get("hasMember", [])
+
+                logger.debug(f"[Impact] Depth {depth}: Analyzing class {class_name}, implements {len(interface_ids)} interfaces")
+
+                # For each interface this class implements, find who calls via that interface
+                # NOTE: callsVia contains INTERFACE IDs, not method IDs
+                for iface_id in interface_ids:
+                    iface_doc = await collection.find_one({"_id": iface_id})
+                    if iface_doc:
+                        logger.debug(f"[Impact] Searching for callers via interface {iface_doc.get('name', iface_id)}")
+
+                    # Find methods that call via this interface (callsVia contains interface ID)
+                    async for caller_doc in collection.find({
+                        "callsVia": iface_id,
+                        "kind": "method"
+                    }):
+                        caller = self._normalize_node(caller_doc)
+                        caller_full_name = caller.get("fullName", "")
+                        containing_class = await get_containing_class(caller_full_name)
+
+                        if containing_class and containing_class["id"] not in seen_class_ids:
+                            seen_class_ids.add(containing_class["id"])
+                            class_layer = containing_class.get("layer", "")
+                            logger.debug(f"[Impact] Depth {depth}: {containing_class['name']} ({class_layer}) calls via interface {iface_doc.get('name', iface_id) if iface_doc else iface_id}")
+
+                            # Add to appropriate list based on layer
+                            if class_layer in ["services", "presentation"]:
+                                incoming_callers_via_interface.append(containing_class)
+                            else:
+                                incoming_callers.append(containing_class)
+
+                            # ALWAYS continue traversing up until presentation layer
+                            # (unless we hit max depth or already at presentation)
+                            if class_layer != "presentation":
+                                await find_class_callers(containing_class["id"], depth + 1, max_depth)
+
+                # Also find direct callers of this class's methods
+                for member_id in class_member_ids:
+                    if member_id not in seen_method_ids:
+                        await find_method_callers(member_id, depth, max_depth)
+
+            # STEP 1: Find direct callers of the target method
+            if target_kind == "method":
+                logger.info(f"[Impact] Step 1: Finding direct callers of method {node_id}")
+                await find_method_callers(node_id, 0, 6)
+
+            # STEP 2: Find the target class and traverse via its interfaces
+            if class_full_name:
+                target_class_doc = await collection.find_one({
+                    "fullName": class_full_name,
+                    "kind": "class"
+                })
+
+                if target_class_doc:
+                    target_class_id = target_class_doc.get("_id")
+                    target_class_name = target_class_doc.get("name", "")
+                    target_implements = target_class_doc.get("implements", [])
+                    logger.info(f"[Impact] Step 2: Class {target_class_name} implements {len(target_implements)} interfaces")
+
+                    # Find callers via the class's interfaces
+                    await find_class_callers(target_class_id, 0, 6)
+            elif target_kind == "class":
+                # Target is a class, find callers directly
+                logger.info(f"[Impact] Step 2: Target is a class, finding callers")
+                await find_class_callers(node_id, 0, 6)
+
+            logger.info(f"[Impact] Result: {len(incoming_callers)} direct callers, {len(incoming_callers_via_interface)} upstream callers")
 
             # Find nodes that implement this interface
             async for doc in collection.find({"implements": node_id}):
@@ -787,32 +924,61 @@ class NodesQueryService:
             affected_projects = set()
             affected_layers = set()
 
-            for node in incoming_callers + incoming_implementers + incoming_inheritors:
+            # Include ALL callers (direct + via interface) in affected calculations
+            all_callers = incoming_callers + incoming_callers_via_interface
+            for node in all_callers + incoming_implementers + incoming_inheritors:
                 if node.get("project"):
                     affected_projects.add(node["project"])
                 if node.get("layer"):
                     affected_layers.add(node["layer"])
 
-            # Group callers by layer
+            # Group ALL callers by layer (both direct and via interface)
             callers_by_layer: Dict[str, list] = {}
-            for caller in incoming_callers:
+            for caller in all_callers:
                 layer = caller.get("layer") or "other"
                 if layer not in callers_by_layer:
                     callers_by_layer[layer] = []
                 callers_by_layer[layer].append(caller)
 
             # Calculate totals
-            total_incoming = len(incoming_callers) + len(incoming_implementers) + len(incoming_inheritors)
+            total_direct_callers = len(incoming_callers)
+            total_via_interface = len(incoming_callers_via_interface)
+            total_callers = total_direct_callers + total_via_interface
+            total_incoming = total_callers + len(incoming_implementers) + len(incoming_inheritors)
             total_outgoing = len(outgoing_calls) + len(outgoing_via)
 
-            # Determine impact level
+            # Count FLOWS affected (unique service-layer callers = unique flows)
+            # A "flow" is defined as a unique caller from the services layer
+            service_flows = set()
+            for caller in all_callers:
+                if caller.get("layer") == "services":
+                    # Use project + class name as unique flow identifier
+                    flow_id = f"{caller.get('project', '')}:{caller.get('containedIn', caller.get('name', ''))}"
+                    service_flows.add(flow_id)
+
+            flows_affected = len(service_flows)
+
+            # Determine impact level based on FLOWS affected
             has_presentation = "presentation" in affected_layers
+            has_services = "services" in affected_layers
             has_implementers = len(incoming_implementers) > 0
             has_inheritors = len(incoming_inheritors) > 0
+            has_interface_callers = total_via_interface > 0
 
-            if total_incoming > 10 or has_implementers or has_inheritors or has_presentation:
+            # Impact levels based on flows:
+            # CRITICAL (purple): >3 flows affected
+            # HIGH (red): 2-3 flows affected
+            # MEDIUM (yellow): 1 flow + other factors (presentation, implementers, inheritors)
+            # LOW (green): 0-1 flows with no other factors
+            if flows_affected > 3:
+                impact_level = "critical"
+            elif flows_affected >= 2:
                 impact_level = "high"
-            elif total_incoming > 5 or len(affected_layers) >= 2:
+            elif flows_affected == 1 and (has_presentation or has_implementers or has_inheritors):
+                impact_level = "medium"
+            elif has_presentation or has_implementers or has_inheritors:
+                impact_level = "medium"
+            elif flows_affected == 1 or total_callers > 5:
                 impact_level = "medium"
             else:
                 impact_level = "low"
@@ -823,6 +989,7 @@ class NodesQueryService:
                 impact_level=impact_level,
                 total_incoming=total_incoming,
                 incoming_callers=incoming_callers,
+                incoming_callers_via_interface=incoming_callers_via_interface,
                 incoming_implementers=incoming_implementers,
                 incoming_inheritors=incoming_inheritors,
                 affected_projects=affected_projects,
@@ -837,17 +1004,21 @@ class NodesQueryService:
                 "description": description,
                 "impact": {
                     "level": impact_level,
+                    "flowsAffected": flows_affected,
                     "totalIncoming": total_incoming,
                     "totalOutgoing": total_outgoing,
-                    "directCallers": len(incoming_callers),
+                    "directCallers": total_direct_callers,
+                    "viaInterfaceCallers": total_via_interface,
                     "implementers": len(incoming_implementers),
                     "inheritors": len(incoming_inheritors),
                     "affectedProjects": len(affected_projects),
                     "affectedLayers": len(affected_layers),
-                    "hasPresentation": has_presentation
+                    "hasPresentation": has_presentation,
+                    "hasServices": has_services
                 },
                 "incoming": {
                     "callers": incoming_callers,
+                    "callersViaInterface": incoming_callers_via_interface,
                     "callersByLayer": callers_by_layer,
                     "implementers": incoming_implementers,
                     "inheritors": incoming_inheritors
@@ -994,6 +1165,7 @@ class NodesQueryService:
         impact_level: str,
         total_incoming: int,
         incoming_callers: list,
+        incoming_callers_via_interface: list,
         incoming_implementers: list,
         incoming_inheritors: list,
         affected_projects: set,
@@ -1005,8 +1177,8 @@ class NodesQueryService:
         target_kind = target.get("kind", "element")
 
         # Header with impact level
-        level_icons = {"high": "🔴", "medium": "🟡", "low": "🟢"}
-        level_labels = {"high": "ALTO", "medium": "MEDIO", "low": "BAJO"}
+        level_icons = {"critical": "🟣", "high": "🔴", "medium": "🟡", "low": "🟢"}
+        level_labels = {"critical": "CRÍTICO", "high": "ALTO", "medium": "MEDIO", "low": "BAJO"}
 
         lines = []
         lines.append(f"## Análisis de Impacto: {target_name}")
@@ -1015,9 +1187,14 @@ class NodesQueryService:
         lines.append("")
 
         # Summary
+        total_direct = len(incoming_callers)
+        total_via_interface = len(incoming_callers_via_interface)
         lines.append("### Resumen")
         lines.append(f"- **Tipo:** {target_kind}")
         lines.append(f"- **Dependencias entrantes:** {total_incoming}")
+        if total_via_interface > 0:
+            lines.append(f"  - Callers directos: {total_direct}")
+            lines.append(f"  - Callers vía Interface/Unity: {total_via_interface}")
         lines.append(f"- **Proyectos afectados:** {len(affected_projects)}")
         lines.append(f"- **Capas afectadas:** {len(affected_layers)}")
         lines.append("")
@@ -1026,6 +1203,8 @@ class NodesQueryService:
         risk_factors = []
         if has_presentation:
             risk_factors.append("⚠️ Afecta la capa de presentación (UI)")
+        if total_via_interface > 0:
+            risk_factors.append(f"⚠️ {total_via_interface} llamadas vía Interface/Unity (WebAPI, servicios)")
         if len(incoming_implementers) > 0:
             risk_factors.append(f"⚠️ {len(incoming_implementers)} clases implementan esta interfaz")
         if len(incoming_inheritors) > 0:
@@ -1039,11 +1218,12 @@ class NodesQueryService:
                 lines.append(f"- {factor}")
             lines.append("")
 
-        # Callers by layer
-        if incoming_callers:
+        # Callers by layer (combine direct and via interface)
+        all_callers = incoming_callers + incoming_callers_via_interface
+        if all_callers:
             lines.append("### Callers por Capa")
             callers_by_layer: Dict[str, list] = {}
-            for caller in incoming_callers:
+            for caller in all_callers:
                 layer = caller.get("layer") or "other"
                 if layer not in callers_by_layer:
                     callers_by_layer[layer] = []
@@ -1051,6 +1231,17 @@ class NodesQueryService:
 
             for layer, callers in sorted(callers_by_layer.items()):
                 lines.append(f"- **{layer.upper()}:** {len(callers)} callers")
+            lines.append("")
+
+        # Via Interface callers detail (important for Unity/DI)
+        if incoming_callers_via_interface:
+            lines.append("### Callers vía Interface/Unity")
+            for caller in incoming_callers_via_interface[:10]:  # Limit to first 10
+                caller_name = caller.get("name", "Unknown")
+                caller_project = caller.get("project", "")
+                lines.append(f"- {caller_name} ({caller_project})")
+            if len(incoming_callers_via_interface) > 10:
+                lines.append(f"- ... y {len(incoming_callers_via_interface) - 10} más")
             lines.append("")
 
         # Recommendations
